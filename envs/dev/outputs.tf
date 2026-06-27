@@ -25,3 +25,24 @@ output "aircraft_archive_bucket_name" {
 output "aircraft_current_state_table_name" {
   value = module.aircraft_foundation.aircraft_current_state_table_name
 }
+
+output "opensky_poller_lambda_name" {
+  value = module.aircraft_foundation.opensky_poller_lambda_name
+}
+
+output "opensky_poller_schedule_name" {
+  value = module.aircraft_foundation.opensky_poller_schedule_name
+}
+
+output "opensky_poller_schedule_state" {
+  value = module.aircraft_foundation.opensky_poller_schedule_state
+}
+
+
+output "opensky_credentials_secret_name" {
+  value = module.aircraft_foundation.opensky_credentials_secret_name
+}
+
+output "opensky_credentials_secret_arn" {
+  value = module.aircraft_foundation.opensky_credentials_secret_arn
+}

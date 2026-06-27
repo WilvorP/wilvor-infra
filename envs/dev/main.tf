@@ -18,5 +18,10 @@ module "aircraft_foundation" {
   aws_region  = var.aws_region
   account_id  = data.aws_caller_identity.current.account_id
 
+  opensky_poller_zip_path = "${path.root}/../../functions/opensky_poller/dist/opensky_poller.zip"
+
+  enable_opensky_poller_schedule     = false
+  opensky_poller_schedule_expression = "rate(5 minutes)"
+
   tags = local.common_tags
 }

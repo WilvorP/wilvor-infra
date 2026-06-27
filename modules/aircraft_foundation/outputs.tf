@@ -25,3 +25,27 @@ output "aircraft_current_state_table_name" {
 output "aircraft_current_state_table_arn" {
   value = aws_dynamodb_table.aircraft_current_state.arn
 }
+
+output "opensky_poller_lambda_name" {
+  value = aws_lambda_function.opensky_poller.function_name
+}
+
+output "opensky_poller_lambda_arn" {
+  value = aws_lambda_function.opensky_poller.arn
+}
+
+output "opensky_poller_schedule_name" {
+  value = aws_cloudwatch_event_rule.opensky_poller_schedule.name
+}
+
+output "opensky_poller_schedule_state" {
+  value = var.enable_opensky_poller_schedule ? "ENABLED" : "DISABLED"
+}
+
+output "opensky_credentials_secret_name" {
+  value = aws_secretsmanager_secret.opensky_credentials.name
+}
+
+output "opensky_credentials_secret_arn" {
+  value = aws_secretsmanager_secret.opensky_credentials.arn
+}
