@@ -72,6 +72,18 @@ data "aws_iam_policy_document" "opensky_poller_policy" {
       aws_secretsmanager_secret.opensky_credentials.arn
     ]
   }
+  statement {
+  sid    = "WriteRawOpenSkyResponseToS3"
+  effect = "Allow"
+
+  actions = [
+    "s3:PutObject"
+  ]
+
+  resources = [
+    "${aws_s3_bucket.aircraft_archive.arn}/raw/*"
+  ]
+  }
 }
 
 resource "aws_iam_role_policy" "opensky_poller_lambda" {
@@ -97,9 +109,20 @@ resource "aws_lambda_function" "opensky_poller" {
   environment {
     variables = {
       AIRCRAFT_RAW_STREAM_NAME = aws_kinesis_stream.aircraft_raw.name
+      AIRCRAFT_ARCHIVE_BUCKET  = aws_s3_bucket.aircraft_archive.bucket
       OPENSKY_SECRET_ARN       = aws_secretsmanager_secret.opensky_credentials.arn
-      ENVIRONMENT              = "dev"
-      MODE                     = "plumbing-test"
+
+      OPENSKY_TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
+      OPENSKY_STATES_URL = "https://opensky-network.org/api/states/all"
+
+      # Small San Francisco Bay Area test box
+      OPENSKY_LAMIN = "37.0"
+      OPENSKY_LOMIN = "-123.0"
+      OPENSKY_LAMAX = "38.5"
+      OPENSKY_LOMAX = "-121.5"
+
+      ENVIRONMENT = "dev"
+      MODE        = "real-opensky-poller"
     }
   }
 
