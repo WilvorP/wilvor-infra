@@ -3,6 +3,13 @@ name: Build OpenSky Fargate Probe
 on:
   workflow_dispatch:
 
+  push:
+    branches:
+      - github-actions-fargate-probe
+    paths:
+      - ".github/workflows/build-opensky-fargate-probe.yml"
+      - "functions/opensky_fargate_probe/**"
+
 permissions:
   id-token: write
   contents: read
