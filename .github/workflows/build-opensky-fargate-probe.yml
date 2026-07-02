@@ -1,0 +1,43 @@
+name: Build OpenSky Fargate Probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  AWS_REGION: us-west-1
+  ECR_REPOSITORY: wilvor-dev-opensky-fargate-probe
+  AWS_ROLE_ARN: arn:aws:iam::396037508959:role/wilvor-dev-github-actions-ecr-push-role
+
+jobs:
+  build-and-push:
+    name: Build and push probe image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials using OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build and push image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: latest
+        run: |
+          docker build \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            functions/opensky_fargate_probe
+
+          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG

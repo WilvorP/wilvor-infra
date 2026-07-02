@@ -46,3 +46,31 @@ output "opensky_credentials_secret_name" {
 output "opensky_credentials_secret_arn" {
   value = module.aircraft_foundation.opensky_credentials_secret_arn
 }
+
+output "opensky_fargate_probe_ecr_repository_url" {
+  value = module.aircraft_foundation.opensky_fargate_probe_ecr_repository_url
+}
+
+output "opensky_fargate_probe_cluster_name" {
+  value = module.aircraft_foundation.opensky_fargate_probe_cluster_name
+}
+
+output "opensky_fargate_probe_task_definition_arn" {
+  value = module.aircraft_foundation.opensky_fargate_probe_task_definition_arn
+}
+
+output "opensky_fargate_probe_subnet_id" {
+  value = module.aircraft_foundation.opensky_fargate_probe_subnet_id
+}
+
+output "opensky_fargate_probe_security_group_id" {
+  value = module.aircraft_foundation.opensky_fargate_probe_security_group_id
+}
+
+output "opensky_fargate_probe_log_group_name" {
+  value = module.aircraft_foundation.opensky_fargate_probe_log_group_name
+}
+
+output "github_actions_ecr_push_role_arn" {
+  value = module.aircraft_foundation.github_actions_ecr_push_role_arn
+}

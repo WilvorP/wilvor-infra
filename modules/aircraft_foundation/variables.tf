@@ -36,3 +36,15 @@ variable "opensky_poller_schedule_expression" {
   type        = string
   default     = "rate(5 minutes)"
 }
+
+variable "github_repository" {
+  type        = string
+  description = "GitHub repository allowed to push the Fargate probe image"
+  default     = "WilvorP/wilvor-infra"
+}
+
+variable "github_actions_branch" {
+  type        = string
+  description = "GitHub branch allowed to assume the GitHub Actions AWS role"
+  default     = "github-actions-fargate-probe"
+}

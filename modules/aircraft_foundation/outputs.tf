@@ -49,3 +49,31 @@ output "opensky_credentials_secret_name" {
 output "opensky_credentials_secret_arn" {
   value = aws_secretsmanager_secret.opensky_credentials.arn
 }
+
+output "opensky_fargate_probe_ecr_repository_url" {
+  value = aws_ecr_repository.opensky_fargate_probe.repository_url
+}
+
+output "opensky_fargate_probe_cluster_name" {
+  value = aws_ecs_cluster.opensky_fargate_probe.name
+}
+
+output "opensky_fargate_probe_task_definition_arn" {
+  value = aws_ecs_task_definition.opensky_fargate_probe.arn
+}
+
+output "opensky_fargate_probe_subnet_id" {
+  value = aws_subnet.opensky_fargate_probe_public.id
+}
+
+output "opensky_fargate_probe_security_group_id" {
+  value = aws_security_group.opensky_fargate_probe.id
+}
+
+output "opensky_fargate_probe_log_group_name" {
+  value = aws_cloudwatch_log_group.opensky_fargate_probe.name
+}
+
+output "github_actions_ecr_push_role_arn" {
+  value = aws_iam_role.github_actions_ecr_push.arn
+}
