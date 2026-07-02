@@ -1,3 +1,4 @@
+import socket
 import json
 import os
 import time
@@ -9,6 +10,49 @@ import boto3
 
 
 secrets = boto3.client("secretsmanager")
+
+_original_getaddrinfo = socket.getaddrinfo
+
+
+def log_dns_records(hostname: str) -> None:
+    records = []
+
+    for family, _, _, _, sockaddr in _original_getaddrinfo(
+        hostname,
+        443,
+        type=socket.SOCK_STREAM,
+    ):
+        records.append({
+            "family": "IPv6" if family == socket.AF_INET6 else "IPv4",
+            "address": sockaddr[0],
+        })
+
+    log({
+        "service": "opensky-fargate-probe",
+        "event": "DNS_RECORDS",
+        "hostname": hostname,
+        "records": records,
+    })
+
+
+def force_ipv4_only() -> None:
+    def ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+        return _original_getaddrinfo(
+            host,
+            port,
+            socket.AF_INET,
+            type,
+            proto,
+            flags,
+        )
+
+    socket.getaddrinfo = ipv4_only_getaddrinfo
+
+    log({
+        "service": "opensky-fargate-probe",
+        "event": "FORCED_IPV4_ONLY",
+    })
+
 
 
 def log(payload: dict) -> None:
@@ -129,6 +173,11 @@ def main() -> None:
         "event": "STARTED",
     })
 
+    log_dns_records("auth.opensky-network.org")
+    log_dns_records("opensky-network.org")
+
+    force_ipv4_only()
+
     internet_result = test_public_internet()
     log(internet_result)
 
@@ -140,7 +189,6 @@ def main() -> None:
         "event": "COMPLETED",
         "ok": True,
     })
-
 
 if __name__ == "__main__":
     try:
