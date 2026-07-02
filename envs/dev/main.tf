@@ -23,5 +23,11 @@ module "aircraft_foundation" {
   enable_opensky_poller_schedule     = false
   opensky_poller_schedule_expression = "rate(5 minutes)"
 
+  sigmet_poller_zip_path = "${path.root}/../../functions/sigmet_poller/dist/sigmet_poller.zip"
+
+  enable_sigmet_poller_schedule     = false
+  sigmet_poller_schedule_expression = "rate(2 minutes)"
+  sigmet_api_url                    = "https://aviationweather.gov/api/data/airsigmet?format=geojson"
+
   tags = local.common_tags
 }

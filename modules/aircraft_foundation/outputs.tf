@@ -49,3 +49,43 @@ output "opensky_credentials_secret_name" {
 output "opensky_credentials_secret_arn" {
   value = aws_secretsmanager_secret.opensky_credentials.arn
 }
+
+output "sigmet_raw_stream_name" {
+  value = aws_kinesis_stream.sigmet_raw.name
+}
+
+output "sigmet_raw_stream_arn" {
+  value = aws_kinesis_stream.sigmet_raw.arn
+}
+
+output "sigmet_clean_stream_name" {
+  value = aws_kinesis_stream.sigmet_clean.name
+}
+
+output "sigmet_clean_stream_arn" {
+  value = aws_kinesis_stream.sigmet_clean.arn
+}
+
+output "active_hazards_table_name" {
+  value = aws_dynamodb_table.active_hazards.name
+}
+
+output "hazard_cells_table_name" {
+  value = aws_dynamodb_table.hazard_cells.name
+}
+
+output "sigmet_poller_function_name" {
+  value = aws_lambda_function.sigmet_poller.function_name
+}
+
+output "sigmet_poller_function_arn" {
+  value = aws_lambda_function.sigmet_poller.arn
+}
+
+output "sigmet_poller_schedule_name" {
+  value = aws_cloudwatch_event_rule.sigmet_poller_schedule.name
+}
+
+output "sigmet_poller_schedule_state" {
+  value = var.enable_sigmet_poller_schedule ? "ENABLED" : "DISABLED"
+}
