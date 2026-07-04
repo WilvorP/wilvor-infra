@@ -82,3 +82,8 @@ variable "metar_api_url" {
   type        = string
   default     = "https://aviationweather.gov/api/data/metar?format=geojson"
 }
+
+variable "sigmet_processor_zip_path" {
+  description = "Path to the zipped SIGMET processor Lambda package"
+  type        = string
+}

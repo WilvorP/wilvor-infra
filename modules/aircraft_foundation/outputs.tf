@@ -125,3 +125,11 @@ output "metar_poller_schedule_name" {
 output "metar_poller_schedule_state" {
   value = var.enable_metar_poller_schedule ? "ENABLED" : "DISABLED"
 }
+
+output "sigmet_processor_lambda_name" {
+  value = aws_lambda_function.sigmet_processor.function_name
+}
+
+output "sigmet_processor_lambda_arn" {
+  value = aws_lambda_function.sigmet_processor.arn
+}

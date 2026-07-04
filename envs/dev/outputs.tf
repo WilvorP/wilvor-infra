@@ -98,3 +98,11 @@ output "metar_poller_schedule_name" {
 output "metar_poller_schedule_state" {
   value = module.aircraft_foundation.metar_poller_schedule_state
 }
+
+output "sigmet_processor_lambda_name" {
+  value = module.aircraft_foundation.sigmet_processor_lambda_name
+}
+
+output "sigmet_processor_lambda_arn" {
+  value = module.aircraft_foundation.sigmet_processor_lambda_arn
+}
