@@ -29,5 +29,11 @@ module "aircraft_foundation" {
   sigmet_poller_schedule_expression = "rate(2 minutes)"
   sigmet_api_url                    = "https://aviationweather.gov/api/data/airsigmet?format=geojson"
 
+  metar_poller_zip_path = "${path.root}/../../functions/metar_poller/dist/metar_poller.zip"
+
+  enable_metar_poller_schedule     = false
+  metar_poller_schedule_expression = "rate(3 minutes)"
+  metar_api_url                    = "https://aviationweather.gov/api/data/metar?ids=KSFO,KOAK,KSJC&format=geojson"
+
   tags = local.common_tags
 }

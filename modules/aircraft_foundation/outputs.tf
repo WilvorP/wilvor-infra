@@ -89,3 +89,39 @@ output "sigmet_poller_schedule_name" {
 output "sigmet_poller_schedule_state" {
   value = var.enable_sigmet_poller_schedule ? "ENABLED" : "DISABLED"
 }
+
+output "metar_raw_stream_name" {
+  value = aws_kinesis_stream.metar_raw.name
+}
+
+output "metar_raw_stream_arn" {
+  value = aws_kinesis_stream.metar_raw.arn
+}
+
+output "metar_clean_stream_name" {
+  value = aws_kinesis_stream.metar_clean.name
+}
+
+output "metar_clean_stream_arn" {
+  value = aws_kinesis_stream.metar_clean.arn
+}
+
+output "metar_latest_table_name" {
+  value = aws_dynamodb_table.metar_latest.name
+}
+
+output "metar_poller_function_name" {
+  value = aws_lambda_function.metar_poller.function_name
+}
+
+output "metar_poller_function_arn" {
+  value = aws_lambda_function.metar_poller.arn
+}
+
+output "metar_poller_schedule_name" {
+  value = aws_cloudwatch_event_rule.metar_poller_schedule.name
+}
+
+output "metar_poller_schedule_state" {
+  value = var.enable_metar_poller_schedule ? "ENABLED" : "DISABLED"
+}

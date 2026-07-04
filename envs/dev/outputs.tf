@@ -74,3 +74,27 @@ output "sigmet_poller_schedule_name" {
 output "sigmet_poller_schedule_state" {
   value = module.aircraft_foundation.sigmet_poller_schedule_state
 }
+
+output "metar_raw_stream_name" {
+  value = module.aircraft_foundation.metar_raw_stream_name
+}
+
+output "metar_clean_stream_name" {
+  value = module.aircraft_foundation.metar_clean_stream_name
+}
+
+output "metar_latest_table_name" {
+  value = module.aircraft_foundation.metar_latest_table_name
+}
+
+output "metar_poller_function_name" {
+  value = module.aircraft_foundation.metar_poller_function_name
+}
+
+output "metar_poller_schedule_name" {
+  value = module.aircraft_foundation.metar_poller_schedule_name
+}
+
+output "metar_poller_schedule_state" {
+  value = module.aircraft_foundation.metar_poller_schedule_state
+}

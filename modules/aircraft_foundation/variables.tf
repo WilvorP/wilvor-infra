@@ -59,3 +59,26 @@ variable "sigmet_api_url" {
   type        = string
   default     = "https://aviationweather.gov/api/data/airsigmet?format=geojson"
 }
+
+variable "metar_poller_zip_path" {
+  description = "Path to the zipped METAR poller Lambda package"
+  type        = string
+}
+
+variable "enable_metar_poller_schedule" {
+  description = "Whether the METAR poller EventBridge schedule is enabled"
+  type        = bool
+  default     = false
+}
+
+variable "metar_poller_schedule_expression" {
+  description = "Schedule expression for the METAR poller"
+  type        = string
+  default     = "rate(3 minutes)"
+}
+
+variable "metar_api_url" {
+  description = "NOAA Aviation Weather METAR API URL"
+  type        = string
+  default     = "https://aviationweather.gov/api/data/metar?format=geojson"
+}
