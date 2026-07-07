@@ -1,0 +1,155 @@
+# ============================================================
+# WILVOR AIRCRAFT FOUNDATION DEV RESET + LOCAL POLLER WORKFLOW
+# ============================================================
+
+# Start from repo root:
+cd "C:\Users\hamza\OneDrive\Desktop\InterviewPrepUSA\Summer Project\Wilvor\wilvor-infra"
+
+# Activate virtual environment
+.\.venv\Scripts\Activate.ps1
+
+
+# ============================================================
+# 1. MOVE INTO TERRAFORM DEV ENVIRONMENT
+# ============================================================
+
+cd envs/dev
+
+
+# ============================================================
+# 2. INITIALIZE TERRAFORM
+# ============================================================
+
+terraform init
+
+
+# ============================================================
+# 3. FORMAT AND VALIDATE TERRAFORM
+# ============================================================
+
+terraform fmt -recursive
+
+terraform validate
+
+
+# ============================================================
+# 4. REVIEW PLAN
+# ============================================================
+
+terraform plan
+
+
+# Optional but better: save the plan
+terraform plan -out=tfplan
+
+
+# ============================================================
+# 5. APPLY INFRASTRUCTURE
+# ============================================================
+
+terraform apply tfplan
+
+
+# ============================================================
+# 6. CONFIRM OUTPUTS
+# ============================================================
+
+terraform output
+
+terraform output -raw aircraft_raw_stream_name
+terraform output -raw aircraft_archive_bucket_name
+terraform output -raw opensky_credentials_secret_arn
+terraform output -raw opensky_credentials_secret_name
+
+
+# ============================================================
+# 7. UPLOAD OPENSKY CREDENTIALS TO AWS SECRETS MANAGER
+# ============================================================
+# This assumes your local file exists at:
+# .secrets/credentials.json
+#
+# Expected JSON format:
+# {
+#   "clientId": "your-client-id",
+#   "clientSecret": "your-client-secret"
+# }
+
+$secretArn = terraform output -raw opensky_credentials_secret_arn
+$secretFile = (Resolve-Path ..\..\.secrets\credentials.json).Path
+
+aws secretsmanager put-secret-value `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --secret-id $secretArn `
+  --secret-string file://$secretFile
+
+
+# Optional: verify the secret can be read
+aws secretsmanager get-secret-value `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --secret-id $secretArn
+
+
+# ============================================================
+# 8. RETURN TO REPO ROOT
+# ============================================================
+
+cd ../..
+
+
+# ============================================================
+# 9. RUN LOCAL OPENSKY POLLER ONCE
+# ============================================================
+
+python .\functions\opensky_poller\local_runner.py --once
+
+
+# Expected success example:
+# {
+#   "ok": true,
+#   "mode": "real-opensky-poller",
+#   "states_count": 66,
+#   "published_to_kinesis": 66,
+#   "failed_kinesis_records": 0,
+#   "raw_s3_key": "raw/source=opensky/year=..."
+# }
+
+
+# ============================================================
+# 10. VERIFY RAW S3 ARCHIVE
+# ============================================================
+
+cd envs/dev
+
+$bucket = terraform output -raw aircraft_archive_bucket_name
+
+aws s3 ls "s3://$bucket/raw/source=opensky/" `
+  --recursive `
+  --profile wilvor-dev `
+  --region us-west-1
+
+cd ../..
+
+
+# ============================================================
+# 11. VERIFY KINESIS RAW STREAM EXISTS
+# ============================================================
+
+cd envs/dev
+
+$streamName = terraform output -raw aircraft_raw_stream_name
+
+aws kinesis describe-stream-summary `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --stream-name $streamName
+
+cd ../..
+
+
+# ============================================================
+# 12. OPTIONAL: RUN LOCAL POLLER CONTINUOUSLY
+# ============================================================
+
+python .\functions\opensky_poller\local_runner.py --loop --interval 30
