@@ -49,3 +49,11 @@ output "opensky_credentials_secret_name" {
 output "opensky_credentials_secret_arn" {
   value = aws_secretsmanager_secret.opensky_credentials.arn
 }
+
+output "aircraft_raw_processor_lambda_name" {
+  value = aws_lambda_function.aircraft_raw_processor.function_name
+}
+
+output "aircraft_raw_processor_lambda_arn" {
+  value = aws_lambda_function.aircraft_raw_processor.arn
+}
