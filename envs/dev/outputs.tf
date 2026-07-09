@@ -106,3 +106,7 @@ output "sigmet_processor_lambda_name" {
 output "sigmet_processor_lambda_arn" {
   value = module.aircraft_foundation.sigmet_processor_lambda_arn
 }
+
+output "weather_changed_log_group_name" {
+  value = module.aircraft_foundation.weather_changed_log_group_name
+}

@@ -133,3 +133,7 @@ output "sigmet_processor_lambda_name" {
 output "sigmet_processor_lambda_arn" {
   value = aws_lambda_function.sigmet_processor.arn
 }
+
+output "weather_changed_log_group_name" {
+  value = aws_cloudwatch_log_group.weather_changed_events.name
+}

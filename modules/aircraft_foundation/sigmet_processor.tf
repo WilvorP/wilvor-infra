@@ -50,10 +50,11 @@ data "aws_iam_policy_document" "sigmet_processor_policy" {
   }
 
   statement {
-    sid    = "WriteToActiveHazards"
+    sid    = "ReadWriteActiveHazards"
     effect = "Allow"
 
     actions = [
+      "dynamodb:GetItem",
       "dynamodb:PutItem",
       "dynamodb:UpdateItem",
       "dynamodb:BatchWriteItem",
@@ -71,11 +72,38 @@ data "aws_iam_policy_document" "sigmet_processor_policy" {
     actions = [
       "dynamodb:PutItem",
       "dynamodb:UpdateItem",
+      "dynamodb:DeleteItem",
       "dynamodb:BatchWriteItem",
     ]
 
     resources = [
       aws_dynamodb_table.hazard_cells.arn,
+    ]
+  }
+
+  statement {
+    sid    = "PublishWeatherChangedEvents"
+    effect = "Allow"
+
+    actions = [
+      "events:PutEvents",
+    ]
+
+    resources = [
+      "arn:aws:events:${var.aws_region}:${var.account_id}:event-bus/default",
+    ]
+  }
+
+  statement {
+    sid    = "WriteBadSigmetRecordsToS3"
+    effect = "Allow"
+
+    actions = [
+      "s3:PutObject",
+    ]
+
+    resources = [
+      "${aws_s3_bucket.aircraft_archive.arn}/bad-records/source=sigmet_processor/*",
     ]
   }
 
@@ -101,13 +129,15 @@ resource "aws_iam_role_policy" "sigmet_processor_lambda" {
 }
 
 resource "aws_lambda_function" "sigmet_processor" {
-  function_name    = "${var.name_prefix}-sigmet-processor"
-  role             = aws_iam_role.sigmet_processor_lambda.arn
+  function_name = "${var.name_prefix}-sigmet-processor"
+  role          = aws_iam_role.sigmet_processor_lambda.arn
+
   filename         = var.sigmet_processor_zip_path
   source_code_hash = filebase64sha256(var.sigmet_processor_zip_path)
 
-  runtime     = "python3.12"
-  handler     = "app.lambda_handler"
+  runtime = "python3.12"
+  handler = "app.lambda_handler"
+
   memory_size = 256
   timeout     = 60
 
@@ -117,6 +147,9 @@ resource "aws_lambda_function" "sigmet_processor" {
       HAZARD_CELLS_TABLE_NAME   = aws_dynamodb_table.hazard_cells.name
       H3_RESOLUTION             = "4"
       SCHEMA_VERSION            = "internal.sigmet.v1"
+      EVENT_BUS_NAME            = "default"
+      BAD_RECORDS_BUCKET_NAME   = aws_s3_bucket.aircraft_archive.bucket
+      BAD_RECORDS_PREFIX        = "bad-records/source=sigmet_processor"
     }
   }
 
@@ -132,9 +165,10 @@ resource "aws_lambda_function" "sigmet_processor" {
 }
 
 resource "aws_lambda_event_source_mapping" "sigmet_raw_to_sigmet_processor" {
-  event_source_arn                   = aws_kinesis_stream.sigmet_raw.arn
-  function_name                      = aws_lambda_function.sigmet_processor.arn
-  starting_position                  = "LATEST"
+  event_source_arn  = aws_kinesis_stream.sigmet_raw.arn
+  function_name     = aws_lambda_function.sigmet_processor.arn
+  starting_position = "LATEST"
+
   batch_size                         = 100
   maximum_batching_window_in_seconds = 1
   function_response_types            = ["ReportBatchItemFailures"]
