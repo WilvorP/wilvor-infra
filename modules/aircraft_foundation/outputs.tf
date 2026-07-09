@@ -57,3 +57,11 @@ output "aircraft_raw_processor_lambda_name" {
 output "aircraft_raw_processor_lambda_arn" {
   value = aws_lambda_function.aircraft_raw_processor.arn
 }
+
+output "aircraft_current_state_writer_lambda_name" {
+  value = aws_lambda_function.aircraft_current_state_writer.function_name
+}
+
+output "aircraft_current_state_writer_lambda_arn" {
+  value = aws_lambda_function.aircraft_current_state_writer.arn
+}

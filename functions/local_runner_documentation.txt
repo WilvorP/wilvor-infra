@@ -6,7 +6,10 @@
 cd "C:\Users\hamza\OneDrive\Desktop\InterviewPrepUSA\Summer Project\Wilvor\wilvor-infra"
 
 # Activate virtual environment
-.\.venv\Scripts\Activate.ps1
+.\.venv\Scripts\Activate
+
+# Login to your AWS dev account
+aws sso login --profile wilvor-dev
 
 
 # ============================================================
@@ -58,9 +61,11 @@ terraform output
 terraform output -raw aircraft_raw_stream_name
 terraform output -raw aircraft_clean_stream_name
 terraform output -raw aircraft_archive_bucket_name
-terraform output -raw opensky_credentials_secret_arn
+terraform output -raw aircraft_current_state_table_name
 terraform output -raw opensky_credentials_secret_name
+terraform output -raw opensky_credentials_secret_arn
 terraform output -raw aircraft_raw_processor_lambda_name
+terraform output -raw aircraft_current_state_writer_lambda_name
 
 
 # ============================================================
@@ -74,14 +79,18 @@ terraform output -raw aircraft_raw_processor_lambda_name
 #   "clientId": "your-client-id",
 #   "clientSecret": "your-client-secret"
 # }
+#
+# Important:
+# Use the secret NAME for manual CLI upload.
+# The ARN caused ResourceNotFound issues in local restore workflow.
 
-$secretArn = terraform output -raw opensky_credentials_secret_arn
+$secretName = terraform output -raw opensky_credentials_secret_name
 $secretFile = (Resolve-Path ..\..\.secrets\credentials.json).Path
 
 aws secretsmanager put-secret-value `
   --profile wilvor-dev `
   --region us-west-1 `
-  --secret-id $secretArn `
+  --secret-id $secretName `
   --secret-string file://$secretFile
 
 
@@ -89,7 +98,11 @@ aws secretsmanager put-secret-value `
 aws secretsmanager get-secret-value `
   --profile wilvor-dev `
   --region us-west-1 `
-  --secret-id $secretArn
+  --secret-id $secretName
+
+
+# Optional: set local env var for safety
+$env:OPENSKY_SECRET_ARN = $secretName
 
 
 # ============================================================
@@ -113,22 +126,48 @@ aws lambda list-event-source-mappings `
 
 
 # ============================================================
-# 9. RETURN TO REPO ROOT
+# 9. VERIFY CURRENT STATE WRITER LAMBDA + EVENT SOURCE MAPPING
+# ============================================================
+
+aws lambda get-function `
+  --function-name wilvor-dev-aircraft-current-state-writer `
+  --profile wilvor-dev `
+  --region us-west-1
+
+aws lambda list-event-source-mappings `
+  --function-name wilvor-dev-aircraft-current-state-writer `
+  --profile wilvor-dev `
+  --region us-west-1
+
+# Expected:
+# State: Enabled
+# EventSourceArn should point to wilvor-dev-aircraft-clean
+# StartingPosition: LATEST
+
+
+# ============================================================
+# 10. RETURN TO REPO ROOT
 # ============================================================
 
 cd ../..
 
 
 # ============================================================
-# 10. RUN LOCAL OPENSKY POLLER ONCE
+# 11. RUN LOCAL OPENSKY POLLER ONCE
 # ============================================================
 # This writes:
 # OpenSky raw response -> S3 raw/source=opensky/
 # Individual raw records -> Kinesis aircraft raw
 #
-# The raw processor Lambda should automatically consume the raw stream,
-# write good records to Kinesis clean,
-# and write bad records to S3 bad-records/.
+# Then the live AWS pipeline should run automatically:
+# Kinesis raw
+# -> aircraft_raw_processor Lambda
+# -> Kinesis clean
+# -> aircraft_current_state_writer Lambda
+# -> DynamoDB AircraftCurrentState
+#
+# Bad records are written to:
+# S3 bad-records/source=opensky/
 
 python .\functions\opensky_poller\local_runner.py --once
 
@@ -145,7 +184,7 @@ python .\functions\opensky_poller\local_runner.py --once
 
 
 # ============================================================
-# 11. CHECK RAW PROCESSOR LAMBDA LOGS
+# 12. CHECK RAW PROCESSOR LAMBDA LOGS
 # ============================================================
 
 aws logs tail /aws/lambda/wilvor-dev-aircraft-raw-processor `
@@ -165,7 +204,29 @@ aws logs tail /aws/lambda/wilvor-dev-aircraft-raw-processor `
 
 
 # ============================================================
-# 12. VERIFY RAW S3 ARCHIVE
+# 13. CHECK CURRENT STATE WRITER LAMBDA LOGS
+# ============================================================
+
+aws logs tail /aws/lambda/wilvor-dev-aircraft-current-state-writer `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --since 10m
+
+# Expected log:
+# {
+#   "event": "aircraft_current_state_batch_processed",
+#   "total_records": ...,
+#   "valid_records": ...,
+#   "written_records": ...,
+#   "skipped_stale_records": ...,
+#   "rejected_records": 0,
+#   "failed_records": 0,
+#   "batch_item_failures": 0
+# }
+
+
+# ============================================================
+# 14. VERIFY RAW S3 ARCHIVE
 # ============================================================
 
 cd envs/dev
@@ -181,7 +242,7 @@ cd ../..
 
 
 # ============================================================
-# 13. VERIFY BAD RECORDS S3 ARCHIVE
+# 15. VERIFY BAD RECORDS S3 ARCHIVE
 # ============================================================
 
 cd envs/dev
@@ -197,7 +258,7 @@ cd ../..
 
 
 # ============================================================
-# 14. VERIFY KINESIS RAW STREAM EXISTS
+# 16. VERIFY KINESIS RAW STREAM EXISTS
 # ============================================================
 
 cd envs/dev
@@ -213,7 +274,7 @@ cd ../..
 
 
 # ============================================================
-# 15. VERIFY KINESIS CLEAN STREAM EXISTS
+# 17. VERIFY KINESIS CLEAN STREAM EXISTS
 # ============================================================
 
 cd envs/dev
@@ -229,9 +290,45 @@ cd ../..
 
 
 # ============================================================
-# 16. OPTIONAL: READ A FEW RECORDS FROM CLEAN STREAM
+# 18. VERIFY DYNAMODB CURRENT STATE TABLE
 # ============================================================
-# This confirms the processor published normalized aircraft_current_state.v1 records.
+
+cd envs/dev
+
+$tableName = terraform output -raw aircraft_current_state_table_name
+
+aws dynamodb describe-table `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --table-name $tableName
+
+cd ../..
+
+
+# ============================================================
+# 19. SCAN A FEW DYNAMODB CURRENT STATE RECORDS
+# ============================================================
+# This confirms clean Kinesis records were written into DynamoDB.
+# Each aircraft should have one current-state item keyed by icao24.
+
+cd envs/dev
+
+$tableName = terraform output -raw aircraft_current_state_table_name
+
+aws dynamodb scan `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --table-name $tableName `
+  --limit 5
+
+cd ../..
+
+
+# ============================================================
+# 20. OPTIONAL: READ A FEW RECORDS FROM CLEAN STREAM
+# ============================================================
+# This confirms the raw processor published normalized aircraft_current_state.v1 records.
+# Note: TRIM_HORIZON may show older records if old records still exist in stream retention.
 
 cd envs/dev
 
@@ -263,11 +360,16 @@ cd ../..
 
 
 # ============================================================
-# 17. OPTIONAL: CHECK EVENT SOURCE MAPPING AFTER POLLER RUN
+# 21. OPTIONAL: CHECK EVENT SOURCE MAPPINGS AFTER POLLER RUN
 # ============================================================
 
 aws lambda list-event-source-mappings `
   --function-name wilvor-dev-aircraft-raw-processor `
+  --profile wilvor-dev `
+  --region us-west-1
+
+aws lambda list-event-source-mappings `
+  --function-name wilvor-dev-aircraft-current-state-writer `
   --profile wilvor-dev `
   --region us-west-1
 
@@ -276,7 +378,7 @@ aws lambda list-event-source-mappings `
 
 
 # ============================================================
-# 18. OPTIONAL: RUN LOCAL POLLER CONTINUOUSLY
+# 22. OPTIONAL: RUN LOCAL POLLER CONTINUOUSLY
 # ============================================================
 
 python .\functions\opensky_poller\local_runner.py --loop --interval 30

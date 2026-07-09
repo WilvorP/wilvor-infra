@@ -54,3 +54,11 @@ output "aircraft_raw_processor_lambda_name" {
 output "aircraft_raw_processor_lambda_arn" {
   value = module.aircraft_foundation.aircraft_raw_processor_lambda_arn
 }
+
+output "aircraft_current_state_writer_lambda_name" {
+  value = module.aircraft_foundation.aircraft_current_state_writer_lambda_name
+}
+
+output "aircraft_current_state_writer_lambda_arn" {
+  value = module.aircraft_foundation.aircraft_current_state_writer_lambda_arn
+}

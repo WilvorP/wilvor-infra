@@ -173,11 +173,9 @@ def map_raw_event_to_current_state(
     velocity_mps = to_float(row.get("velocity"))
     vertical_rate_mps = to_float(row.get("vertical_rate"))
 
-    idempotency_time = time_position or last_contact
 
     item = {
         "icao24": icao24,
-        "aircraft_id": icao24,
         "callsign": clean_callsign(row.get("callsign")),
         "origin_country": row.get("origin_country"),
 
@@ -210,16 +208,7 @@ def map_raw_event_to_current_state(
         "spi": row.get("spi"),
         "position_source": row.get("position_source"),
 
-        "source_system": "OpenSky",
-        "schema_version": AIRCRAFT_CURRENT_STATE_SCHEMA_VERSION,
-
-        "received_at_utc": now_utc_iso(),
-        "poll_id": raw_event.get("poll_id"),
-        "raw_index": raw_event.get("raw_index"),
-        "opensky_response_time": raw_event.get("opensky_response_time"),
-        "fetched_at_utc": raw_event.get("fetched_at_utc"),
-
-        "idempotency_key": f"{icao24}#{int(idempotency_time)}",
+        "schema_version": AIRCRAFT_CURRENT_STATE_SCHEMA_VERSION,       
         "ttl_epoch": now_epoch() + ttl_seconds,
     }
 

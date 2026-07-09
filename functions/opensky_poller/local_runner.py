@@ -32,7 +32,7 @@ def configure_lambda_like_environment() -> None:
 
     os.environ["AIRCRAFT_RAW_STREAM_NAME"] = terraform_output("aircraft_raw_stream_name")
     os.environ["AIRCRAFT_ARCHIVE_BUCKET"] = terraform_output("aircraft_archive_bucket_name")
-    os.environ["OPENSKY_SECRET_ARN"] = terraform_output("opensky_credentials_secret_arn")
+    os.environ["OPENSKY_SECRET_ARN"] = terraform_output("opensky_credentials_secret_name")
 
     os.environ["OPENSKY_TOKEN_URL"] = (
         "https://auth.opensky-network.org/auth/realms/opensky-network/"
