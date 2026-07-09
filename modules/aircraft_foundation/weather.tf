@@ -40,8 +40,8 @@ resource "aws_dynamodb_table" "active_hazards" {
   name         = "${var.name_prefix}-active-hazards"
   billing_mode = "PROVISIONED"
 
-  read_capacity  = 1
-  write_capacity = 1
+  read_capacity  = 5
+  write_capacity = 5
 
   hash_key = "hazard_id"
 
@@ -69,8 +69,8 @@ resource "aws_dynamodb_table" "hazard_cells" {
   name         = "${var.name_prefix}-hazard-cells"
   billing_mode = "PROVISIONED"
 
-  read_capacity  = 1
-  write_capacity = 1
+  read_capacity  = 5
+  write_capacity = 25
 
   hash_key  = "cell_id"
   range_key = "hazard_id"

@@ -355,6 +355,35 @@ def polygon_to_h3_cells(polygon_coordinates: list[Any], resolution: int) -> set[
     except Exception as exc:
         raise PermanentRecordError(f"Failed to convert polygon to H3 cells: {exc}") from exc
 
+def polygon_centroid_cell(polygon_coordinates: list[Any], resolution: int) -> str:
+    if not isinstance(polygon_coordinates, list) or not polygon_coordinates:
+        raise PermanentRecordError("Polygon coordinates are missing or invalid")
+
+    outer_ring = polygon_coordinates[0]
+    if not isinstance(outer_ring, list) or len(outer_ring) < 3:
+        raise PermanentRecordError("Polygon outer ring has fewer than three points")
+
+    lat_values = []
+    lon_values = []
+
+    for point in outer_ring:
+        if not isinstance(point, list) or len(point) < 2:
+            continue
+
+        lon = point[0]
+        lat = point[1]
+
+        if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
+            lat_values.append(float(lat))
+            lon_values.append(float(lon))
+
+    if not lat_values or not lon_values:
+        raise PermanentRecordError("Polygon has no valid coordinates for centroid fallback")
+
+    centroid_lat = sum(lat_values) / len(lat_values)
+    centroid_lon = sum(lon_values) / len(lon_values)
+
+    return h3.latlng_to_cell(centroid_lat, centroid_lon, resolution)
 
 def geometry_to_h3_cells(geometry: dict[str, Any], resolution: int) -> list[str]:
     if not isinstance(geometry, dict):
@@ -365,18 +394,29 @@ def geometry_to_h3_cells(geometry: dict[str, Any], resolution: int) -> list[str]
 
     if geometry_type == "Polygon":
         cells = polygon_to_h3_cells(coordinates, resolution)
+
+        if not cells:
+            cells.add(polygon_centroid_cell(coordinates, resolution))
+
     elif geometry_type == "MultiPolygon":
         if not isinstance(coordinates, list):
             raise PermanentRecordError("MultiPolygon coordinates are missing or invalid")
 
         cells: set[str] = set()
+
         for polygon_coordinates in coordinates:
-            cells.update(polygon_to_h3_cells(polygon_coordinates, resolution))
+            polygon_cells = polygon_to_h3_cells(polygon_coordinates, resolution)
+
+            if not polygon_cells:
+                polygon_cells.add(polygon_centroid_cell(polygon_coordinates, resolution))
+
+            cells.update(polygon_cells)
+
     else:
         raise PermanentRecordError(f"Unsupported geometry type: {geometry_type}")
 
     if not cells:
-        raise PermanentRecordError("SIGMET geometry produced zero H3 cells")
+        raise PermanentRecordError("SIGMET geometry produced zero H3 cells after centroid fallback")
 
     return sorted(cells)
 
