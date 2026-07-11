@@ -13,6 +13,7 @@ SHARED_CODE_DIR = REPO_ROOT / "functions" / "shared"
 sys.path.insert(0, str(SHARED_CODE_DIR))
 
 from wilvor_aircraft.bad_records import build_bad_record
+from wilvor_aircraft.monitoring import emit_metric
 from wilvor_aircraft.opensky_mapper import map_raw_event_to_current_state
 from wilvor_aircraft.schemas import OPENSKY_RAW_SCHEMA_VERSION
 
@@ -250,41 +251,75 @@ def handler(event, context):
         )
 
     bad_records_s3_key = None
-
+    bad_records_archive_failed = 0
+    
     try:
         bad_records_s3_key = archive_bad_records(
             bad_records=bad_records,
             invocation_id=invocation_id,
         )
-    except Exception:
+    except Exception as exc:
+        bad_records_archive_failed = 1
+    
+        print(
+            json.dumps(
+                {
+                    "event": "aircraft_bad_records_archive_failed",
+                    "invocation_id": invocation_id,
+                    "error_type": type(exc).__name__,
+                    "message": str(exc),
+                    "bad_records_count": len(bad_records),
+                }
+            )
+        )
+
         for sequence_number in bad_record_sequence_numbers:
             batch_item_failures.append({"itemIdentifier": sequence_number})
-
-    failed_clean_sequence_numbers = publish_clean_records(
-        clean_records=clean_records,
-    )
-
+    
+    failed_clean_sequence_numbers = publish_clean_records(clean_records=clean_records)
+    
     for sequence_number in failed_clean_sequence_numbers:
         batch_item_failures.append({"itemIdentifier": sequence_number})
+    
+    clean_records_failed = len(failed_clean_sequence_numbers)
+    clean_records_published = valid_records - clean_records_failed
+    
+    summary = {
+        "event": "aircraft_raw_batch_processed",
+        "invocation_id": invocation_id,
+        "total_records": total_records,
+        "decoded_records": decoded_records,
+        "valid_records": valid_records,
+        "rejected_records": rejected_records,
+        "clean_records_published": clean_records_published,
+        "clean_records_failed": clean_records_failed,
+        "bad_records_archived": len(bad_records),
+        "bad_records_archive_failed": bad_records_archive_failed,
+        "bad_records_s3_key": bad_records_s3_key,
+        "batch_item_failures": len(batch_item_failures),
+    }
 
-    print(
-        json.dumps(
-            {
-                "event": "aircraft_raw_batch_processed",
-                "invocation_id": invocation_id,
-                "total_records": total_records,
-                "decoded_records": decoded_records,
-                "valid_records": valid_records,
-                "rejected_records": rejected_records,
-                "clean_records_published": valid_records - len(failed_clean_sequence_numbers),
-                "clean_records_failed": len(failed_clean_sequence_numbers),
-                "bad_records_archived": len(bad_records),
-                "bad_records_s3_key": bad_records_s3_key,
-                "batch_item_failures": len(batch_item_failures),
-            }
-        )
+    print(json.dumps(summary))
+    
+    emit_metric(
+        pipeline="aircraft",
+        component="raw_processor",
+        stage="raw_to_clean",
+        metrics={
+            "TotalRecords": total_records,
+            "DecodedRecords": decoded_records,
+            "ValidRecords": valid_records,
+            "RejectedRecords": rejected_records,
+            "CleanRecordsPublished": clean_records_published,
+            "CleanRecordsFailed": clean_records_failed,
+            "BadRecordsArchived": len(bad_records),
+            "BadRecordsArchiveFailed": bad_records_archive_failed,
+            "BatchItemFailures": len(batch_item_failures),
+        },
+        properties={
+            "event": "aircraft_raw_processor_metrics",
+            "invocation_id": invocation_id,
+        },
     )
-
-    return {
-        "batchItemFailures": batch_item_failures,
-    }    
+    
+    return {"batchItemFailures": batch_item_failures}    

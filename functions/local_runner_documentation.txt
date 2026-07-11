@@ -382,3 +382,164 @@ aws lambda list-event-source-mappings `
 # ============================================================
 
 python .\functions\opensky_poller\local_runner.py --loop --interval 30
+
+
+# ============================================================
+# 23. VERIFY CLOUDWATCH DASHBOARD EXISTS
+# ============================================================
+
+aws cloudwatch list-dashboards `
+  --profile wilvor-dev `
+  --region us-west-1
+
+# Expected:
+# wilvor-dev-aircraft-pipeline
+
+
+# ============================================================
+# 24. VERIFY CLOUDWATCH ALARMS EXIST
+# ============================================================
+
+aws cloudwatch describe-alarms `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --alarm-name-prefix wilvor-dev-aircraft
+
+# Expected:
+# Multiple alarms for:
+# - OpenSky poller failures
+# - raw processor failures
+# - current-state writer failures
+# - Kinesis throttles
+# - Lambda errors/throttles
+# - DynamoDB throttles
+#
+# Some alarms may show INSUFFICIENT_DATA if the metric has not emitted recently.
+# That is normal in dev.
+
+
+# ============================================================
+# 25. VERIFY OPENSKY LOCAL POLLER CUSTOM METRICS
+# ============================================================
+# These metrics are published directly by local_runner.py using CloudWatch PutMetricData.
+# They do not come from Lambda logs.
+
+aws cloudwatch list-metrics `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --namespace "Wilvor/Pipeline" `
+  --dimensions `
+    Name=Environment,Value=dev `
+    Name=Pipeline,Value=aircraft `
+    Name=Component,Value=opensky_poller `
+    Name=Stage,Value=poll
+
+# Expected metrics:
+# PollSuccess
+# PollFailure
+# StatesCount
+# PublishedToKinesis
+# FailedKinesisRecords
+# RawArchiveSuccess
+
+
+# ============================================================
+# 26. VERIFY RAW PROCESSOR CUSTOM METRICS
+# ============================================================
+
+aws cloudwatch list-metrics `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --namespace "Wilvor/Pipeline" `
+  --dimensions `
+    Name=Environment,Value=dev `
+    Name=Pipeline,Value=aircraft `
+    Name=Component,Value=raw_processor `
+    Name=Stage,Value=raw_to_clean
+
+# Expected metrics:
+# TotalRecords
+# DecodedRecords
+# ValidRecords
+# RejectedRecords
+# CleanRecordsPublished
+# CleanRecordsFailed
+# BadRecordsArchived
+# BadRecordsArchiveFailed
+# BatchItemFailures
+
+
+# ============================================================
+# 27. VERIFY CURRENT STATE WRITER CUSTOM METRICS
+# ============================================================
+
+aws cloudwatch list-metrics `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --namespace "Wilvor/Pipeline" `
+  --dimensions `
+    Name=Environment,Value=dev `
+    Name=Pipeline,Value=aircraft `
+    Name=Component,Value=current_state_writer `
+    Name=Stage,Value=clean_to_dynamodb
+
+# Expected metrics:
+# TotalRecords
+# DecodedRecords
+# ValidRecords
+# WrittenRecords
+# SkippedStaleRecords
+# RejectedRecords
+# FailedRecords
+# BatchItemFailures
+
+
+# ============================================================
+# 28. CHECK RECENT OPENSKY POLLER METRIC DATA
+# ============================================================
+
+aws cloudwatch get-metric-statistics `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --namespace "Wilvor/Pipeline" `
+  --metric-name PollSuccess `
+  --dimensions `
+    Name=Environment,Value=dev `
+    Name=Pipeline,Value=aircraft `
+    Name=Component,Value=opensky_poller `
+    Name=Stage,Value=poll `
+  --start-time (Get-Date).AddMinutes(-30).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ") `
+  --end-time (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ") `
+  --period 60 `
+  --statistics Sum
+
+aws cloudwatch get-metric-statistics `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --namespace "Wilvor/Pipeline" `
+  --metric-name StatesCount `
+  --dimensions `
+    Name=Environment,Value=dev `
+    Name=Pipeline,Value=aircraft `
+    Name=Component,Value=opensky_poller `
+    Name=Stage,Value=poll `
+  --start-time (Get-Date).AddMinutes(-30).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ") `
+  --end-time (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ") `
+  --period 60 `
+  --statistics Sum
+
+
+# ============================================================
+# 29. OPEN DASHBOARD IN AWS CONSOLE
+# ============================================================
+
+# Go to:
+# CloudWatch → Dashboards → wilvor-dev-aircraft-pipeline
+#
+# Expected dashboard sections:
+# - OpenSky Poller - Local Producer
+# - Raw Processor - Raw to Clean
+# - Current State Writer - Clean to DynamoDB
+# - Kinesis Streams
+# - Lambda Errors
+# - DynamoDB Current State

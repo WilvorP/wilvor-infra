@@ -1,13 +1,14 @@
 import base64
 import json
 import os
-import time
 from decimal import Decimal
 from typing import Any
 
 import boto3
 from boto3.dynamodb.conditions import Attr
 from botocore.exceptions import ClientError
+
+from wilvor_aircraft.monitoring import emit_metric
 
 
 dynamodb = boto3.resource("dynamodb")
@@ -63,6 +64,7 @@ def convert_for_dynamodb(value: Any) -> Any:
 
     return value
 
+
 def put_current_state_item(item: dict[str, Any]) -> str:
     table_name = os.environ["AIRCRAFT_CURRENT_STATE_TABLE_NAME"]
     table = dynamodb.Table(table_name)
@@ -109,6 +111,7 @@ def handler(event, context):
             decoded_records += 1
 
             validation_reasons = validate_clean_record(clean_record)
+
             if validation_reasons:
                 rejected_records += 1
                 print(
@@ -146,22 +149,39 @@ def handler(event, context):
                 )
             )
 
-    print(
-        json.dumps(
-            {
-                "event": "aircraft_current_state_batch_processed",
-                "total_records": total_records,
-                "decoded_records": decoded_records,
-                "valid_records": valid_records,
-                "written_records": written_records,
-                "skipped_stale_records": skipped_stale_records,
-                "rejected_records": rejected_records,
-                "failed_records": failed_records,
-                "batch_item_failures": len(batch_item_failures),
-            }
-        )
+    summary = {
+        "event": "aircraft_current_state_batch_processed",
+        "total_records": total_records,
+        "decoded_records": decoded_records,
+        "valid_records": valid_records,
+        "written_records": written_records,
+        "skipped_stale_records": skipped_stale_records,
+        "rejected_records": rejected_records,
+        "failed_records": failed_records,
+        "batch_item_failures": len(batch_item_failures),
+    }
+
+    print(json.dumps(summary))
+
+    emit_metric(
+        pipeline="aircraft",
+        component="current_state_writer",
+        stage="clean_to_dynamodb",
+        metrics={
+            "TotalRecords": total_records,
+            "DecodedRecords": decoded_records,
+            "ValidRecords": valid_records,
+            "WrittenRecords": written_records,
+            "SkippedStaleRecords": skipped_stale_records,
+            "RejectedRecords": rejected_records,
+            "FailedRecords": failed_records,
+            "BatchItemFailures": len(batch_item_failures),
+        },
+        properties={
+            "event": "aircraft_current_state_writer_metrics",
+        },
     )
 
     return {
         "batchItemFailures": batch_item_failures,
-    }    
+    } 
