@@ -1,0 +1,814 @@
+This file documents the current manual workflow for:
+
+1. SIGMET poller
+2. SIGMET processor
+3. SIGMET raw archive
+4. ActiveHazards DynamoDB table
+5. HazardCells DynamoDB table
+6. Weather.changed EventBridge rule and CloudWatch target
+7. METAR poller
+8. METAR raw archive
+9. METAR raw Kinesis stream
+
+OpenSky and aircraft-related resources belong to a teammate and are not covered here.
+
+Current implementation status
+-----------------------------
+
+SIGMET:
+NOAA SIGMET API
+-> SIGMET poller Lambda
+-> SIGMET S3 archive bucket
+-> sigmet-raw Kinesis stream
+-> SIGMET processor Lambda
+-> ActiveHazards DynamoDB table
+-> HazardCells DynamoDB table
+-> Weather.changed EventBridge event
+-> CloudWatch Events log group
+
+METAR:
+NOAA METAR API
+-> METAR poller Lambda
+-> METAR S3 archive bucket
+-> metar-raw Kinesis stream
+
+METAR does not yet have a processor. Therefore, MetarLatest is expected to remain empty.
+
+Important repository paths
+--------------------------
+
+functions/weather/sigmet/poller
+functions/weather/sigmet/processor
+functions/weather/metar/poller
+
+modules/sigmet
+modules/metar
+modules/weather_events
+modules/aircraft_foundation
+
+envs/dev
+
+scripts/build_sigmet_poller.ps1
+scripts/build_sigmet_processor.ps1
+scripts/build_metar_poller.ps1
+
+Expected Terraform ownership
+----------------------------
+
+module.aircraft_foundation:
+- Aircraft and OpenSky resources only
+
+module.sigmet:
+- SIGMET archive bucket
+- sigmet-raw Kinesis stream
+- ActiveHazards DynamoDB table
+- HazardCells DynamoDB table
+- SIGMET poller Lambda
+- SIGMET processor Lambda
+- SIGMET processor Kinesis event-source mapping
+- SIGMET IAM roles and policies
+- SIGMET CloudWatch log groups
+- SIGMET polling schedule
+
+module.metar:
+- METAR archive bucket
+- metar-raw Kinesis stream
+- MetarLatest DynamoDB table
+- METAR poller Lambda
+- METAR IAM role and policy
+- METAR CloudWatch log group
+- METAR polling schedule
+
+module.weather_events:
+- Weather.changed EventBridge rule
+- CloudWatch Events log group
+- EventBridge target
+- CloudWatch Logs resource policy
+
+Unused streams removed
+----------------------
+
+The following unused streams should not exist:
+
+- sigmet-clean
+- metar-clean
+
+Separate archive buckets
+------------------------
+
+Expected buckets:
+
+- wilvor-dev-aircraft-archive-<account>-<region>
+- wilvor-dev-sigmet-archive-<account>-<region>
+- wilvor-dev-metar-archive-<account>-<region>
+
+The SIGMET and METAR pollers must not write to the aircraft archive bucket.
+
+Prerequisites
+-------------
+
+1. Open PowerShell.
+2. Activate the Python virtual environment.
+3. Confirm AWS CLI credentials are configured.
+4. Confirm Terraform is installed.
+5. Confirm the current branch contains the repository cleanup changes.
+6. Run commands from the repository root unless another directory is stated.
+
+Repository root example:
+
+C:\Users\ibrah\VS code\wilvor-infra
+
+
+PART 1 - BUILD THE WEATHER LAMBDA PACKAGES
+==========================================
+
+From the repository root:
+
+.\scripts\build_sigmet_poller.ps1
+.\scripts\build_sigmet_processor.ps1
+.\scripts\build_metar_poller.ps1
+
+Expected ZIP files:
+
+functions\weather\sigmet\poller\dist\sigmet_poller.zip
+
+functions\weather\sigmet\processor\dist\sigmet_processor.zip
+
+functions\weather\metar\poller\dist\metar_poller.zip
+
+Verify them:
+
+Test-Path functions\weather\sigmet\poller\dist\sigmet_poller.zip
+Test-Path functions\weather\sigmet\processor\dist\sigmet_processor.zip
+Test-Path functions\weather\metar\poller\dist\metar_poller.zip
+
+Expected output:
+
+True
+True
+True
+
+The package and dist folders are generated build artifacts and should remain ignored by Git.
+
+
+PART 2 - FORMAT, INITIALIZE, VALIDATE, AND PLAN
+===============================================
+
+From the repository root:
+
+terraform fmt -recursive
+
+Move into the development environment:
+
+cd envs\dev
+
+Initialize Terraform:
+
+terraform init -reconfigure
+
+Validate:
+
+terraform validate
+
+Expected:
+
+Success! The configuration is valid.
+
+Login to AWS:
+
+$env:AWS_PROFILE="wilvor-dev"
+$env:AWS_REGION="us-west-1"
+aws sso login --profile wilvor-dev
+
+Create a plan:
+
+terraform plan
+
+Expected characteristics:
+
+- Weather resources appear under module.sigmet, module.metar, and module.weather_events.
+- No SIGMET or METAR resources appear under module.aircraft_foundation.
+- Separate aircraft, SIGMET, and METAR archive buckets appear.
+- sigmet-clean and metar-clean do not appear.
+- Schedules are disabled in development.
+- When the Terraform state is empty, the plan should show additions and no changes or destruction.
+
+Example previously observed:
+
+Plan: 51 to add, 0 to change, 0 to destroy.
+
+To save an exact plan:
+
+terraform plan -out=tfplan
+
+Review it:
+
+terraform show tfplan
+
+
+PART 3 - VERIFY MODULE SEPARATION
+=================================
+
+From envs/dev:
+
+terraform plan -no-color |
+  Select-String -Pattern "module\.aircraft_foundation|module\.sigmet|module\.metar|module\.weather_events"
+
+Verify that SIGMET and METAR resources do not remain in aircraft_foundation:
+
+cd ..\..
+
+Get-ChildItem modules\aircraft_foundation -Filter *.tf |
+  Select-String -Pattern "sigmet|metar|taf|weather.changed|active_hazards|hazard_cells"
+
+Expected:
+
+No output.
+
+Return to envs/dev:
+
+cd envs\dev
+
+
+PART 4 - APPLY INFRASTRUCTURE
+=============================
+
+Apply the saved plan:
+
+terraform apply tfplan
+
+Or apply without a saved plan:
+
+terraform apply
+
+Important:
+
+envs/dev currently composes all modules, including aircraft_foundation. Applying this environment also creates the aircraft and OpenSky development resources, even though their source code is not being modified.
+
+After a successful apply, inspect outputs:
+
+terraform output
+
+Expected weather outputs include:
+
+active_hazards_table_name
+hazard_cells_table_name
+sigmet_archive_bucket_name
+sigmet_raw_stream_name
+sigmet_poller_function_name
+sigmet_processor_lambda_name
+sigmet_poller_schedule_name
+sigmet_poller_schedule_state
+
+metar_archive_bucket_name
+metar_raw_stream_name
+metar_latest_table_name
+metar_poller_function_name
+metar_poller_schedule_name
+metar_poller_schedule_state
+
+weather_changed_log_group_name
+
+
+PART 5 - TEST THE SIGMET POLLER
+===============================
+
+Disable the AWS CLI pager for the current PowerShell session:
+
+$env:AWS_PAGER = ""
+
+Invoke the SIGMET poller manually:
+
+aws lambda invoke `
+  --region us-west-1 `
+  --function-name $(terraform output -raw sigmet_poller_function_name) `
+  sigmet-response.json
+
+Read the Lambda response:
+
+Get-Content sigmet-response.json
+
+Expected response fields:
+
+"ok": true
+"poll_id": "<uuid>"
+"received_at": "<UTC timestamp>"
+"raw_s3_key": "raw/source=sigmet/..."
+"feature_count": <number>
+"published_count": <number>
+"failed_kinesis_records": 0
+
+Previously observed successful example:
+
+feature_count: 13
+published_count: 13
+failed_kinesis_records: 0
+
+
+PART 6 - VERIFY THE SIGMET S3 ARCHIVE
+=====================================
+
+List raw SIGMET objects:
+
+aws s3 ls `
+  "s3://$(terraform output -raw sigmet_archive_bucket_name)/raw/source=sigmet/" `
+  --recursive `
+  --region us-west-1
+
+Expected:
+
+At least one .json.gz object under a key similar to:
+
+raw/source=sigmet/year=YYYY/month=MM/day=DD/hour=HH/sigmet-<poll-id>.json.gz
+
+The object must be in the SIGMET archive bucket, not the aircraft archive bucket.
+
+
+PART 7 - VERIFY THE SIGMET PROCESSOR
+====================================
+
+Wait for asynchronous Kinesis processing.
+
+The poller Lambda invocation can finish before the SIGMET processor runs.
+
+Check processor logs:
+
+aws logs tail `
+  "/aws/lambda/$(terraform output -raw sigmet_processor_lambda_name)" `
+  --region us-west-1 `
+  --since 10m
+
+To wait for new logs:
+
+aws logs tail `
+  "/aws/lambda/$(terraform output -raw sigmet_processor_lambda_name)" `
+  --region us-west-1 `
+  --since 3m `
+  --follow
+
+Important:
+
+The --follow option keeps the command open and waits for future log entries.
+Press Ctrl+C to stop it.
+
+A successful first processed batch should contain values similar to:
+
+records_received: 13
+records_processed: 13
+records_failed: 0
+bad_records_written: 0
+active_hazards_written: 13
+hazard_cells_written: 658
+hazard_cells_removed: 0
+eventbridge_events_published: 13
+new_records: 13
+updated_records: 0
+unchanged_records: 0
+h3_resolution: 4
+
+
+PART 8 - VERIFY DYNAMODB COUNTS
+===============================
+
+ActiveHazards:
+
+aws dynamodb scan `
+  --region us-west-1 `
+  --table-name $(terraform output -raw active_hazards_table_name) `
+  --select COUNT
+
+HazardCells:
+
+aws dynamodb scan `
+  --region us-west-1 `
+  --table-name $(terraform output -raw hazard_cells_table_name) `
+  --select COUNT
+
+Previously observed successful result:
+
+ActiveHazards Count: 13
+HazardCells Count: 658
+
+The exact counts can change because NOAA's active SIGMET dataset changes over time.
+
+
+PART 9 - VERIFY THE KINESIS EVENT-SOURCE MAPPING
+================================================
+
+Run:
+
+aws lambda list-event-source-mappings `
+  --region us-west-1 `
+  --function-name $(terraform output -raw sigmet_processor_lambda_name) `
+  --query "EventSourceMappings[].{State:State,LastProcessingResult:LastProcessingResult,BatchSize:BatchSize,StartingPosition:StartingPosition}" `
+  --output table
+
+Expected:
+
+State: Enabled
+LastProcessingResult: OK
+BatchSize: 100
+StartingPosition: LATEST
+
+
+PART 10 - VERIFY SIGMET BAD RECORDS
+===================================
+
+Run:
+
+aws s3 ls `
+  "s3://$(terraform output -raw sigmet_archive_bucket_name)/bad-records/" `
+  --recursive `
+  --region us-west-1
+
+Expected for a valid NOAA batch:
+
+No output.
+
+No output means no bad-record objects were written.
+
+
+PART 11 - VERIFY WEATHER.CHANGED EVENTS
+=======================================
+
+Run:
+
+aws logs tail `
+  "$(terraform output -raw weather_changed_log_group_name)" `
+  --region us-west-1 `
+  --since 10m
+
+Expected events contain:
+
+"detail-type": "Weather.changed"
+"source": "wilvor.weather"
+"product_type": "SIGMET"
+"change_type": "NEW" or "UPDATED"
+"status": "ACTIVE"
+"hazard_id": "sigmet-..."
+"h3_resolution": 4
+"h3_cell_count": <number>
+"source": "NOAA AviationWeather"
+"schema_version": "internal.sigmet.v1"
+
+
+PART 12 - TEST SIGMET IDEMPOTENCY
+=================================
+
+Invoke the SIGMET poller again while the NOAA dataset is unchanged:
+
+aws lambda invoke `
+  --region us-west-1 `
+  --function-name $(terraform output -raw sigmet_poller_function_name) `
+  sigmet-response-second.json
+
+Read the response:
+
+Get-Content sigmet-response-second.json
+
+Wait for processing, then tail the processor logs:
+
+aws logs tail `
+  "/aws/lambda/$(terraform output -raw sigmet_processor_lambda_name)" `
+  --region us-west-1 `
+  --since 5m `
+  --follow
+
+Press Ctrl+C after the processor summary appears.
+
+Expected unchanged-record summary:
+
+records_received: 13
+records_processed: 13
+records_failed: 0
+bad_records_written: 0
+active_hazards_written: 0
+hazard_cells_written: 0
+hazard_cells_removed: 0
+eventbridge_events_published: 0
+new_records: 0
+updated_records: 0
+unchanged_records: 13
+
+The exact number of unchanged records depends on the NOAA response at test time.
+
+The important idempotency conditions are:
+
+active_hazards_written: 0
+hazard_cells_written: 0
+eventbridge_events_published: 0
+
+when all records are unchanged.
+
+
+PART 13 - TEST THE METAR POLLER
+===============================
+
+Invoke the METAR poller:
+
+aws lambda invoke `
+  --region us-west-1 `
+  --function-name $(terraform output -raw metar_poller_function_name) `
+  metar-response.json
+
+Read the response:
+
+Get-Content metar-response.json
+
+Expected response fields:
+
+"ok": true
+"poll_id": "<uuid>"
+"received_at": "<UTC timestamp>"
+"raw_s3_key": "raw/source=metar/..."
+"feature_count": <number>
+"published_count": <number>
+"failed_kinesis_records": 0
+
+Previously observed successful example:
+
+feature_count: 3
+published_count: 3
+failed_kinesis_records: 0
+
+
+PART 14 - VERIFY THE METAR ARCHIVE
+==================================
+
+Run:
+
+aws s3 ls `
+  "s3://$(terraform output -raw metar_archive_bucket_name)/raw/source=metar/" `
+  --recursive `
+  --region us-west-1
+
+Expected:
+
+At least one .json.gz object under:
+
+raw/source=metar/year=YYYY/month=MM/day=DD/hour=HH/metar-<poll-id>.json.gz
+
+The METAR object must be in the METAR archive bucket, not the aircraft archive bucket.
+
+METAR currently has no processor.
+
+Therefore:
+
+- MetarLatest may remain empty.
+- No METAR Weather.changed events are expected from the current implementation.
+
+
+PART 15 - FINAL TERRAFORM DRIFT CHECK
+=====================================
+
+From envs/dev:
+
+terraform plan
+
+Expected:
+
+No changes. Your infrastructure matches the configuration.
+
+
+PART 16 - GIT CHECK BEFORE COMMIT
+=================================
+
+Return to the repository root:
+
+cd ..\..
+
+Run:
+
+git status
+
+Generated files should not appear as tracked changes:
+
+- functions/**/package/
+- functions/**/dist/
+- *.zip in Lambda dist folders
+- tfplan
+- terraform.tfstate
+- terraform.tfstate.backup
+- sigmet-response.json
+- sigmet-response-second.json
+- sigmet-response-third.json
+- metar-response.json
+- payload-*.json
+- plan.txt
+
+Source files, Terraform files, build scripts, moved function folders, and documentation should appear when they were intentionally changed.
+
+
+PART 17 - COMMIT
+================
+
+Review changes:
+
+git diff
+git diff --staged
+
+Stage the intended cleanup:
+
+git add .
+
+Check again:
+
+git status
+
+Commit:
+
+git commit -m "Separate weather infrastructure from aircraft foundation"
+
+Push the cleanup branch:
+
+git push -u origin repo-cleanup
+
+
+PART 18 - DESTROY DEVELOPMENT INFRASTRUCTURE
+============================================
+
+Run this only from envs/dev:
+
+cd envs\dev
+
+terraform destroy
+
+After destroy:
+
+terraform state list
+
+Expected:
+
+No output.
+
+Important:
+
+Do not run terraform destroy from the repository root.
+Terraform commands must run from envs/dev for this environment.
+
+
+TROUBLESHOOTING
+===============
+
+1. Terraform validate succeeds but plan says Lambda ZIP file is missing
+---------------------------------------------------------------------
+
+Cause:
+
+The generated dist ZIP files do not exist.
+
+Fix:
+
+Run from the repository root:
+
+.\scripts\build_sigmet_poller.ps1
+.\scripts\build_sigmet_processor.ps1
+.\scripts\build_metar_poller.ps1
+
+
+2. Terraform shows duplicate SIGMET or METAR resources
+------------------------------------------------------
+
+Cause:
+
+Weather resources still exist in modules/aircraft_foundation.
+
+Check:
+
+Get-ChildItem modules\aircraft_foundation -Filter *.tf |
+  Select-String -Pattern "sigmet|metar|taf|weather.changed|active_hazards|hazard_cells"
+
+Expected:
+
+No output.
+
+
+3. SIGMET poller succeeds but DynamoDB is initially empty
+---------------------------------------------------------
+
+Cause:
+
+The Kinesis-triggered processor runs asynchronously.
+
+Fix:
+
+Wait and check:
+
+aws logs tail `
+  "/aws/lambda/$(terraform output -raw sigmet_processor_lambda_name)" `
+  --region us-west-1 `
+  --since 10m
+
+
+4. CloudWatch log command appears stuck
+---------------------------------------
+
+Cause:
+
+The command uses --follow and is waiting for future events.
+
+Fix:
+
+Press Ctrl+C.
+
+
+5. SIGMET records are in Kinesis but the processor is not running
+-----------------------------------------------------------------
+
+Check the event-source mapping:
+
+aws lambda list-event-source-mappings `
+  --region us-west-1 `
+  --function-name $(terraform output -raw sigmet_processor_lambda_name) `
+  --output table
+
+Expected:
+
+State: Enabled
+LastProcessingResult: OK
+
+
+6. MetarLatest is empty
+-----------------------
+
+This is currently expected.
+
+The implemented METAR pipeline ends at:
+
+NOAA API
+-> METAR poller
+-> METAR S3 archive
+-> metar-raw Kinesis
+
+A METAR processor has not yet been implemented.
+
+
+7. Bad records are not visible
+------------------------------
+
+No output from the bad-record S3 listing means no bad records were written.
+
+Command:
+
+aws s3 ls `
+  "s3://$(terraform output -raw sigmet_archive_bucket_name)/bad-records/" `
+  --recursive `
+  --region us-west-1
+
+
+CURRENT VERIFIED RESULTS
+========================
+
+The following results were observed on July 11, 2026:
+
+SIGMET poller:
+- feature_count: 13
+- published_count: 13
+- failed_kinesis_records: 0
+
+SIGMET processor first processed batch:
+- records_received: 13
+- records_processed: 13
+- records_failed: 0
+- bad_records_written: 0
+- active_hazards_written: 13
+- hazard_cells_written: 658
+- eventbridge_events_published: 13
+- new_records: 13
+
+DynamoDB:
+- ActiveHazards: 13
+- HazardCells: 658
+
+SIGMET idempotency batch:
+- records_received: 13
+- records_processed: 13
+- records_failed: 0
+- active_hazards_written: 0
+- hazard_cells_written: 0
+- eventbridge_events_published: 0
+- unchanged_records: 13
+
+Kinesis event-source mapping:
+- State: Enabled
+- LastProcessingResult: OK
+- BatchSize: 100
+- StartingPosition: LATEST
+
+SIGMET bad-record archive:
+- No bad records
+
+METAR poller:
+- feature_count: 3
+- published_count: 3
+- failed_kinesis_records: 0
+
+Infrastructure:
+- Separate aircraft archive bucket
+- Separate SIGMET archive bucket
+- Separate METAR archive bucket
+- SIGMET resources moved to module.sigmet
+- METAR resources moved to module.metar
+- Weather.changed resources moved to module.weather_events
+- sigmet-clean removed
+- metar-clean removed
