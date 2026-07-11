@@ -35,6 +35,7 @@ module "weather_events" {
   source = "../../modules/weather_events"
 
   name_prefix    = local.name_prefix
+  aws_region     = var.aws_region
   event_bus_name = local.default_event_bus_name
   tags           = local.common_tags
 }
