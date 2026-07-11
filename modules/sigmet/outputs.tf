@@ -37,3 +37,8 @@ output "schedule_name" {
 output "schedule_state" {
   value = var.enable_sigmet_poller_schedule ? "ENABLED" : "DISABLED"
 }
+
+output "dashboard_name" {
+  description = "Name of the SIGMET CloudWatch dashboard"
+  value       = aws_cloudwatch_dashboard.sigmet_pipeline.dashboard_name
+}

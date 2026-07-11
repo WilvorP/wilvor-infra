@@ -141,6 +141,7 @@ resource "aws_lambda_function" "sigmet_processor" {
 
   environment {
     variables = {
+      ENVIRONMENT = replace(var.name_prefix, "wilvor-", "")
       ACTIVE_HAZARDS_TABLE_NAME = aws_dynamodb_table.active_hazards.name
       HAZARD_CELLS_TABLE_NAME   = aws_dynamodb_table.hazard_cells.name
       H3_RESOLUTION             = "4"

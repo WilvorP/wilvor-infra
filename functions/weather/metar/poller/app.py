@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import boto3
+from wilvor_weather.monitoring import emit_metric
 
 
 kinesis = boto3.client("kinesis")
@@ -184,51 +185,116 @@ def lambda_handler(event, context):
     received_at_dt = now_utc()
     received_at = received_at_dt.isoformat()
 
-    response_body = fetch_noaa_metars()
+    raw_s3_key: str | None = None
+    feature_count = 0
+    published_count = 0
+    failed_count = 0
+    raw_archive_success = 0
 
-    raw_s3_key = archive_raw_response(
-        poll_id=poll_id,
-        response_body=response_body,
-        received_at=received_at_dt,
-    )
+    try:
+        response_body = fetch_noaa_metars()
 
-    records = extract_records(response_body)
-    feature_count = len(records)
-
-    bucket = os.environ["ARCHIVE_BUCKET_NAME"]
-
-    published_count, failed_count = publish_raw_records(
-        poll_id=poll_id,
-        received_at=received_at,
-        raw_s3_bucket=bucket,
-        raw_s3_key=raw_s3_key,
-        records=records,
-    )
-
-    print(
-        json.dumps(
-            {
-                "message": "METAR poll completed",
-                "poll_id": poll_id,
-                "raw_s3_key": raw_s3_key,
-                "feature_count": feature_count,
-                "published_count": published_count,
-                "failed_kinesis_records": failed_count,
-            }
+        raw_s3_key = archive_raw_response(
+            poll_id=poll_id,
+            response_body=response_body,
+            received_at=received_at_dt,
         )
-    )
+        raw_archive_success = 1
 
-    if failed_count > 0:
-        raise RuntimeError(
-            f"Failed to publish {failed_count} of {feature_count} METAR records to Kinesis"
+        records = extract_records(response_body)
+        feature_count = len(records)
+
+        bucket = os.environ["ARCHIVE_BUCKET_NAME"]
+
+        published_count, failed_count = publish_raw_records(
+            poll_id=poll_id,
+            received_at=received_at,
+            raw_s3_bucket=bucket,
+            raw_s3_key=raw_s3_key,
+            records=records,
         )
 
-    return {
-        "ok": True,
-        "poll_id": poll_id,
-        "received_at": received_at,
-        "raw_s3_key": raw_s3_key,
-        "feature_count": feature_count,
-        "published_count": published_count,
-        "failed_kinesis_records": failed_count,
-    }
+        if failed_count > 0:
+            raise RuntimeError(
+                f"Failed to publish {failed_count} of "
+                f"{feature_count} METAR records to Kinesis"
+            )
+
+        emit_metric(
+            pipeline="metar",
+            component="metar_poller",
+            stage="poll",
+            metrics={
+                "PollSuccess": 1,
+                "PollFailure": 0,
+                "FeaturesReceived": feature_count,
+                "PublishedToKinesis": published_count,
+                "FailedKinesisRecords": failed_count,
+                "RawArchiveSuccess": raw_archive_success,
+            },
+            properties={
+                "PollId": poll_id,
+                "RawS3Key": raw_s3_key,
+            },
+        )
+
+        print(
+            json.dumps(
+                {
+                    "message": "METAR poll completed",
+                    "poll_id": poll_id,
+                    "raw_s3_key": raw_s3_key,
+                    "feature_count": feature_count,
+                    "published_count": published_count,
+                    "failed_kinesis_records": failed_count,
+                }
+            )
+        )
+
+        return {
+            "ok": True,
+            "poll_id": poll_id,
+            "received_at": received_at,
+            "raw_s3_key": raw_s3_key,
+            "feature_count": feature_count,
+            "published_count": published_count,
+            "failed_kinesis_records": failed_count,
+        }
+
+    except Exception as exc:
+        emit_metric(
+            pipeline="metar",
+            component="metar_poller",
+            stage="poll",
+            metrics={
+                "PollSuccess": 0,
+                "PollFailure": 1,
+                "FeaturesReceived": feature_count,
+                "PublishedToKinesis": published_count,
+                "FailedKinesisRecords": failed_count,
+                "RawArchiveSuccess": raw_archive_success,
+            },
+            properties={
+                "PollId": poll_id,
+                "RawS3Key": raw_s3_key or "",
+                "ErrorType": exc.__class__.__name__,
+                "ErrorMessage": str(exc),
+            },
+        )
+
+        print(
+            json.dumps(
+                {
+                    "message": "METAR poll failed",
+                    "poll_id": poll_id,
+                    "error_type": exc.__class__.__name__,
+                    "error": str(exc),
+                    "feature_count": feature_count,
+                    "published_count": published_count,
+                    "failed_kinesis_records": failed_count,
+                    "raw_archive_success": raw_archive_success,
+                }
+            )
+        )
+
+        raise
