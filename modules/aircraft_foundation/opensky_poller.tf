@@ -73,16 +73,16 @@ data "aws_iam_policy_document" "opensky_poller_policy" {
     ]
   }
   statement {
-  sid    = "WriteRawOpenSkyResponseToS3"
-  effect = "Allow"
+    sid    = "WriteRawOpenSkyResponseToS3"
+    effect = "Allow"
 
-  actions = [
-    "s3:PutObject"
-  ]
+    actions = [
+      "s3:PutObject"
+    ]
 
-  resources = [
-    "${aws_s3_bucket.aircraft_archive.arn}/raw/*"
-  ]
+    resources = [
+      "${aws_s3_bucket.aircraft_archive.arn}/raw/*"
+    ]
   }
 }
 
@@ -112,7 +112,7 @@ resource "aws_lambda_function" "opensky_poller" {
       AIRCRAFT_ARCHIVE_BUCKET  = aws_s3_bucket.aircraft_archive.bucket
       OPENSKY_SECRET_ARN       = aws_secretsmanager_secret.opensky_credentials.arn
 
-      OPENSKY_TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
+      OPENSKY_TOKEN_URL  = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
       OPENSKY_STATES_URL = "https://opensky-network.org/api/states/all"
 
       # Small San Francisco Bay Area test box
