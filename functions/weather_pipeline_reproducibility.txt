@@ -570,61 +570,7 @@ Expected:
 No changes. Your infrastructure matches the configuration.
 
 
-PART 16 - GIT CHECK BEFORE COMMIT
-=================================
-
-Return to the repository root:
-
-cd ..\..
-
-Run:
-
-git status
-
-Generated files should not appear as tracked changes:
-
-- functions/**/package/
-- functions/**/dist/
-- *.zip in Lambda dist folders
-- tfplan
-- terraform.tfstate
-- terraform.tfstate.backup
-- sigmet-response.json
-- sigmet-response-second.json
-- sigmet-response-third.json
-- metar-response.json
-- payload-*.json
-- plan.txt
-
-Source files, Terraform files, build scripts, moved function folders, and documentation should appear when they were intentionally changed.
-
-
-PART 17 - COMMIT
-================
-
-Review changes:
-
-git diff
-git diff --staged
-
-Stage the intended cleanup:
-
-git add .
-
-Check again:
-
-git status
-
-Commit:
-
-git commit -m "Separate weather infrastructure from aircraft foundation"
-
-Push the cleanup branch:
-
-git push -u origin repo-cleanup
-
-
-PART 18 - DESTROY DEVELOPMENT INFRASTRUCTURE
+PART 17 - DESTROY DEVELOPMENT INFRASTRUCTURE
 ============================================
 
 Run this only from envs/dev:
