@@ -1,0 +1,46 @@
+# Phase 8
+1. Confirm Terraform resources exist:
+   - aircraft-raw Kinesis stream
+   - aircraft-clean Kinesis stream
+   - S3 archive bucket
+   - S3 bad-records bucket/prefix
+   - DynamoDB AircraftCurrentState
+   - Lambda execution roles
+   - EventBridge schedule
+   - Secrets Manager secret
+
+2. Add OpenSky secret:
+   - client_id
+   - client_secret
+
+3. Build shared aircraft schema package:
+   - raw schema
+   - clean schema
+   - bad-record schema
+   - OpenSky field mapper
+
+4. Build poller Lambda:
+   - token manager
+   - OpenSky API call
+   - raw event envelope
+   - Kinesis PutRecords
+
+5. Attach Firehose to aircraft-raw.
+
+6. Build validator Lambda:
+   - decode raw records
+   - validate
+   - normalize
+   - publish clean records
+   - write bad records to S3
+
+7. Attach Firehose to aircraft-clean.
+
+8. Build current-state writer Lambda:
+   - consume clean records
+   - idempotent DynamoDB update
+   - TTL handling
+
+9. Add dashboards and alarms.
+
+10. Run controlled Dev test for 1–2 hours.
