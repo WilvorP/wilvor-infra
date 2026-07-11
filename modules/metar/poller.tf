@@ -69,7 +69,7 @@ data "aws_iam_policy_document" "metar_poller_policy" {
     ]
 
     resources = [
-      "${aws_s3_bucket.aircraft_archive.arn}/raw/*",
+      "${aws_s3_bucket.metar_archive.arn}/raw/source=metar/*",
     ]
   }
 }
@@ -96,7 +96,7 @@ resource "aws_lambda_function" "metar_poller" {
   environment {
     variables = {
       METAR_RAW_STREAM_NAME = aws_kinesis_stream.metar_raw.name
-      ARCHIVE_BUCKET_NAME   = aws_s3_bucket.aircraft_archive.bucket
+      ARCHIVE_BUCKET_NAME   = aws_s3_bucket.metar_archive.bucket
       NOAA_METAR_URL        = var.metar_api_url
       RAW_PREFIX            = "raw/source=metar"
     }

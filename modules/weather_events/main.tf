@@ -9,18 +9,16 @@ resource "aws_cloudwatch_log_group" "weather_changed_events" {
 }
 
 resource "aws_cloudwatch_event_rule" "weather_changed" {
-  name        = "${var.name_prefix}-weather-changed"
-  description = "Captures Wilvor Weather.changed events for development testing"
+  name           = "${var.name_prefix}-weather-changed"
+  description    = "Captures Wilvor Weather.changed events"
+  event_bus_name = var.event_bus_name
 
   event_pattern = jsonencode({
-    source        = ["wilvor.weather"]
-    "detail-type" = ["Weather.changed"]
+    source      = ["wilvor.weather"]
+    detail-type = ["Weather.changed"]
   })
 
-  tags = merge(var.tags, {
-    Name      = "${var.name_prefix}-weather-changed"
-    Component = "weather-processing"
-  })
+  tags = var.tags
 }
 
 data "aws_iam_policy_document" "weather_changed_logs_resource_policy" {
@@ -50,11 +48,8 @@ resource "aws_cloudwatch_log_resource_policy" "eventbridge_to_weather_changed_lo
 }
 
 resource "aws_cloudwatch_event_target" "weather_changed_logs" {
-  rule      = aws_cloudwatch_event_rule.weather_changed.name
-  target_id = "WeatherChangedCloudWatchLogs"
-  arn       = aws_cloudwatch_log_group.weather_changed_events.arn
-
-  depends_on = [
-    aws_cloudwatch_log_resource_policy.eventbridge_to_weather_changed_logs,
-  ]
+  rule           = aws_cloudwatch_event_rule.weather_changed.name
+  event_bus_name = var.event_bus_name
+  target_id      = "WeatherChangedCloudWatchLogs"
+  arn            = aws_cloudwatch_log_group.weather_changed_events.arn
 }

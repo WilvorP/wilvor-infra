@@ -89,9 +89,7 @@ data "aws_iam_policy_document" "sigmet_processor_policy" {
       "events:PutEvents",
     ]
 
-    resources = [
-      "arn:aws:events:${var.aws_region}:${var.account_id}:event-bus/default",
-    ]
+    resources = [var.event_bus_arn]
   }
 
   statement {
@@ -103,7 +101,7 @@ data "aws_iam_policy_document" "sigmet_processor_policy" {
     ]
 
     resources = [
-      "${aws_s3_bucket.aircraft_archive.arn}/bad-records/source=sigmet_processor/*",
+      "${aws_s3_bucket.sigmet_archive.arn}/bad-records/source=sigmet_processor/*",
     ]
   }
 
@@ -147,8 +145,8 @@ resource "aws_lambda_function" "sigmet_processor" {
       HAZARD_CELLS_TABLE_NAME   = aws_dynamodb_table.hazard_cells.name
       H3_RESOLUTION             = "4"
       SCHEMA_VERSION            = "internal.sigmet.v1"
-      EVENT_BUS_NAME            = "default"
-      BAD_RECORDS_BUCKET_NAME   = aws_s3_bucket.aircraft_archive.bucket
+      EVENT_BUS_NAME            = var.event_bus_name
+      BAD_RECORDS_BUCKET_NAME   = aws_s3_bucket.sigmet_archive.bucket
       BAD_RECORDS_PREFIX        = "bad-records/source=sigmet_processor"
     }
   }

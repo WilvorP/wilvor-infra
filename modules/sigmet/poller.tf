@@ -69,7 +69,7 @@ data "aws_iam_policy_document" "sigmet_poller_policy" {
     ]
 
     resources = [
-      "${aws_s3_bucket.aircraft_archive.arn}/raw/*",
+      "${aws_s3_bucket.sigmet_archive.arn}/raw/source=sigmet/*",
     ]
   }
 }
@@ -96,7 +96,7 @@ resource "aws_lambda_function" "sigmet_poller" {
   environment {
     variables = {
       SIGMET_RAW_STREAM_NAME = aws_kinesis_stream.sigmet_raw.name
-      ARCHIVE_BUCKET_NAME    = aws_s3_bucket.aircraft_archive.bucket
+      ARCHIVE_BUCKET_NAME    = aws_s3_bucket.sigmet_archive.bucket
       NOAA_SIGMET_URL        = var.sigmet_api_url
       RAW_PREFIX             = "raw/source=sigmet"
     }
