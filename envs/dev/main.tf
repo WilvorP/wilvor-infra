@@ -23,14 +23,13 @@ module "aircraft_foundation" {
   enable_opensky_poller_schedule     = false
   opensky_poller_schedule_expression = "rate(5 minutes)"
 
-  sigmet_poller_zip_path            = "${path.root}/../../functions/sigmet_poller/dist/sigmet_poller.zip"
-  sigmet_processor_zip_path         = "${path.root}/../../functions/sigmet_processor/dist/sigmet_processor.zip"
+  sigmet_poller_zip_path = "${path.root}/../../functions/weather/sigmet/poller/dist/sigmet_poller.zip"
+  sigmet_processor_zip_path = "${path.root}/../../functions/weather/sigmet/processor/dist/sigmet_processor.zip"
   enable_sigmet_poller_schedule     = false
   sigmet_poller_schedule_expression = "rate(2 minutes)"
   sigmet_api_url                    = "https://aviationweather.gov/api/data/airsigmet?format=geojson"
 
-  metar_poller_zip_path = "${path.root}/../../functions/metar_poller/dist/metar_poller.zip"
-
+  metar_poller_zip_path = "${path.root}/../../functions/weather/metar/poller/dist/metar_poller.zip"
   enable_metar_poller_schedule     = false
   metar_poller_schedule_expression = "rate(3 minutes)"
   metar_api_url                    = "https://aviationweather.gov/api/data/metar?ids=KSFO,KOAK,KSJC&format=geojson"
