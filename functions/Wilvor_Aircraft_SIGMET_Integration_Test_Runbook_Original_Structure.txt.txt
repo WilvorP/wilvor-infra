@@ -1,0 +1,1165 @@
+# ============================================================
+# WILVOR AIRCRAFT + SIGMET DEV RESET + INTEGRATION TEST WORKFLOW
+# ============================================================
+
+# Start from repo root:
+cd "C:\Users\hamza\OneDrive\Desktop\InterviewPrepUSA\Summer Project\Wilvor\wilvor-infra"
+
+# Activate virtual environment
+.\.venv\Scripts\Activate
+
+# Login to your AWS dev account
+aws sso login --profile wilvor-dev
+
+# ============================================================
+# BUILD SIGMET LAMBDA PACKAGES BEFORE TERRAFORM
+# ============================================================
+# Run from the repository root.
+
+.\scripts\build_sigmet_poller.ps1
+.\scripts\build_sigmet_processor.ps1
+.\scripts\build_metar_poller.ps1
+
+Test-Path functions\weather\sigmet\poller\dist\sigmet_poller.zip
+Test-Path functions\weather\sigmet\processor\dist\sigmet_processor.zip
+Test-Path functions\weather\metar\poller\dist\metar_poller.zip
+# Expected:
+# True
+# True
+
+
+
+# ============================================================
+# 1. MOVE INTO TERRAFORM DEV ENVIRONMENT
+# ============================================================
+
+cd envs/dev
+
+
+# ============================================================
+# 2. INITIALIZE TERRAFORM
+# ============================================================
+
+terraform init
+
+
+# ============================================================
+# 3. FORMAT AND VALIDATE TERRAFORM
+# ============================================================
+
+terraform fmt -recursive
+
+terraform validate
+
+
+# ============================================================
+# 4. REVIEW PLAN
+# ============================================================
+
+terraform plan
+
+# Optional but better: save the plan
+terraform plan -out=tfplan
+
+
+# ============================================================
+# 5. APPLY INFRASTRUCTURE
+# ============================================================
+
+terraform apply tfplan
+
+
+# ============================================================
+# 6. CONFIRM OUTPUTS
+# ============================================================
+
+terraform output
+
+terraform output -raw aircraft_raw_stream_name
+terraform output -raw aircraft_clean_stream_name
+terraform output -raw aircraft_archive_bucket_name
+terraform output -raw aircraft_current_state_table_name
+terraform output -raw opensky_credentials_secret_name
+terraform output -raw opensky_credentials_secret_arn
+terraform output -raw aircraft_raw_processor_lambda_name
+terraform output -raw aircraft_current_state_writer_lambda_name
+
+# SIGMET outputs
+terraform output -raw sigmet_raw_stream_name
+terraform output -raw sigmet_archive_bucket_name
+terraform output -raw active_hazards_table_name
+terraform output -raw hazard_cells_table_name
+terraform output -raw sigmet_poller_function_name
+terraform output -raw sigmet_processor_lambda_name
+terraform output -raw sigmet_poller_schedule_name
+terraform output -raw sigmet_poller_schedule_state
+
+# Weather.changed output
+terraform output -raw weather_changed_log_group_name
+
+
+
+# ============================================================
+# 7. UPLOAD OPENSKY CREDENTIALS TO AWS SECRETS MANAGER
+# ============================================================
+# This assumes your local file exists at:
+# .secrets/credentials.json
+#
+# Expected JSON format:
+# {
+#   "clientId": "your-client-id",
+#   "clientSecret": "your-client-secret"
+# }
+#
+# Important:
+# Use the secret NAME for manual CLI upload.
+# The ARN caused ResourceNotFound issues in local restore workflow.
+
+$secretName = terraform output -raw opensky_credentials_secret_name
+$secretFile = (Resolve-Path ..\..\.secrets\credentials.json).Path
+
+aws secretsmanager put-secret-value `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --secret-id $secretName `
+  --secret-string file://$secretFile
+
+
+# Optional: verify the secret can be read
+aws secretsmanager get-secret-value `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --secret-id $secretName
+
+
+# Optional: set local env var for safety
+$env:OPENSKY_SECRET_ARN = $secretName
+
+
+# ============================================================
+# 8. VERIFY RAW PROCESSOR LAMBDA + EVENT SOURCE MAPPING
+# ============================================================
+
+aws lambda get-function `
+  --function-name wilvor-dev-aircraft-raw-processor `
+  --profile wilvor-dev `
+  --region us-west-1
+
+aws lambda list-event-source-mappings `
+  --function-name wilvor-dev-aircraft-raw-processor `
+  --profile wilvor-dev `
+  --region us-west-1
+
+# Expected:
+# State: Enabled
+# StartingPosition: LATEST
+# LastProcessingResult may say "No records processed" until you run the local poller.
+
+
+# ============================================================
+# 9. VERIFY CURRENT STATE WRITER LAMBDA + EVENT SOURCE MAPPING
+# ============================================================
+
+aws lambda get-function `
+  --function-name wilvor-dev-aircraft-current-state-writer `
+  --profile wilvor-dev `
+  --region us-west-1
+
+aws lambda list-event-source-mappings `
+  --function-name wilvor-dev-aircraft-current-state-writer `
+  --profile wilvor-dev `
+  --region us-west-1
+
+# Expected:
+# State: Enabled
+# EventSourceArn should point to wilvor-dev-aircraft-clean
+# StartingPosition: LATEST
+
+
+# ============================================================
+# 10. RETURN TO REPO ROOT
+# ============================================================
+
+cd ../..
+
+
+# ============================================================
+# 11. RUN LOCAL OPENSKY POLLER ONCE
+# ============================================================
+# This writes:
+# OpenSky raw response -> S3 raw/source=opensky/
+# Individual raw records -> Kinesis aircraft raw
+#
+# Then the live AWS pipeline should run automatically:
+# Kinesis raw
+# -> aircraft_raw_processor Lambda
+# -> Kinesis clean
+# -> aircraft_current_state_writer Lambda
+# -> DynamoDB AircraftCurrentState
+#
+# Bad records are written to:
+# S3 bad-records/source=opensky/
+
+python .\functions\opensky_poller\local_runner.py --once
+
+
+# Expected OpenSky poller success example:
+# {
+#   "ok": true,
+#   "mode": "real-opensky-poller",
+#   "states_count": 66,
+#   "published_to_kinesis": 66,
+#   "failed_kinesis_records": 0,
+#   "raw_s3_key": "raw/source=opensky/year=..."
+# }
+
+
+# ============================================================
+# 12. CHECK RAW PROCESSOR LAMBDA LOGS
+# ============================================================
+
+aws logs tail /aws/lambda/wilvor-dev-aircraft-raw-processor `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --since 10m
+
+# Expected log:
+# {
+#   "event": "aircraft_raw_batch_processed",
+#   "total_records": ...,
+#   "valid_records": ...,
+#   "rejected_records": ...,
+#   "clean_records_published": ...,
+#   "bad_records_archived": ...
+# }
+
+
+# ============================================================
+# 13. CHECK CURRENT STATE WRITER LAMBDA LOGS
+# ============================================================
+
+aws logs tail /aws/lambda/wilvor-dev-aircraft-current-state-writer `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --since 10m
+
+# Expected log:
+# {
+#   "event": "aircraft_current_state_batch_processed",
+#   "total_records": ...,
+#   "valid_records": ...,
+#   "written_records": ...,
+#   "skipped_stale_records": ...,
+#   "rejected_records": 0,
+#   "failed_records": 0,
+#   "batch_item_failures": 0
+# }
+
+
+# ============================================================
+# 14. VERIFY RAW S3 ARCHIVE
+# ============================================================
+
+cd envs/dev
+
+$bucket = terraform output -raw aircraft_archive_bucket_name
+
+aws s3 ls "s3://$bucket/raw/source=opensky/" `
+  --recursive `
+  --profile wilvor-dev `
+  --region us-west-1
+
+cd ../..
+
+
+# ============================================================
+# 15. VERIFY BAD RECORDS S3 ARCHIVE
+# ============================================================
+
+cd envs/dev
+
+$bucket = terraform output -raw aircraft_archive_bucket_name
+
+aws s3 ls "s3://$bucket/bad-records/source=opensky/" `
+  --recursive `
+  --profile wilvor-dev `
+  --region us-west-1
+
+cd ../..
+
+
+# ============================================================
+# 16. VERIFY KINESIS RAW STREAM EXISTS
+# ============================================================
+
+cd envs/dev
+
+$rawStreamName = terraform output -raw aircraft_raw_stream_name
+
+aws kinesis describe-stream-summary `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --stream-name $rawStreamName
+
+cd ../..
+
+
+# ============================================================
+# 17. VERIFY KINESIS CLEAN STREAM EXISTS
+# ============================================================
+
+cd envs/dev
+
+$cleanStreamName = terraform output -raw aircraft_clean_stream_name
+
+aws kinesis describe-stream-summary `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --stream-name $cleanStreamName
+
+cd ../..
+
+
+# ============================================================
+# 18. VERIFY DYNAMODB CURRENT STATE TABLE
+# ============================================================
+
+cd envs/dev
+
+$tableName = terraform output -raw aircraft_current_state_table_name
+
+aws dynamodb describe-table `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --table-name $tableName
+
+cd ../..
+
+
+# ============================================================
+# 19. SCAN A FEW DYNAMODB CURRENT STATE RECORDS
+# ============================================================
+# This confirms clean Kinesis records were written into DynamoDB.
+# Each aircraft should have one current-state item keyed by icao24.
+
+cd envs/dev
+
+$tableName = terraform output -raw aircraft_current_state_table_name
+
+aws dynamodb scan `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --table-name $tableName `
+  --limit 5
+
+cd ../..
+
+
+# ============================================================
+# 20. OPTIONAL: READ A FEW RECORDS FROM CLEAN STREAM
+# ============================================================
+# This confirms the raw processor published normalized aircraft_current_state.v1 records.
+# Note: TRIM_HORIZON may show older records if old records still exist in stream retention.
+
+cd envs/dev
+
+$cleanStreamName = terraform output -raw aircraft_clean_stream_name
+
+$shardId = aws kinesis describe-stream `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --stream-name $cleanStreamName `
+  --query "StreamDescription.Shards[0].ShardId" `
+  --output text
+
+$iterator = aws kinesis get-shard-iterator `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --stream-name $cleanStreamName `
+  --shard-id $shardId `
+  --shard-iterator-type TRIM_HORIZON `
+  --query "ShardIterator" `
+  --output text
+
+aws kinesis get-records `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --shard-iterator $iterator `
+  --limit 5
+
+cd ../..
+
+
+# ============================================================
+# 21. OPTIONAL: CHECK EVENT SOURCE MAPPINGS AFTER POLLER RUN
+# ============================================================
+
+aws lambda list-event-source-mappings `
+  --function-name wilvor-dev-aircraft-raw-processor `
+  --profile wilvor-dev `
+  --region us-west-1
+
+aws lambda list-event-source-mappings `
+  --function-name wilvor-dev-aircraft-current-state-writer `
+  --profile wilvor-dev `
+  --region us-west-1
+
+# Expected after fresh records:
+# LastProcessingResult: OK
+
+
+# ============================================================
+# 22. OPTIONAL: RUN LOCAL POLLER CONTINUOUSLY
+# ============================================================
+
+python .\functions\opensky_poller\local_runner.py --loop --interval 30
+
+
+# ============================================================
+# 23. VERIFY CLOUDWATCH DASHBOARD EXISTS
+# ============================================================
+
+aws cloudwatch list-dashboards `
+  --profile wilvor-dev `
+  --region us-west-1
+
+# Expected:
+# wilvor-dev-aircraft-pipeline
+
+
+# ============================================================
+# 24. VERIFY CLOUDWATCH ALARMS EXIST
+# ============================================================
+
+aws cloudwatch describe-alarms `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --alarm-name-prefix wilvor-dev-aircraft
+
+# Expected:
+# Multiple alarms for:
+# - OpenSky poller failures
+# - raw processor failures
+# - current-state writer failures
+# - Kinesis throttles
+# - Lambda errors/throttles
+# - DynamoDB throttles
+#
+# Some alarms may show INSUFFICIENT_DATA if the metric has not emitted recently.
+# That is normal in dev.
+
+
+# ============================================================
+# 25. VERIFY OPENSKY LOCAL POLLER CUSTOM METRICS
+# ============================================================
+# These metrics are published directly by local_runner.py using CloudWatch PutMetricData.
+# They do not come from Lambda logs.
+
+aws cloudwatch list-metrics `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --namespace "Wilvor/Pipeline" `
+  --dimensions `
+    Name=Environment,Value=dev `
+    Name=Pipeline,Value=aircraft `
+    Name=Component,Value=opensky_poller `
+    Name=Stage,Value=poll
+
+# Expected metrics:
+# PollSuccess
+# PollFailure
+# StatesCount
+# PublishedToKinesis
+# FailedKinesisRecords
+# RawArchiveSuccess
+
+
+# ============================================================
+# 26. VERIFY RAW PROCESSOR CUSTOM METRICS
+# ============================================================
+
+aws cloudwatch list-metrics `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --namespace "Wilvor/Pipeline" `
+  --dimensions `
+    Name=Environment,Value=dev `
+    Name=Pipeline,Value=aircraft `
+    Name=Component,Value=raw_processor `
+    Name=Stage,Value=raw_to_clean
+
+# Expected metrics:
+# TotalRecords
+# DecodedRecords
+# ValidRecords
+# RejectedRecords
+# CleanRecordsPublished
+# CleanRecordsFailed
+# BadRecordsArchived
+# BadRecordsArchiveFailed
+# BatchItemFailures
+
+
+# ============================================================
+# 27. VERIFY CURRENT STATE WRITER CUSTOM METRICS
+# ============================================================
+
+aws cloudwatch list-metrics `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --namespace "Wilvor/Pipeline" `
+  --dimensions `
+    Name=Environment,Value=dev `
+    Name=Pipeline,Value=aircraft `
+    Name=Component,Value=current_state_writer `
+    Name=Stage,Value=clean_to_dynamodb
+
+# Expected metrics:
+# TotalRecords
+# DecodedRecords
+# ValidRecords
+# WrittenRecords
+# SkippedStaleRecords
+# RejectedRecords
+# FailedRecords
+# BatchItemFailures
+
+
+# ============================================================
+# 28. CHECK RECENT OPENSKY POLLER METRIC DATA
+# ============================================================
+
+aws cloudwatch get-metric-statistics `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --namespace "Wilvor/Pipeline" `
+  --metric-name PollSuccess `
+  --dimensions `
+    Name=Environment,Value=dev `
+    Name=Pipeline,Value=aircraft `
+    Name=Component,Value=opensky_poller `
+    Name=Stage,Value=poll `
+  --start-time (Get-Date).AddMinutes(-30).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ") `
+  --end-time (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ") `
+  --period 60 `
+  --statistics Sum
+
+aws cloudwatch get-metric-statistics `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --namespace "Wilvor/Pipeline" `
+  --metric-name StatesCount `
+  --dimensions `
+    Name=Environment,Value=dev `
+    Name=Pipeline,Value=aircraft `
+    Name=Component,Value=opensky_poller `
+    Name=Stage,Value=poll `
+  --start-time (Get-Date).AddMinutes(-30).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ") `
+  --end-time (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ") `
+  --period 60 `
+  --statistics Sum
+
+
+# ============================================================
+# 29. OPEN DASHBOARD IN AWS CONSOLE
+# ============================================================
+
+# Go to:
+# CloudWatch → Dashboards → wilvor-dev-aircraft-pipeline
+#
+# Expected dashboard sections:
+# - OpenSky Poller - Local Producer
+# - Raw Processor - Raw to Clean
+# - Current State Writer - Clean to DynamoDB
+# - Kinesis Streams
+# - Lambda Errors
+# - DynamoDB Current State
+
+
+# ============================================================
+# ADDITIONAL SIGMET + INTEGRATION VALIDATION
+# ============================================================
+# The original aircraft sections 1-29 above remain unchanged.
+# The following sections add SIGMET and combined-pipeline testing.
+
+
+# ============================================================
+# 30. VERIFY ALL DEPLOYED AIRCRAFT AND SIGMET LAMBDA FUNCTIONS
+# ============================================================
+
+cd envs\dev
+
+$aircraftRawProcessor = terraform output -raw aircraft_raw_processor_lambda_name
+$aircraftWriter = terraform output -raw aircraft_current_state_writer_lambda_name
+$sigmetPoller = terraform output -raw sigmet_poller_function_name
+$sigmetProcessor = terraform output -raw sigmet_processor_lambda_name
+
+aws lambda get-function --function-name $aircraftRawProcessor --profile wilvor-dev --region us-west-1
+aws lambda get-function --function-name $aircraftWriter --profile wilvor-dev --region us-west-1
+aws lambda get-function --function-name $sigmetPoller --profile wilvor-dev --region us-west-1
+aws lambda get-function --function-name $sigmetProcessor --profile wilvor-dev --region us-west-1
+Expected: All four functions exist and return configuration and code metadata.
+
+
+# ============================================================
+# 31. VERIFY ALL AIRCRAFT AND SIGMET KINESIS EVENT SOURCE MAPPINGS
+# ============================================================
+
+aws lambda list-event-source-mappings `
+  --function-name $(terraform output -raw aircraft_raw_processor_lambda_name) `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --output table
+
+aws lambda list-event-source-mappings `
+  --function-name $(terraform output -raw aircraft_current_state_writer_lambda_name) `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --output table
+
+aws lambda list-event-source-mappings `
+  --function-name $(terraform output -raw sigmet_processor_lambda_name) `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --query "EventSourceMappings[].{State:State,LastProcessingResult:LastProcessingResult,BatchSize:BatchSize,StartingPosition:StartingPosition}" `
+  --output table
+Expected: Every mapping is Enabled. SIGMET uses the configured batch size and starts from LATEST.
+
+
+# ============================================================
+# 32. VERIFY SIGMET POLLER EVENTBRIDGE SCHEDULED RULE
+# ============================================================
+
+$ruleName = terraform output -raw sigmet_poller_schedule_name
+$expectedState = terraform output -raw sigmet_poller_schedule_state
+
+aws events describe-rule `
+  --name $ruleName `
+  --profile wilvor-dev `
+  --region us-west-1
+
+aws events list-targets-by-rule `
+  --rule $ruleName `
+  --profile wilvor-dev `
+  --region us-west-1
+
+Write-Host "Expected schedule state: $expectedState"
+
+# Expected in development:
+# State: DISABLED
+# ScheduleExpression: present
+# Target ARN: SIGMET poller Lambda
+
+
+# ============================================================
+# 33. RUN SIGMET PIPELINE ONCE
+# ============================================================
+
+cd envs\dev
+
+aws lambda invoke `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --function-name $(terraform output -raw sigmet_poller_function_name) `
+  sigmet-response.json
+
+Get-Content sigmet-response.json
+
+cd ..\..
+Expected: ok is true, feature_count equals published_count, failed_kinesis_records is zero, and raw_s3_key points to raw/source=sigmet/.
+
+
+# ============================================================
+# 34. CHECK SIGMET POLLER LAMBDA LOGS
+# ============================================================
+
+cd envs\dev
+
+aws logs tail `
+  "/aws/lambda/$(terraform output -raw sigmet_poller_function_name)" `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --since 10m
+
+cd ..\..
+Expected: The invocation completes successfully without unhandled exceptions.
+
+
+# ============================================================
+# 35. CHECK SIGMET PROCESSOR LAMBDA LOGS
+# ============================================================
+
+cd envs\dev
+
+aws logs tail `
+  "/aws/lambda/$(terraform output -raw sigmet_processor_lambda_name)" `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --since 10m
+
+cd ..\..
+Expected: records_failed is zero. Valid batches write active hazards, hazard cells, and Weather.changed events as applicable.
+
+
+# ============================================================
+# 36. VERIFY SIGMET RAW S3 ARCHIVE
+# ============================================================
+
+cd envs\dev
+
+$sigmetBucket = terraform output -raw sigmet_archive_bucket_name
+
+aws s3 ls "s3://$sigmetBucket/raw/source=sigmet/" `
+  --recursive `
+  --profile wilvor-dev `
+  --region us-west-1
+
+cd ..\..
+Expected: At least one compressed SIGMET archive object exists in the SIGMET bucket, not the aircraft bucket.
+
+
+# ============================================================
+# 37. VERIFY AIRCRAFT AND SIGMET BAD RECORD LOCATIONS
+# ============================================================
+
+cd envs\dev
+
+$aircraftBucket = terraform output -raw aircraft_archive_bucket_name
+$sigmetBucket = terraform output -raw sigmet_archive_bucket_name
+
+aws s3 ls "s3://$aircraftBucket/bad-records/source=opensky/" `
+  --recursive `
+  --profile wilvor-dev `
+  --region us-west-1
+
+aws s3 ls "s3://$sigmetBucket/bad-records/" `
+  --recursive `
+  --profile wilvor-dev `
+  --region us-west-1
+
+cd ..\..
+Expected: For valid live batches, no bad-record objects are expected. Existing objects must contain a documented rejection reason.
+
+
+# ============================================================
+# 38. VERIFY ACTIVEHAZARDS AND HAZARDCELLS DYNAMODB TABLES
+# ============================================================
+
+cd envs\dev
+
+$activeHazards = terraform output -raw active_hazards_table_name
+$hazardCells = terraform output -raw hazard_cells_table_name
+
+aws dynamodb describe-table --table-name $activeHazards --profile wilvor-dev --region us-west-1
+aws dynamodb describe-table --table-name $hazardCells --profile wilvor-dev --region us-west-1
+
+aws dynamodb scan `
+  --table-name $activeHazards `
+  --select COUNT `
+  --profile wilvor-dev `
+  --region us-west-1
+
+aws dynamodb scan `
+  --table-name $hazardCells `
+  --select COUNT `
+  --profile wilvor-dev `
+  --region us-west-1
+
+cd ..\..
+Expected: Both tables are ACTIVE. Counts reflect the current NOAA active SIGMET dataset and may change over time.
+
+
+# ============================================================
+# 39. VERIFY WEATHER.CHANGED EVENT DELIVERY
+# ============================================================
+
+cd envs\dev
+
+aws logs tail `
+  "$(terraform output -raw weather_changed_log_group_name)" `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --since 10m
+
+cd ..\..
+Expected: Events include detail-type Weather.changed, source wilvor.weather, product_type SIGMET, change_type NEW or UPDATED, a hazard_id, and schema_version internal.sigmet.v1.
+
+
+# ============================================================
+# 40. TEST SIGMET IDEMPOTENCY
+# ============================================================
+
+cd envs\dev
+
+aws lambda invoke `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --function-name $(terraform output -raw sigmet_poller_function_name) `
+  sigmet-response-second.json
+
+Get-Content sigmet-response-second.json
+
+Start-Sleep -Seconds 15
+
+aws logs tail `
+  "/aws/lambda/$(terraform output -raw sigmet_processor_lambda_name)" `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --since 5m
+
+cd ..\..
+Expected: When NOAA data is unchanged, active_hazards_written, hazard_cells_written, and eventbridge_events_published are zero, while unchanged_records equals the processed record count.
+
+
+# ============================================================
+# 41. RUN AIRCRAFT AND SIGMET PIPELINES TOGETHER
+# ============================================================
+
+Use two PowerShell terminals. Leave the aircraft poller running while SIGMET is invoked twice.
+# TERMINAL 1 - repository root
+.\.venv\Scripts\Activate
+$env:AWS_PROFILE = "wilvor-dev"
+$env:AWS_REGION = "us-west-1"
+python .\functions\opensky_poller\local_runner.py --loop --interval 30
+
+# TERMINAL 2 - repository root
+.\.venv\Scripts\Activate
+$env:AWS_PROFILE = "wilvor-dev"
+$env:AWS_REGION = "us-west-1"
+cd envs\dev
+
+aws lambda invoke `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --function-name $(terraform output -raw sigmet_poller_function_name) `
+  sigmet-integration-response.json
+
+Get-Content sigmet-integration-response.json
+
+Start-Sleep -Seconds 120
+
+aws lambda invoke `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --function-name $(terraform output -raw sigmet_poller_function_name) `
+  sigmet-integration-response-second.json
+
+Get-Content sigmet-integration-response-second.json
+Expected: Both pipelines process successfully during the same test window. Stop the aircraft loop with Ctrl+C after 5-10 minutes.
+
+
+# ============================================================
+# 42. VERIFY EVENT SOURCE MAPPINGS AFTER CONCURRENT PROCESSING
+# ============================================================
+
+cd envs\dev
+
+aws lambda list-event-source-mappings `
+  --function-name $(terraform output -raw aircraft_raw_processor_lambda_name) `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --output table
+
+aws lambda list-event-source-mappings `
+  --function-name $(terraform output -raw aircraft_current_state_writer_lambda_name) `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --output table
+
+aws lambda list-event-source-mappings `
+  --function-name $(terraform output -raw sigmet_processor_lambda_name) `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --output table
+
+cd ..\..
+Expected: LastProcessingResult is OK after fresh records are processed.
+
+
+# ============================================================
+# 43. VERIFY ALL CLOUDWATCH LOG GROUPS
+# ============================================================
+
+aws logs describe-log-groups `
+  --log-group-name-prefix "/aws/lambda/wilvor-dev-" `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --query "logGroups[].{Name:logGroupName,RetentionDays:retentionInDays,StoredBytes:storedBytes}" `
+  --output table
+
+cd envs\dev
+
+aws logs describe-log-groups `
+  --log-group-name-prefix "$(terraform output -raw weather_changed_log_group_name)" `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --output table
+
+cd ..\..
+Expected: Log groups exist for aircraft processing, SIGMET polling and processing, and Weather.changed delivery.
+
+
+# ============================================================
+# 44. VERIFY ALL CONFIGURED CLOUDWATCH ALARMS
+# ============================================================
+
+# Aircraft alarms
+aws cloudwatch describe-alarms `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --alarm-name-prefix wilvor-dev-aircraft
+
+# Discover every Wilvor dev alarm, including any SIGMET alarms implemented in Terraform
+aws cloudwatch describe-alarms `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --alarm-name-prefix wilvor-dev
+
+# Confirm Terraform-managed alarm resources
+cd envs\dev
+terraform state list | Select-String -Pattern "cloudwatch_metric_alarm"
+cd ..\..
+Expected: All Terraform-managed alarms exist. OK, ALARM, or INSUFFICIENT_DATA is acceptable depending on recent metric emission; missing alarms are not acceptable.
+
+
+# ============================================================
+# 45. READ STANDARD LAMBDA METRICS FOR EVERY PIPELINE FUNCTION
+# ============================================================
+
+cd envs\dev
+
+$functions = @(
+  (terraform output -raw aircraft_raw_processor_lambda_name),
+  (terraform output -raw aircraft_current_state_writer_lambda_name),
+  (terraform output -raw sigmet_poller_function_name),
+  (terraform output -raw sigmet_processor_lambda_name)
+)
+
+$start = (Get-Date).AddMinutes(-30).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+$end = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+foreach ($functionName in $functions) {
+  Write-Host "===== $functionName ====="
+
+  foreach ($metric in @("Invocations", "Errors", "Throttles", "Duration")) {
+    aws cloudwatch get-metric-statistics `
+      --profile wilvor-dev `
+      --region us-west-1 `
+      --namespace "AWS/Lambda" `
+      --metric-name $metric `
+      --dimensions Name=FunctionName,Value=$functionName `
+      --start-time $start `
+      --end-time $end `
+      --period 60 `
+      --statistics Sum Average Maximum
+  }
+}
+
+cd ..\..
+Expected: Invocations are present after testing. Errors and Throttles should be zero. Duration should remain below each function timeout.
+
+
+# ============================================================
+# 46. READ STANDARD KINESIS METRICS FOR ALL STREAMS
+# ============================================================
+
+cd envs\dev
+
+$streams = @(
+  (terraform output -raw aircraft_raw_stream_name),
+  (terraform output -raw aircraft_clean_stream_name),
+  (terraform output -raw sigmet_raw_stream_name)
+)
+
+$start = (Get-Date).AddMinutes(-30).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+$end = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+foreach ($streamName in $streams) {
+  Write-Host "===== $streamName ====="
+
+  foreach ($metric in @(
+    "IncomingRecords",
+    "WriteProvisionedThroughputExceeded",
+    "ReadProvisionedThroughputExceeded",
+    "GetRecords.IteratorAgeMilliseconds"
+  )) {
+    aws cloudwatch get-metric-statistics `
+      --profile wilvor-dev `
+      --region us-west-1 `
+      --namespace "AWS/Kinesis" `
+      --metric-name $metric `
+      --dimensions Name=StreamName,Value=$streamName `
+      --start-time $start `
+      --end-time $end `
+      --period 60 `
+      --statistics Sum Average Maximum
+  }
+}
+
+cd ..\..
+Expected: IncomingRecords is present for exercised streams. Read/write throughput-exceeded metrics should remain zero. Iterator age should return to near zero after processing.
+
+
+# ============================================================
+# 47. READ STANDARD DYNAMODB METRICS FOR ALL CURRENT STATE TABLES
+# ============================================================
+
+cd envs\dev
+
+$tables = @(
+  (terraform output -raw aircraft_current_state_table_name),
+  (terraform output -raw active_hazards_table_name),
+  (terraform output -raw hazard_cells_table_name)
+)
+
+$start = (Get-Date).AddMinutes(-30).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+$end = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+foreach ($tableName in $tables) {
+  Write-Host "===== $tableName ====="
+
+  foreach ($metric in @(
+    "ConsumedReadCapacityUnits",
+    "ConsumedWriteCapacityUnits",
+    "ReadThrottleEvents",
+    "WriteThrottleEvents",
+    "SystemErrors"
+  )) {
+    aws cloudwatch get-metric-statistics `
+      --profile wilvor-dev `
+      --region us-west-1 `
+      --namespace "AWS/DynamoDB" `
+      --metric-name $metric `
+      --dimensions Name=TableName,Value=$tableName `
+      --start-time $start `
+      --end-time $end `
+      --period 60 `
+      --statistics Sum Average Maximum
+  }
+}
+
+cd ..\..
+Expected: Consumed capacity reflects the test. ReadThrottleEvents, WriteThrottleEvents, and SystemErrors should be zero.
+
+
+# ============================================================
+# 48. VERIFY EVENTBRIDGE RULES AND TARGETS
+# ============================================================
+
+aws events list-rules `
+  --name-prefix wilvor-dev `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --output table
+
+$ruleNames = aws events list-rules `
+  --name-prefix wilvor-dev `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --query "Rules[].Name" `
+  --output text
+
+foreach ($ruleName in $ruleNames.Split()) {
+  Write-Host "===== $ruleName ====="
+  aws events list-targets-by-rule `
+    --rule $ruleName `
+    --profile wilvor-dev `
+    --region us-west-1 `
+    --output table
+}
+Expected: The Weather.changed rule exists and targets the configured CloudWatch Logs log group.
+
+
+# ============================================================
+# 49. VERIFY SEPARATE ARCHIVE BUCKETS AND OBJECT OWNERSHIP
+# ============================================================
+
+cd envs\dev
+
+$aircraftBucket = terraform output -raw aircraft_archive_bucket_name
+$sigmetBucket = terraform output -raw sigmet_archive_bucket_name
+
+Write-Host "Aircraft bucket: $aircraftBucket"
+Write-Host "SIGMET bucket:   $sigmetBucket"
+
+if ($aircraftBucket -eq $sigmetBucket) {
+  throw "Aircraft and SIGMET archive buckets must be different."
+}
+
+aws s3 ls "s3://$aircraftBucket/" --recursive --profile wilvor-dev --region us-west-1
+aws s3 ls "s3://$sigmetBucket/" --recursive --profile wilvor-dev --region us-west-1
+
+cd ..\..
+Expected: The bucket names differ. OpenSky objects appear only in the aircraft archive; SIGMET objects appear only in the SIGMET archive.
+
+
+# ============================================================
+# 50. FINAL TERRAFORM DRIFT CHECK
+# ============================================================
+
+cd envs\dev
+
+terraform plan
+
+cd ..\..
+Expected: No changes. Your infrastructure matches the configuration.
+
+
+# ============================================================
+# 51. INTEGRATION ACCEPTANCE CHECKLIST
+# ============================================================
+
+☐ Terraform formatting and validation succeed.
+☐ The saved plan contains no unexpected destructive changes.
+☐ Combined infrastructure applies successfully.
+☐ All aircraft and SIGMET Lambda functions exist.
+☐ All Kinesis event-source mappings are enabled.
+☐ The aircraft local poller publishes records successfully.
+☐ The aircraft raw processor writes normalized records to the clean stream.
+☐ The current-state writer writes aircraft records to DynamoDB.
+☐ The SIGMET poller archives and publishes NOAA records.
+☐ The SIGMET processor writes ActiveHazards and HazardCells.
+☐ Weather.changed events reach the CloudWatch log target.
+☐ SIGMET idempotency suppresses unchanged writes and events.
+☐ Aircraft and SIGMET pipelines run concurrently without interference.
+☐ Aircraft custom metrics are visible in Wilvor/Pipeline.
+☐ Lambda Errors and Throttles are zero.
+☐ Kinesis throughput-exceeded metrics are zero.
+☐ Kinesis iterator age returns to near zero.
+☐ DynamoDB throttle and system-error metrics are zero.
+☐ CloudWatch dashboard and alarms exist.
+☐ Aircraft and SIGMET archives remain separate.
+☐ Final terraform plan reports no drift.
+
+
+# ============================================================
+# 52. OPTIONAL DESTROY DEVELOPMENT INFRASTRUCTURE
+# ============================================================
+
+Run only after evidence is collected and only from envs/dev.
+cd envs\dev
+
+terraform destroy
+
+terraform state list
+Expected: After a successful destroy, terraform state list returns no resources.
+
+
+# ============================================================
+# 53. TROUBLESHOOTING
+# ============================================================
+
+Environment	dev
+AWS profile	wilvor-dev
+AWS region	us-west-1
+Included	Aircraft ingestion, aircraft processing, current-state writer, SIGMET ingestion, SIGMET processing, Weather.changed delivery, S3, Kinesis, DynamoDB, Lambda, EventBridge, CloudWatch
+Excluded	METAR and downstream aircraft-to-hazard risk logic
+Symptom	Action
+Missing SIGMET ZIP	Run the two SIGMET build scripts from the repository root, then repeat terraform plan.
+OpenSky secret not found	Use opensky_credentials_secret_name, not the ARN, when manually uploading the local credentials file.
+SIGMET poller succeeds but tables are empty	Wait for asynchronous Kinesis processing and inspect the SIGMET processor event-source mapping and logs.
+CloudWatch tail appears stuck	A command using --follow waits for future events. Press Ctrl+C.
+No bad-record objects	For valid data, no output is expected. This is not a failure.
+INSUFFICIENT_DATA alarm	This is acceptable in development when a metric has not emitted recently. Confirm that the alarm exists and that exercised components emit metrics.
+No recent metric datapoints	Confirm the test ran within the selected 30-minute window and wait one to two minutes for CloudWatch metric publication.
+Kinesis LastProcessingResult not OK	Inspect Lambda logs, iterator age, throttling metrics, and the failed batch record.
