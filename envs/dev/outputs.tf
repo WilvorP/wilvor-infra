@@ -47,6 +47,21 @@ output "opensky_credentials_secret_arn" {
   value = module.aircraft_foundation.opensky_credentials_secret_arn
 }
 
+output "aircraft_raw_processor_lambda_name" {
+  value = module.aircraft_foundation.aircraft_raw_processor_lambda_name
+}
+
+output "aircraft_raw_processor_lambda_arn" {
+  value = module.aircraft_foundation.aircraft_raw_processor_lambda_arn
+}
+
+output "aircraft_current_state_writer_lambda_name" {
+  value = module.aircraft_foundation.aircraft_current_state_writer_lambda_name
+}
+
+output "aircraft_current_state_writer_lambda_arn" {
+  value = module.aircraft_foundation.aircraft_current_state_writer_lambda_arn
+}
 output "sigmet_raw_stream_name" {
   value = module.sigmet.raw_stream_name
 }

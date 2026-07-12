@@ -21,3 +21,20 @@ OPENSKY_STATE_VECTOR_COLUMNS = [
     "spi",
     "position_source",
 ]
+
+METERS_TO_FEET = 3.28084
+MPS_TO_KNOTS = 1.94384
+MPS_TO_FPM = 196.8504
+
+OPENSKY_REQUIRED_CLEAN_FIELDS = [
+    "icao24",
+    "callsign",
+    "longitude",
+    "latitude",
+    "geo_altitude",
+    "velocity",
+    "true_track",
+    "vertical_rate",
+    "on_ground",
+    "last_contact",
+]

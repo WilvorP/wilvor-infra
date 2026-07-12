@@ -128,8 +128,8 @@ resource "aws_dynamodb_table" "aircraft_current_state" {
   name         = "${var.name_prefix}-aircraft-current-state"
   billing_mode = "PROVISIONED"
 
-  read_capacity  = 1
-  write_capacity = 1
+  read_capacity  = 5
+  write_capacity = 5
 
   hash_key = "icao24"
 

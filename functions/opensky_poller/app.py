@@ -9,6 +9,8 @@ from typing import Any
 
 import boto3
 
+from wilvor_aircraft.monitoring import emit_metric
+
 
 kinesis = boto3.client("kinesis")
 s3 = boto3.client("s3")
@@ -30,7 +32,7 @@ def test_public_internet() -> dict:
         return {
             "ok": True,
             "status": response.status,
-            "message": "Lambda can reach public internet"
+            "message": "Lambda can reach public internet",
         }
 
 
@@ -59,7 +61,9 @@ def get_secret() -> dict[str, str]:
     client_secret = secret.get("client_secret") or secret.get("clientSecret")
 
     if not client_id or not client_secret:
-        raise ValueError("OpenSky secret must contain client_id/client_secret or clientId/clientSecret")
+        raise ValueError(
+            "OpenSky secret must contain client_id/client_secret or clientId/clientSecret"
+        )
 
     _cached_secret = {
         "client_id": client_id,
@@ -80,11 +84,13 @@ def get_access_token() -> str:
 
     creds = get_secret()
 
-    body = urllib.parse.urlencode({
-        "grant_type": "client_credentials",
-        "client_id": creds["client_id"],
-        "client_secret": creds["client_secret"],
-    }).encode("utf-8")
+    body = urllib.parse.urlencode(
+        {
+            "grant_type": "client_credentials",
+            "client_id": creds["client_id"],
+            "client_secret": creds["client_secret"],
+        }
+    ).encode("utf-8")
 
     request = urllib.request.Request(
         os.environ["OPENSKY_TOKEN_URL"],
@@ -107,12 +113,14 @@ def get_access_token() -> str:
 def fetch_opensky_states() -> dict[str, Any]:
     token = get_access_token()
 
-    params = urllib.parse.urlencode({
-        "lamin": os.environ["OPENSKY_LAMIN"],
-        "lomin": os.environ["OPENSKY_LOMIN"],
-        "lamax": os.environ["OPENSKY_LAMAX"],
-        "lomax": os.environ["OPENSKY_LOMAX"],
-    })
+    params = urllib.parse.urlencode(
+        {
+            "lamin": os.environ["OPENSKY_LAMIN"],
+            "lomin": os.environ["OPENSKY_LOMIN"],
+            "lamax": os.environ["OPENSKY_LAMAX"],
+            "lomax": os.environ["OPENSKY_LOMAX"],
+        }
+    )
 
     url = f"{os.environ['OPENSKY_STATES_URL']}?{params}"
 
@@ -186,10 +194,12 @@ def publish_raw_records(
             "raw_state_vector": state_vector,
         }
 
-        records.append({
-            "PartitionKey": partition_key,
-            "Data": json.dumps(raw_event).encode("utf-8"),
-        })
+        records.append(
+            {
+                "PartitionKey": partition_key,
+                "Data": json.dumps(raw_event).encode("utf-8"),
+            }
+        )
 
     published = 0
     failed = 0
@@ -200,14 +210,15 @@ def publish_raw_records(
             Records=batch,
         )
 
-        failed += int(result.get("FailedRecordCount", 0))
-        published += len(batch) - int(result.get("FailedRecordCount", 0))
+        failed_count = int(result.get("FailedRecordCount", 0))
+        failed += failed_count
+        published += len(batch) - failed_count
 
     return published, failed
 
 
 def handler(event, context):
-
+    invocation_id = getattr(context, "aws_request_id", None) if context else None
 
     if isinstance(event, dict) and event.get("test") == "internet":
         return test_public_internet()
@@ -218,33 +229,101 @@ def handler(event, context):
             "ok": True,
             "message": "OpenSky token fetched",
             "token_prefix": token[:8],
-            "token_length": len(token)
-        }    
+            "token_length": len(token),
+        }
 
     poll_id = str(uuid.uuid4())
     fetched_at_utc = now_utc_iso()
 
-    opensky_response = fetch_opensky_states()
+    try:
+        opensky_response = fetch_opensky_states()
 
-    s3_key = archive_raw_response(
-        poll_id=poll_id,
-        response_body=opensky_response,
-    )
+        s3_key = archive_raw_response(
+            poll_id=poll_id,
+            response_body=opensky_response,
+        )
 
-    published_count, failed_count = publish_raw_records(
-        poll_id=poll_id,
-        opensky_response=opensky_response,
-        fetched_at_utc=fetched_at_utc,
-    )
+        published_count, failed_count = publish_raw_records(
+            poll_id=poll_id,
+            opensky_response=opensky_response,
+            fetched_at_utc=fetched_at_utc,
+        )
 
-    states_count = len(opensky_response.get("states") or [])
+        states_count = len(opensky_response.get("states") or [])
 
-    return {
-        "ok": True,
-        "mode": "real-opensky-poller",
-        "poll_id": poll_id,
-        "states_count": states_count,
-        "published_to_kinesis": published_count,
-        "failed_kinesis_records": failed_count,
-        "raw_s3_key": s3_key,
-    }
+        result = {
+            "ok": True,
+            "mode": "real-opensky-poller",
+            "poll_id": poll_id,
+            "states_count": states_count,
+            "published_to_kinesis": published_count,
+            "failed_kinesis_records": failed_count,
+            "raw_s3_key": s3_key,
+        }
+
+        print(
+            json.dumps(
+                {
+                    "event": "opensky_poll_completed",
+                    "invocation_id": invocation_id,
+                    **result,
+                }
+            )
+        )
+
+        emit_metric(
+            pipeline="aircraft",
+            component="opensky_poller",
+            stage="poll",
+            metrics={
+                "PollSuccess": 1,
+                "PollFailure": 0,
+                "StatesCount": states_count,
+                "PublishedToKinesis": published_count,
+                "FailedKinesisRecords": failed_count,
+                "RawArchiveSuccess": 1,
+            },
+            properties={
+                "event": "opensky_poller_metrics",
+                "invocation_id": invocation_id,
+                "poll_id": poll_id,
+                "raw_s3_key": s3_key,
+            },
+        )
+
+        return result
+
+    except Exception as exc:
+        print(
+            json.dumps(
+                {
+                    "event": "opensky_poll_failed",
+                    "invocation_id": invocation_id,
+                    "poll_id": poll_id,
+                    "error_type": type(exc).__name__,
+                    "message": str(exc),
+                }
+            )
+        )
+
+        emit_metric(
+            pipeline="aircraft",
+            component="opensky_poller",
+            stage="poll",
+            metrics={
+                "PollSuccess": 0,
+                "PollFailure": 1,
+                "StatesCount": 0,
+                "PublishedToKinesis": 0,
+                "FailedKinesisRecords": 0,
+                "RawArchiveSuccess": 0,
+            },
+            properties={
+                "event": "opensky_poller_metrics",
+                "invocation_id": invocation_id,
+                "poll_id": poll_id,
+                "error_type": type(exc).__name__,
+            },
+        )
+
+        raise
