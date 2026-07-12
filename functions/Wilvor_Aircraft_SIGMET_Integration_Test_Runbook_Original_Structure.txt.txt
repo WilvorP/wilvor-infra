@@ -1163,3 +1163,663 @@ No bad-record objects	For valid data, no output is expected. This is not a failu
 INSUFFICIENT_DATA alarm	This is acceptable in development when a metric has not emitted recently. Confirm that the alarm exists and that exercised components emit metrics.
 No recent metric datapoints	Confirm the test ran within the selected 30-minute window and wait one to two minutes for CloudWatch metric publication.
 Kinesis LastProcessingResult not OK	Inspect Lambda logs, iterator age, throttling metrics, and the failed batch record.
+
+
+
+# 54. PREPARE CLOUDWATCH COMMAND SESSION
+# ============================================================
+# Run from the repository root.
+
+
+
+$ErrorActionPreference = "Stop"
+
+$env:AWS_PAGER = ""
+
+$env:AWS_PROFILE = "wilvor-dev"
+
+$env:AWS_REGION = "us-west-1"
+
+
+
+cd envs\dev
+
+
+
+$start30m = (Get-Date).AddMinutes(-30).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+$endNow = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+
+
+
+
+# ============================================================
+# 55. VERIFY SIGMET AND WEATHER EVENTS DASHBOARDS EXIST
+# ============================================================
+
+
+
+$dashboardNames = @(
+
+  (terraform output -raw sigmet_dashboard_name),
+
+  (terraform output -raw weather_events_dashboard_name)
+
+)
+
+
+
+foreach ($dashboardName in $dashboardNames) {
+
+  aws cloudwatch get-dashboard `
+
+    --profile wilvor-dev `
+
+    --region us-west-1 `
+
+    --dashboard-name $dashboardName `
+
+    --query "{Name:DashboardName,ValidationMessages:DashboardValidationMessages}" `
+
+    --output json
+
+}
+
+
+
+# Expected:
+
+# wilvor-dev-sigmet-pipeline
+
+# wilvor-dev-weather-events
+
+#
+
+# DashboardValidationMessages should be empty.
+
+
+
+
+
+# ============================================================
+# 56. CHECK SIGMET POLLER CLOUDWATCH LOGS AND EMF
+# ============================================================
+
+
+
+$sigmetPoller = terraform output -raw sigmet_poller_function_name
+
+
+
+aws logs tail `
+
+  "/aws/lambda/$sigmetPoller" `
+
+  --profile wilvor-dev `
+
+  --region us-west-1 `
+
+  --since 30m
+
+
+
+# Expected:
+
+# - Poll completed successfully
+
+# - Namespace: Wilvor/Pipeline
+
+# - Pipeline: sigmet
+
+# - Component: sigmet_poller
+
+# - Stage: poll
+
+# - PollSuccess: 1
+
+# - PollFailure: 0
+
+# - FailedKinesisRecords: 0
+
+# - FeaturesReceived equals PublishedToKinesis
+
+# - RawArchiveSuccess: 1
+
+
+
+
+
+# ============================================================
+# 57. CHECK SIGMET PROCESSOR CLOUDWATCH LOGS AND EMF
+# ============================================================
+
+
+
+$sigmetProcessor = terraform output -raw sigmet_processor_lambda_name
+
+
+
+aws logs tail `
+
+  "/aws/lambda/$sigmetProcessor" `
+
+  --profile wilvor-dev `
+
+  --region us-west-1 `
+
+  --since 30m
+
+
+
+# Expected:
+
+# - Processor completed successfully
+
+# - Namespace: Wilvor/Pipeline
+
+# - Pipeline: sigmet
+
+# - Component: sigmet_processor
+
+# - Stage: raw_to_state
+
+# - RecordsProcessed equals RecordsReceived
+
+# - RecordsFailed: 0
+
+# - BadRecordsWritten: 0 for valid data
+
+# - BatchItemFailures: 0
+
+
+
+
+
+# ============================================================
+# 58. VERIFY SIGMET CUSTOM METRICS EXIST
+# ============================================================
+
+
+
+aws cloudwatch list-metrics `
+
+  --profile wilvor-dev `
+
+  --region us-west-1 `
+
+  --namespace "Wilvor/Pipeline" `
+
+  --dimensions `
+
+    Name=Environment,Value=dev `
+
+    Name=Pipeline,Value=sigmet `
+
+  --query "Metrics[].{Metric:MetricName,Dimensions:Dimensions}" `
+
+  --output table
+
+
+
+# Expected:
+
+# SIGMET poller and SIGMET processor custom metrics.
+
+#
+
+# CloudWatch may take one to two minutes to extract new EMF metrics.
+
+
+
+
+
+# ============================================================
+# 59. VERIFY SIGMET ALARMS
+# ============================================================
+
+
+
+aws cloudwatch describe-alarms `
+
+  --profile wilvor-dev `
+
+  --region us-west-1 `
+
+  --alarm-name-prefix wilvor-dev-sigmet `
+
+  --query "MetricAlarms[].{Name:AlarmName,State:StateValue,Metric:MetricName}" `
+
+  --output table
+
+
+
+# Expected:
+
+# All configured SIGMET alarms exist.
+
+# Healthy state is OK.
+
+
+
+
+
+# ============================================================
+# 60. VERIFY WEATHER EVENTS ALARM
+# ============================================================
+
+
+
+aws cloudwatch describe-alarms `
+
+  --profile wilvor-dev `
+
+  --region us-west-1 `
+
+  --alarm-name-prefix wilvor-dev-weather `
+
+  --query "MetricAlarms[].{Name:AlarmName,State:StateValue,Metric:MetricName}" `
+
+  --output table
+
+
+
+# Expected:
+
+# wilvor-dev-weather-changed-failed-invocations
+
+# Healthy state is OK.
+
+
+
+
+
+# ============================================================
+# 61. SHOW ONLY CURRENT SIGMET OR WEATHER ALARMS
+# ============================================================
+
+
+
+aws cloudwatch describe-alarms `
+
+  --profile wilvor-dev `
+
+  --region us-west-1 `
+
+  --state-value ALARM `
+
+  --alarm-name-prefix wilvor-dev-sigmet `
+
+  --query "MetricAlarms[].{Name:AlarmName,Metric:MetricName,Reason:StateReason}" `
+
+  --output table
+
+
+
+aws cloudwatch describe-alarms `
+
+  --profile wilvor-dev `
+
+  --region us-west-1 `
+
+  --state-value ALARM `
+
+  --alarm-name-prefix wilvor-dev-weather `
+
+  --query "MetricAlarms[].{Name:AlarmName,Metric:MetricName,Reason:StateReason}" `
+
+  --output table
+
+
+
+# Expected during a healthy test:
+
+# No rows.
+
+
+
+
+
+# ============================================================
+# 62. CHECK SIGMET KINESIS HEALTH
+# ============================================================
+
+
+
+$sigmetStream = terraform output -raw sigmet_raw_stream_name
+
+
+
+foreach ($metric in @(
+
+  "IncomingRecords",
+
+  "WriteProvisionedThroughputExceeded",
+
+  "ReadProvisionedThroughputExceeded",
+
+  "GetRecords.IteratorAgeMilliseconds"
+
+)) {
+
+  Write-Host "===== SIGMET KINESIS: $metric ====="
+
+
+
+  aws cloudwatch get-metric-statistics `
+
+    --profile wilvor-dev `
+
+    --region us-west-1 `
+
+    --namespace "AWS/Kinesis" `
+
+    --metric-name $metric `
+
+    --dimensions Name=StreamName,Value=$sigmetStream `
+
+    --start-time $start30m `
+
+    --end-time $endNow `
+
+    --period 60 `
+
+    --statistics Sum Maximum `
+
+    --output table
+
+}
+
+
+
+# Expected:
+
+# IncomingRecords is present after a poll.
+
+# Read/write throughput-exceeded metrics are zero.
+
+# Iterator age returns to near zero after processing.
+
+
+
+
+
+# ============================================================
+# 63. CHECK SIGMET DYNAMODB HEALTH
+# ============================================================
+
+
+
+$sigmetTables = @(
+
+  (terraform output -raw active_hazards_table_name),
+
+  (terraform output -raw hazard_cells_table_name)
+
+)
+
+
+
+foreach ($tableName in $sigmetTables) {
+
+  Write-Host "===== DYNAMODB: $tableName ====="
+
+
+
+  foreach ($metric in @(
+
+    "ConsumedWriteCapacityUnits",
+
+    "ReadThrottleEvents",
+
+    "WriteThrottleEvents",
+
+    "SystemErrors"
+
+  )) {
+
+    aws cloudwatch get-metric-statistics `
+
+      --profile wilvor-dev `
+
+      --region us-west-1 `
+
+      --namespace "AWS/DynamoDB" `
+
+      --metric-name $metric `
+
+      --dimensions Name=TableName,Value=$tableName `
+
+      --start-time $start30m `
+
+      --end-time $endNow `
+
+      --period 60 `
+
+      --statistics Sum Maximum `
+
+      --output table
+
+  }
+
+}
+
+
+
+# Expected:
+
+# ConsumedWriteCapacityUnits reflects the processed batch.
+
+# ReadThrottleEvents, WriteThrottleEvents, and SystemErrors are zero.
+
+
+
+
+
+# ============================================================
+# 64. CHECK HAZARDCELLS ALARM HISTORY ONLY WHEN IT IS IN ALARM
+# ============================================================
+
+
+
+$hazardCellsAlarmState = aws cloudwatch describe-alarms `
+
+  --profile wilvor-dev `
+
+  --region us-west-1 `
+
+  --alarm-names "wilvor-dev-sigmet-hazard-cells-write-throttles" `
+
+  --query "MetricAlarms[0].StateValue" `
+
+  --output text
+
+
+
+Write-Host "HazardCells write-throttle alarm: $hazardCellsAlarmState"
+
+
+
+if ($hazardCellsAlarmState -eq "ALARM") {
+
+  aws cloudwatch describe-alarm-history `
+
+    --profile wilvor-dev `
+
+    --region us-west-1 `
+
+    --alarm-name "wilvor-dev-sigmet-hazard-cells-write-throttles" `
+
+    --history-item-type StateUpdate `
+
+    --max-records 10 `
+
+    --query "AlarmHistoryItems[].{Time:Timestamp,Summary:HistorySummary}" `
+
+    --output table
+
+}
+
+
+
+# No alarm-history query is run when the alarm is already OK.
+
+
+
+
+
+# ============================================================
+# 65. CHECK WEATHER.CHANGED EVENTBRIDGE HEALTH
+# ============================================================
+
+
+
+$weatherRuleName = aws events list-rules `
+
+  --profile wilvor-dev `
+
+  --region us-west-1 `
+
+  --name-prefix "wilvor-dev-weather" `
+
+  --query "Rules[?contains(Name, 'weather-changed')].Name | [0]" `
+
+  --output text
+
+
+
+if (-not $weatherRuleName -or $weatherRuleName -eq "None") {
+
+  throw "Weather.changed EventBridge rule was not found."
+
+}
+
+
+
+Write-Host "Weather.changed rule: $weatherRuleName"
+
+
+
+foreach ($metric in @("MatchedEvents", "Invocations", "FailedInvocations")) {
+
+  Write-Host "===== EVENTBRIDGE: $metric ====="
+
+
+
+  aws cloudwatch get-metric-statistics `
+
+    --profile wilvor-dev `
+
+    --region us-west-1 `
+
+    --namespace "AWS/Events" `
+
+    --metric-name $metric `
+
+    --dimensions Name=RuleName,Value=$weatherRuleName `
+
+    --start-time $start30m `
+
+    --end-time $endNow `
+
+    --period 60 `
+
+    --statistics Sum `
+
+    --output table
+
+}
+
+
+
+# Expected after new or updated SIGMETs:
+
+# MatchedEvents is greater than zero.
+
+# Invocations is greater than zero.
+
+# FailedInvocations is zero.
+
+
+
+
+
+# ============================================================
+# 66. CHECK WEATHER.CHANGED EVENT LOG DELIVERY
+# ============================================================
+
+
+
+aws logs tail `
+
+  "$(terraform output -raw weather_changed_log_group_name)" `
+
+  --profile wilvor-dev `
+
+  --region us-west-1 `
+
+  --since 30m
+
+
+
+# Expected event fields:
+
+# detail-type: Weather.changed
+
+# source: wilvor.weather
+
+# product_type: SIGMET
+
+# change_type: NEW or UPDATED
+
+# hazard_id: sigmet-...
+
+# schema_version: internal.sigmet.v1
+
+
+
+
+
+# ============================================================
+# 67. FINAL TERRAFORM DRIFT CHECK
+# ============================================================
+
+
+
+terraform plan
+
+
+
+# Expected:
+
+# No changes. Your infrastructure matches the configuration.
+
+
+
+
+
+# ============================================================
+# 68. VIEW DASHBOARDS AND ALARMS IN AWS
+# ============================================================
+
+
+
+# CloudWatch -> Dashboards:
+
+# - wilvor-dev-sigmet-pipeline
+
+# - wilvor-dev-weather-events
+
+#
+
+# Use Last 1 hour for current health.
+
+# A longer range can show historical errors that have already been fixed.
+
+#
+
+# CloudWatch -> Alarms -> All alarms:
+
+# - Search wilvor-dev-sigmet
+
+# - Search wilvor-dev-weather
