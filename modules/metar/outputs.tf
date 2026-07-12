@@ -47,3 +47,8 @@ output "schedule_state" {
   description = "Whether the METAR polling schedule is enabled"
   value       = var.enable_metar_poller_schedule ? "ENABLED" : "DISABLED"
 }
+
+output "dashboard_name" {
+  description = "Name of the METAR CloudWatch dashboard"
+  value       = aws_cloudwatch_dashboard.metar_pipeline.dashboard_name
+}

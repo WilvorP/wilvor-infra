@@ -95,6 +95,7 @@ resource "aws_lambda_function" "metar_poller" {
 
   environment {
     variables = {
+      ENVIRONMENT           = replace(var.name_prefix, "wilvor-", "")
       METAR_RAW_STREAM_NAME = aws_kinesis_stream.metar_raw.name
       ARCHIVE_BUCKET_NAME   = aws_s3_bucket.metar_archive.bucket
       NOAA_METAR_URL        = var.metar_api_url

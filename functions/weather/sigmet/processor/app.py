@@ -10,6 +10,7 @@ from typing import Any
 import boto3
 import h3
 from botocore.exceptions import BotoCoreError, ClientError
+from wilvor_weather.monitoring import emit_metric
 
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
@@ -821,6 +822,31 @@ def lambda_handler(event, context):
             if sequence_number:
                 batch_item_failures.append({"itemIdentifier": sequence_number})
 
+    batch_item_failures_count = len(batch_item_failures)
+
+    emit_metric(
+        pipeline="sigmet",
+        component="sigmet_processor",
+        stage="raw_to_state",
+        metrics={
+            "RecordsReceived": records_received,
+            "RecordsProcessed": records_processed,
+            "RecordsFailed": records_failed,
+            "BadRecordsWritten": bad_records_written,
+            "ActiveHazardsWritten": active_hazards_written,
+            "HazardCellsWritten": hazard_cells_written,
+            "HazardCellsRemoved": hazard_cells_removed,
+            "EventBridgeEventsPublished": eventbridge_events_published,
+            "NewRecords": new_records,
+            "UpdatedRecords": updated_records,
+            "UnchangedRecords": unchanged_records,
+            "BatchItemFailures": batch_item_failures_count,
+        },
+        properties={
+            "H3Resolution": H3_RESOLUTION,
+        },
+    )
+
     log_event(
         "SIGMET processor completed",
         records_received=records_received,
@@ -834,6 +860,7 @@ def lambda_handler(event, context):
         new_records=new_records,
         updated_records=updated_records,
         unchanged_records=unchanged_records,
+        batch_item_failures=batch_item_failures_count,
         h3_resolution=H3_RESOLUTION,
     )
 

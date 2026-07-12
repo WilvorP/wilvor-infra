@@ -125,3 +125,15 @@ output "weather_changed_log_group_name" {
 output "sigmet_archive_bucket_name" {
   value = module.sigmet.archive_bucket_name
 }
+
+output "sigmet_dashboard_name" {
+  value = module.sigmet.dashboard_name
+}
+
+output "metar_dashboard_name" {
+  value = module.metar.dashboard_name
+}
+
+output "weather_events_dashboard_name" {
+  value = module.weather_events.dashboard_name
+}

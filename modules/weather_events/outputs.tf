@@ -22,3 +22,8 @@ output "event_bus_name" {
   description = "EventBridge bus used by the Weather.changed rule"
   value       = var.event_bus_name
 }
+
+output "dashboard_name" {
+  description = "Name of the Weather.changed CloudWatch dashboard"
+  value       = aws_cloudwatch_dashboard.weather_events.dashboard_name
+}
