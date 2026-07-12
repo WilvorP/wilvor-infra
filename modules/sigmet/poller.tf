@@ -95,7 +95,7 @@ resource "aws_lambda_function" "sigmet_poller" {
 
   environment {
     variables = {
-      ENVIRONMENT = replace(var.name_prefix, "wilvor-", "")
+      ENVIRONMENT            = replace(var.name_prefix, "wilvor-", "")
       SIGMET_RAW_STREAM_NAME = aws_kinesis_stream.sigmet_raw.name
       ARCHIVE_BUCKET_NAME    = aws_s3_bucket.sigmet_archive.bucket
       NOAA_SIGMET_URL        = var.sigmet_api_url
