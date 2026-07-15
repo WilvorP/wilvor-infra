@@ -52,3 +52,15 @@ output "dashboard_name" {
   description = "Name of the METAR CloudWatch dashboard"
   value       = aws_cloudwatch_dashboard.metar_pipeline.dashboard_name
 }
+
+output "processor_function_name" {
+  value = aws_lambda_function.metar_processor.function_name
+}
+
+output "processor_function_arn" {
+  value = aws_lambda_function.metar_processor.arn
+}
+
+output "processor_event_source_mapping_uuid" {
+  value = aws_lambda_event_source_mapping.metar_raw_to_processor.uuid
+}
