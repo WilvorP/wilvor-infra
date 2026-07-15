@@ -38,6 +38,8 @@ module "metar" {
     "${path.root}/../../functions/weather/metar/poller/dist/metar_poller.zip"
   )
 
+  metar_processor_zip_path = "${path.root}/../../functions/weather/metar/processor/dist/metar_processor.zip"
+
   enable_metar_poller_schedule = false
 
   metar_poller_schedule_expression = "rate(3 minutes)"

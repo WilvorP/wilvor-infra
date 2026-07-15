@@ -45,3 +45,15 @@ output "metar_dashboard_name" {
 output "weather_events_dashboard_name" {
   value = module.weather_events.dashboard_name
 }
+
+output "metar_processor_lambda_name" {
+  value = module.metar.processor_function_name
+}
+
+output "metar_processor_lambda_arn" {
+  value = module.metar.processor_function_arn
+}
+
+output "metar_processor_event_source_mapping_uuid" {
+  value = module.metar.processor_event_source_mapping_uuid
+}
