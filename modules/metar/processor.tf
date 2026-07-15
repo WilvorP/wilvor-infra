@@ -56,6 +56,7 @@ data "aws_iam_policy_document" "metar_processor_policy" {
     actions = [
       "dynamodb:GetItem",
       "dynamodb:PutItem",
+      "dynamodb:UpdateItem",
     ]
 
     resources = [
@@ -89,6 +90,19 @@ data "aws_iam_policy_document" "metar_processor_policy" {
       "${aws_cloudwatch_log_group.metar_processor.arn}:*",
     ]
   }
+
+  statement {
+    sid    = "PublishWeatherChangedEvents"
+    effect = "Allow"
+
+    actions = [
+      "events:PutEvents",
+    ]
+
+    resources = [
+      "arn:aws:events:${var.aws_region}:${var.account_id}:event-bus/default",
+    ]
+  }
 }
 
 resource "aws_iam_role_policy" "metar_processor_lambda" {
@@ -116,6 +130,7 @@ resource "aws_lambda_function" "metar_processor" {
       BAD_RECORDS_BUCKET_NAME = aws_s3_bucket.metar_archive.bucket
       BAD_RECORDS_PREFIX      = "bad-records/source=metar_processor"
       SCHEMA_VERSION          = "metar_latest.v1"
+      EVENT_BUS_NAME          = "default"
       ENVIRONMENT             = lookup(var.tags, "Environment", "dev")
     }
   }

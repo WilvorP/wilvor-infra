@@ -13,6 +13,7 @@ from botocore.exceptions import ClientError
 
 dynamodb = boto3.resource("dynamodb")
 s3 = boto3.client("s3")
+events = boto3.client("events")
 
 TABLE_NAME = os.environ["METAR_LATEST_TABLE_NAME"]
 BAD_RECORDS_BUCKET = os.environ["BAD_RECORDS_BUCKET_NAME"]
@@ -22,6 +23,8 @@ BAD_RECORDS_PREFIX = os.environ.get(
 )
 SCHEMA_VERSION = os.environ.get("SCHEMA_VERSION", "metar_latest.v1")
 ENVIRONMENT = os.environ.get("ENVIRONMENT", "dev")
+EVENT_BUS_NAME = os.environ.get("EVENT_BUS_NAME", "default")
+EVENT_CHANGE_TYPES = {"NEW", "UPDATED", "CORRECTED"}
 
 table = dynamodb.Table(TABLE_NAME)
 
@@ -273,6 +276,9 @@ def write_latest(item: dict[str, Any], change_type: str) -> bool:
     item["change_type"] = change_type
     item["updated_at_utc"] = iso_utc(utc_now())
 
+    if change_type in EVENT_CHANGE_TYPES:
+        item["event_publish_pending"] = True
+
     condition = (
         "attribute_not_exists(station_id) "
         "OR observed_at_epoch < :observed_at_epoch "
@@ -294,6 +300,93 @@ def write_latest(item: dict[str, Any], change_type: str) -> bool:
         if exc.response["Error"]["Code"] == "ConditionalCheckFailedException":
             return False
         raise
+
+def get_weather_changed_event_context(
+    new_item: dict[str, Any],
+    existing_item: dict[str, Any] | None,
+    change_type: str,
+    wrote: bool,
+) -> tuple[bool, dict[str, Any] | None, str | None]:
+    if wrote and change_type in EVENT_CHANGE_TYPES:
+        return True, new_item, change_type
+
+    if (
+        existing_item
+        and existing_item.get("event_publish_pending") is True
+        and existing_item.get("source_version") == new_item.get("source_version")
+    ):
+        return True, existing_item, existing_item.get("change_type", "UPDATED")
+
+    return False, None, None
+
+
+def publish_weather_changed_event(
+    item: dict[str, Any],
+    change_type: str,
+) -> None:
+    detail = {
+        "event_type": "weather.changed",
+        "product_type": "METAR",
+        "station_id": item["station_id"],
+        "change_type": change_type,
+        "observed_at_utc": item.get("observed_at_utc"),
+        "source_version": item.get("source_version"),
+        "schema_version": item.get("schema_version"),
+        "table_name": TABLE_NAME,
+        "flight_category": item.get("flight_category"),
+        "raw_s3_key": item.get("raw_s3_key"),
+        "poll_id": item.get("poll_id"),
+        "correlation_id": item.get("poll_id"),
+        "source_system": item.get("source_system"),
+        "updated_at_utc": item.get("updated_at_utc"),
+    }
+
+    detail = {k: v for k, v in detail.items() if v is not None}
+
+    response = events.put_events(
+        Entries=[
+            {
+                "Source": "wilvor.weather",
+                "DetailType": "Weather.changed",
+                "EventBusName": EVENT_BUS_NAME,
+                "Detail": json.dumps(detail, default=str),
+            }
+        ]
+    )
+
+    if response.get("FailedEntryCount", 0) > 0:
+        raise RuntimeError(f"EventBridge PutEvents failed: {response}")
+
+    print(
+        json.dumps(
+            {
+                "message": "Weather.changed event published",
+                "product_type": "METAR",
+                "station_id": item["station_id"],
+                "change_type": change_type,
+                "source_version": item.get("source_version"),
+            }
+        )
+    )
+
+
+def mark_weather_changed_event_published(
+    station_id: str,
+    source_version: str,
+) -> None:
+    table.update_item(
+        Key={"station_id": station_id},
+        UpdateExpression=(
+            "SET last_event_published_source_version = :source_version, "
+            "last_event_published_at_utc = :published_at "
+            "REMOVE event_publish_pending"
+        ),
+        ConditionExpression="source_version = :source_version",
+        ExpressionAttributeValues={
+            ":source_version": source_version,
+            ":published_at": iso_utc(utc_now()),
+        },
+    )
 
 
 def archive_bad_record(
@@ -363,11 +456,31 @@ def process_record(record: dict[str, Any]) -> dict[str, Any]:
     change_type = classify_change(item, existing)
     wrote = write_latest(item, change_type)
 
+    should_publish_event, event_item, event_change_type = (
+        get_weather_changed_event_context(
+            new_item=item,
+            existing_item=existing,
+            change_type=change_type,
+            wrote=wrote,
+        )
+    )
+
+    event_published = False
+
+    if should_publish_event and event_item and event_change_type:
+        publish_weather_changed_event(event_item, event_change_type)
+        mark_weather_changed_event_published(
+            station_id=event_item["station_id"],
+            source_version=event_item["source_version"],
+        )
+        event_published = True
+
     result = {
         "station_id": item["station_id"],
         "observed_at_utc": item["observed_at_utc"],
         "change_type": change_type,
         "wrote": wrote,
+        "event_published": event_published,
     }
 
     print(json.dumps({"message": "METAR record processed", **result}))
@@ -386,6 +499,7 @@ def lambda_handler(event, context):
         "RecordsUnchanged": 0,
         "RecordsStale": 0,
         "DynamoDBWrites": 0,
+        "WeatherChangedEventsPublished": 0,
         "BadRecordsWritten": 0,
         "ProcessingFailures": 0,
     }
@@ -413,6 +527,9 @@ def lambda_handler(event, context):
 
             if result["wrote"]:
                 metrics["DynamoDBWrites"] += 1
+                
+            if result.get("event_published"):
+                metrics["WeatherChangedEventsPublished"] += 1
 
         except PermanentRecordError as exc:
             metrics["BadRecordsWritten"] += 1
