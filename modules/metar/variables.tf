@@ -59,3 +59,8 @@ variable "bad_record_retention_days" {
   type        = number
   default     = 7
 }
+
+variable "metar_processor_zip_path" {
+  description = "Path to the packaged METAR processor Lambda ZIP file."
+  type        = string
+}
