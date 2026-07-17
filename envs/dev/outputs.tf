@@ -49,3 +49,15 @@ output "taf_poller_schedule_state" {
 output "taf_dashboard_name" {
   value = module.taf.dashboard_name
 }
+
+output "weather_changed_log_group_name" {
+  value = module.weather_events.log_group_name
+}
+
+output "weather_changed_rule_name" {
+  value = module.weather_events.rule_name
+}
+
+output "weather_events_dashboard_name" {
+  value = module.weather_events.dashboard_name
+}
