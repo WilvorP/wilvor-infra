@@ -19,10 +19,14 @@ aws sso login --profile wilvor-dev
 .\scripts\build_sigmet_poller.ps1
 .\scripts\build_sigmet_processor.ps1
 .\scripts\build_metar_poller.ps1
+.\scripts\build_taf_poller.ps1
+.\scripts\build_taf_processor.ps1
 
 Test-Path functions\weather\sigmet\poller\dist\sigmet_poller.zip
 Test-Path functions\weather\sigmet\processor\dist\sigmet_processor.zip
 Test-Path functions\weather\metar\poller\dist\metar_poller.zip
+Test-path functions\weather\taf\poller\dist\taf_poller.zip
+Test-path functions\weather\taf\processor\dist\taf_processor.zip
 # Expected:
 # True
 # True
@@ -1823,3 +1827,1036 @@ terraform plan
 # - Search wilvor-dev-sigmet
 
 # - Search wilvor-dev-weather
+
+
+# ============================================================
+# 69. PREPARE TAF PIPELINE TEST SESSION
+# ============================================================
+# Run from the repository root.
+
+$ErrorActionPreference = "Stop"
+$env:AWS_PAGER = ""
+$env:AWS_PROFILE = "wilvor-dev"
+$env:AWS_REGION = "us-west-1"
+
+cd envs\dev
+
+
+# ============================================================
+# 70. CONFIRM TAF TERRAFORM OUTPUTS
+# ============================================================
+
+Write-Host "TAF archive bucket:       $(terraform output -raw taf_archive_bucket_name)"
+Write-Host "TAF raw stream:           $(terraform output -raw taf_raw_stream_name)"
+Write-Host "TAF latest table:         $(terraform output -raw taf_latest_table_name)"
+Write-Host "TAF poller Lambda:        $(terraform output -raw taf_poller_function_name)"
+Write-Host "TAF processor Lambda:     $(terraform output -raw taf_processor_lambda_name)"
+Write-Host "TAF polling rule:         $(terraform output -raw taf_poller_schedule_name)"
+Write-Host "TAF polling rule state:   $(terraform output -raw taf_poller_schedule_state)"
+Write-Host "TAF dashboard:            $(terraform output -raw taf_dashboard_name)"
+Write-Host "Weather Events dashboard: $(terraform output -raw weather_events_dashboard_name)"
+Write-Host "Weather.changed rule:     $(terraform output -raw weather_changed_rule_name)"
+Write-Host "Weather.changed logs:     $(terraform output -raw weather_changed_log_group_name)"
+
+# Expected:
+# All outputs return valid AWS resource names.
+# taf_poller_schedule_state is DISABLED during manual testing.
+
+
+# ============================================================
+# 71. CONFIRM TAF TERRAFORM RESOURCES
+# ============================================================
+
+terraform state list |
+  Select-String -Pattern "^module\.taf\.|^module\.weather_events\."
+
+# Expected:
+# TAF poller, processor, Kinesis, S3, DynamoDB, monitoring,
+# EventBridge, and Weather Events resources are present.
+
+
+# ============================================================
+# 72. VERIFY TAF LAMBDA FUNCTIONS
+# ============================================================
+
+$tafPoller = terraform output -raw taf_poller_function_name
+$tafProcessor = terraform output -raw taf_processor_lambda_name
+
+aws lambda get-function `
+  --function-name $tafPoller `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --query "{Name:Configuration.FunctionName,State:Configuration.State,Runtime:Configuration.Runtime,Timeout:Configuration.Timeout,Memory:Configuration.MemorySize}" `
+  --output table
+
+aws lambda get-function `
+  --function-name $tafProcessor `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --query "{Name:Configuration.FunctionName,State:Configuration.State,Runtime:Configuration.Runtime,Timeout:Configuration.Timeout,Memory:Configuration.MemorySize}" `
+  --output table
+
+# Expected:
+# Both Lambda functions exist and State is Active.
+
+
+# ============================================================
+# 73. VERIFY TAF STORAGE AND STREAM RESOURCES
+# ============================================================
+
+$tafBucket = terraform output -raw taf_archive_bucket_name
+$tafStream = terraform output -raw taf_raw_stream_name
+$tafTable = terraform output -raw taf_latest_table_name
+
+aws s3api head-bucket `
+  --bucket $tafBucket `
+  --profile wilvor-dev `
+  --region us-west-1
+
+aws kinesis describe-stream-summary `
+  --stream-name $tafStream `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --query "StreamDescriptionSummary.{Name:StreamName,Status:StreamStatus,Mode:StreamModeDetails.StreamMode,OpenShards:OpenShardCount}" `
+  --output table
+
+aws dynamodb describe-table `
+  --table-name $tafTable `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --query "Table.{Name:TableName,Status:TableStatus,ItemCount:ItemCount,BillingMode:BillingModeSummary.BillingMode}" `
+  --output table
+
+# Expected:
+# S3 bucket exists.
+# Kinesis stream status is ACTIVE.
+# DynamoDB table status is ACTIVE.
+
+
+# ============================================================
+# 74. VERIFY TAF KINESIS EVENT-SOURCE MAPPING
+# ============================================================
+
+aws lambda list-event-source-mappings `
+  --function-name $tafProcessor `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --query "EventSourceMappings[].{State:State,LastProcessingResult:LastProcessingResult,BatchSize:BatchSize,StartingPosition:StartingPosition,MaximumRetryAttempts:MaximumRetryAttempts,BisectBatchOnError:BisectBatchOnFunctionError}" `
+  --output table
+
+# Expected:
+# State is Enabled.
+# StartingPosition is LATEST.
+# LastProcessingResult becomes OK after a test record is processed.
+
+
+# ============================================================
+# 75. VERIFY TAF POLLING RULE
+# ============================================================
+
+$tafSchedule = terraform output -raw taf_poller_schedule_name
+
+aws events describe-rule `
+  --name $tafSchedule `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --query "{Name:Name,State:State,ScheduleExpression:ScheduleExpression}" `
+  --output table
+
+aws events list-targets-by-rule `
+  --rule $tafSchedule `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --query "Targets[].{Id:Id,Arn:Arn}" `
+  --output table
+
+# Expected:
+# Rule exists.
+# State is DISABLED during manual testing.
+# Target ARN points to the TAF poller Lambda.
+
+
+# ============================================================
+# 76. VERIFY TAF AND WEATHER EVENTS DASHBOARDS
+# ============================================================
+
+$tafDashboard = terraform output -raw taf_dashboard_name
+$weatherDashboard = terraform output -raw weather_events_dashboard_name
+
+foreach ($dashboardName in @($tafDashboard, $weatherDashboard)) {
+  Write-Host "===== $dashboardName ====="
+
+  aws cloudwatch get-dashboard `
+    --dashboard-name $dashboardName `
+    --profile wilvor-dev `
+    --region us-west-1 `
+    --query "{Name:DashboardName,ValidationMessages:DashboardValidationMessages}" `
+    --output json
+}
+
+# Expected:
+# wilvor-dev-taf-pipeline
+# wilvor-dev-weather-events
+#
+# DashboardValidationMessages should normally be empty.
+
+
+# ============================================================
+# 77. VERIFY WEATHER.CHANGED EVENTBRIDGE RULE AND TARGET
+# ============================================================
+
+$weatherRuleName = terraform output -raw weather_changed_rule_name
+
+aws events describe-rule `
+  --name $weatherRuleName `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --query "{Name:Name,State:State,EventPattern:EventPattern}" `
+  --output json
+
+aws events list-targets-by-rule `
+  --rule $weatherRuleName `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --query "Targets[].{Id:Id,Arn:Arn}" `
+  --output table
+
+# Expected:
+# Rule State is ENABLED.
+# Event pattern matches:
+# - source: wilvor.weather
+# - detail-type: Weather.changed
+#
+# Target points to the Weather.changed CloudWatch log group.
+
+
+# ============================================================
+# 78. SEND A SYNTHETIC WEATHER.CHANGED EVENT
+# ============================================================
+
+$syntheticDetail = ConvertTo-Json -Compress -InputObject @{
+  event_type    = "weather.changed"
+  product_type  = "TAF"
+  station_id    = "KTEST"
+  change_type   = "TEST"
+  schema_version = "internal.taf.v1"
+}
+
+$syntheticEntries = ConvertTo-Json -Depth 10 -InputObject @(
+  @{
+    Source       = "wilvor.weather"
+    DetailType   = "Weather.changed"
+    Detail       = $syntheticDetail
+    EventBusName = "default"
+  }
+)
+
+$utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
+[System.IO.File]::WriteAllText(
+  (Join-Path (Get-Location) "taf-weather-changed-test.json"),
+  $syntheticEntries,
+  $utf8NoBom
+)
+
+aws events put-events `
+  --entries file://taf-weather-changed-test.json `
+  --profile wilvor-dev `
+  --region us-west-1
+
+# Expected:
+# FailedEntryCount is 0.
+
+
+# ============================================================
+# 79. VERIFY SYNTHETIC EVENT LOG DELIVERY
+# ============================================================
+
+Start-Sleep -Seconds 10
+
+aws logs tail `
+  "$(terraform output -raw weather_changed_log_group_name)" `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --since 10m
+
+# Expected event fields:
+# detail-type: Weather.changed
+# source: wilvor.weather
+# product_type: TAF
+# station_id: KTEST
+# change_type: TEST
+
+
+# ============================================================
+# 80. MANUALLY INVOKE THE TAF POLLER
+# ============================================================
+
+aws lambda invoke `
+  --function-name $(terraform output -raw taf_poller_function_name) `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  taf-poller-response.json
+
+Get-Content .\taf-poller-response.json
+
+# Expected:
+# ok is true.
+# raw_s3_key is populated.
+# record_count is greater than zero when NOAA has TAF data.
+# published_count equals record_count.
+# failed_kinesis_records is zero.
+
+
+# ============================================================
+# 81. WAIT FOR KINESIS PROCESSING
+# ============================================================
+
+Start-Sleep -Seconds 20
+
+
+# ============================================================
+# 82. CHECK TAF POLLER CLOUDWATCH LOGS AND EMF
+# ============================================================
+
+aws logs tail `
+  "/aws/lambda/$tafPoller" `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --since 15m
+
+# Expected:
+# - TAF poll completed
+# - PollSuccess: 1
+# - PollFailure: 0
+# - RecordsReceived is greater than zero when data is available
+# - PublishedToKinesis equals RecordsReceived
+# - FailedKinesisRecords: 0
+# - RawArchiveSuccess: 1
+
+
+# ============================================================
+# 83. CHECK TAF PROCESSOR CLOUDWATCH LOGS AND EMF
+# ============================================================
+
+aws logs tail `
+  "/aws/lambda/$tafProcessor" `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --since 15m
+
+# Expected:
+# - TAF records are processed successfully
+# - Status is NEW, UPDATED, CORRECTED, or UNCHANGED
+# - ProcessingFailures: 0
+# - BadRecords: 0 for valid NOAA data
+# - batchItemFailures is empty
+#
+# First processing of a station normally produces NEW.
+# Repeated unchanged records normally produce UNCHANGED.
+
+
+# ============================================================
+# 84. VERIFY RAW TAF ARCHIVE IN S3
+# ============================================================
+
+aws s3 ls `
+  "s3://$tafBucket/raw/source=taf/" `
+  --recursive `
+  --profile wilvor-dev `
+  --region us-west-1
+
+$latestRawKey = aws s3api list-objects-v2 `
+  --bucket $tafBucket `
+  --prefix "raw/source=taf/" `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --query "reverse(sort_by(Contents,&LastModified))[0].Key" `
+  --output text
+
+Write-Host "Latest raw TAF archive: $latestRawKey"
+
+if ($latestRawKey -and $latestRawKey -ne "None") {
+  aws s3api head-object `
+    --bucket $tafBucket `
+    --key $latestRawKey `
+    --profile wilvor-dev `
+    --region us-west-1
+
+  aws s3 cp `
+    "s3://$tafBucket/$latestRawKey" `
+    .\taf-latest-raw.json.gz `
+    --profile wilvor-dev `
+    --region us-west-1
+
+  python -c "import gzip; data=gzip.open('taf-latest-raw.json.gz','rt',encoding='utf-8').read(); print(data[:3000])"
+}
+
+# Expected:
+# A gzip JSON object exists under raw/source=taf.
+# The archived payload contains NOAA TAF records and nested fcsts data.
+
+
+# ============================================================
+# 85. VERIFY TAFLATEST DYNAMODB RECORDS
+# ============================================================
+
+aws dynamodb scan `
+  --table-name $tafTable `
+  --select COUNT `
+  --profile wilvor-dev `
+  --region us-west-1
+
+aws dynamodb scan `
+  --table-name $tafTable `
+  --max-items 10 `
+  --projection-expression "station_id,issued_at_utc,valid_from_utc,valid_to_utc,period_count,change_type,schema_version,source_version,last_published_source_version" `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --output json
+
+# Expected:
+# One current-state item exists for each available configured TAF station.
+# Expected configured stations are KSFO, KOAK, and KSJC.
+# NOAA may return fewer items when a station has no current TAF.
+#
+# schema_version is internal.taf.v1.
+# period_count is greater than zero.
+# source_version is populated.
+# last_published_source_version equals source_version after event publication.
+
+
+# ============================================================
+# 86. INSPECT STRUCTURED TAF FORECAST PERIODS
+# ============================================================
+
+$tafStationId = aws dynamodb scan `
+  --table-name $tafTable `
+  --projection-expression "station_id" `
+  --max-items 1 `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --query "Items[0].station_id.S" `
+  --output text
+
+Write-Host "Inspecting TAF station: $tafStationId"
+
+if ($tafStationId -and $tafStationId -ne "None") {
+  $tafKeyJson = ConvertTo-Json -Compress -Depth 5 -InputObject @{
+    station_id = @{
+      S = $tafStationId
+    }
+  }
+
+  [System.IO.File]::WriteAllText(
+    (Join-Path (Get-Location) "taf-dynamodb-key.json"),
+    $tafKeyJson,
+    $utf8NoBom
+  )
+
+  aws dynamodb get-item `
+    --table-name $tafTable `
+    --key file://taf-dynamodb-key.json `
+    --projection-expression "station_id,forecast_periods,period_count,change_type,schema_version,source_version,last_published_source_version" `
+    --profile wilvor-dev `
+    --region us-west-1 `
+    --output json
+}
+
+# Expected:
+# forecast_periods is a DynamoDB list.
+#
+# Periods contain structured fields such as:
+# - period_from_utc
+# - period_to_utc
+# - change_type
+# - probability_pct
+# - wind direction and speed
+# - visibility
+# - weather codes
+# - cloud layers
+# - ceiling
+# - wind shear
+#
+# TAF is not stored only as raw text.
+
+
+# ============================================================
+# 87. VERIFY REAL TAF WEATHER.CHANGED EVENTS
+# ============================================================
+
+aws logs tail `
+  "$(terraform output -raw weather_changed_log_group_name)" `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --since 30m
+
+# Expected real TAF event fields:
+# detail-type: Weather.changed
+# source: wilvor.weather
+# product_type: TAF
+# station_id: KSFO, KOAK, or KSJC
+# change_type: NEW, UPDATED, or CORRECTED
+# schema_version: internal.taf.v1
+# source_version: populated
+# period_count: greater than zero
+# raw_s3_uri: populated
+#
+# No new real event is expected when every TAF is UNCHANGED.
+# The synthetic KTEST event confirms EventBridge delivery independently.
+
+
+# ============================================================
+# 88. TEST TAF IDEMPOTENCY
+# ============================================================
+
+$tafCountBefore = aws dynamodb scan `
+  --table-name $tafTable `
+  --select COUNT `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --query "Count" `
+  --output text
+
+Write-Host "TAF item count before second poll: $tafCountBefore"
+
+aws lambda invoke `
+  --function-name $tafPoller `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  taf-poller-response-second.json
+
+Get-Content .\taf-poller-response-second.json
+
+Start-Sleep -Seconds 20
+
+$tafCountAfter = aws dynamodb scan `
+  --table-name $tafTable `
+  --select COUNT `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --query "Count" `
+  --output text
+
+Write-Host "TAF item count after second poll:  $tafCountAfter"
+
+aws logs tail `
+  "/aws/lambda/$tafProcessor" `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --since 10m
+
+# Expected when NOAA data has not changed:
+# - Item count remains unchanged
+# - Processor status is UNCHANGED
+# - RecordsUnchanged equals the received record count
+# - RecordsNew, RecordsUpdated, and RecordsCorrected are zero
+# - No duplicate Weather.changed event is published
+#
+# If NOAA issued a new or amended TAF between polls,
+# UPDATED or CORRECTED is valid and a new event is expected.
+
+
+# ============================================================
+# 89. RUN A CONTROLLED BAD-RECORD TEST
+# ============================================================
+
+$badEnvelopeObject = @{
+  schema_version = "raw.noaa.taf.v1"
+  source         = "NOAA_AVIATION_WEATHER"
+  product_type   = "TAF"
+  ingestion_type = "RAW_TAF_RECORD"
+  poll_id        = "manual-bad-record-test"
+  received_at    = (Get-Date).ToUniversalTime().ToString("o")
+  raw_s3_bucket  = $tafBucket
+  raw_s3_key     = "manual-test/not-applicable.json"
+  record_index   = 0
+  taf = @{
+    icaoId       = ""
+    issueTime    = $null
+    validTimeFrom = 0
+    validTimeTo   = 0
+    rawTAF       = ""
+    fcsts        = @()
+  }
+}
+
+$badEnvelopeJson = ConvertTo-Json `
+  -InputObject $badEnvelopeObject `
+  -Depth 10 `
+  -Compress
+
+[System.IO.File]::WriteAllText(
+  (Join-Path (Get-Location) "taf-bad-record-test.json"),
+  $badEnvelopeJson,
+  $utf8NoBom
+)
+
+aws kinesis put-record `
+  --stream-name $tafStream `
+  --partition-key "TAF-BAD-TEST" `
+  --data fileb://taf-bad-record-test.json `
+  --profile wilvor-dev `
+  --region us-west-1
+
+Start-Sleep -Seconds 20
+
+# Expected:
+# Kinesis accepts the record and returns ShardId and SequenceNumber.
+
+
+# ============================================================
+# 90. VERIFY BAD TAF RECORD WAS QUARANTINED
+# ============================================================
+
+aws logs tail `
+  "/aws/lambda/$tafProcessor" `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --since 10m
+
+aws s3 ls `
+  "s3://$tafBucket/bad-records/source=taf_processor/" `
+  --recursive `
+  --profile wilvor-dev `
+  --region us-west-1
+
+$latestBadKey = aws s3api list-objects-v2 `
+  --bucket $tafBucket `
+  --prefix "bad-records/source=taf_processor/" `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --query "reverse(sort_by(Contents,&LastModified))[0].Key" `
+  --output text
+
+Write-Host "Latest TAF bad record: $latestBadKey"
+
+if ($latestBadKey -and $latestBadKey -ne "None") {
+  aws s3 cp `
+    "s3://$tafBucket/$latestBadKey" `
+    .\taf-bad-record-output.json `
+    --profile wilvor-dev `
+    --region us-west-1
+
+  Get-Content .\taf-bad-record-output.json
+}
+
+# Expected:
+# Processor log contains "TAF record rejected".
+# Failure reason indicates the missing or invalid TAF field.
+# A JSON record exists under bad-records/source=taf_processor.
+# The valid Kinesis batch continues processing.
+#
+# The controlled test may temporarily place the
+# taf-processor-bad-records alarm into ALARM state.
+
+
+# ============================================================
+# 91. PREPARE CLOUDWATCH METRIC WINDOW
+# ============================================================
+
+$start30m = (Get-Date).AddMinutes(-30).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+$endNow = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+Write-Host "Metric window start: $start30m"
+Write-Host "Metric window end:   $endNow"
+
+
+# ============================================================
+# 92. VERIFY TAF CUSTOM METRICS EXIST
+# ============================================================
+
+aws cloudwatch list-metrics `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --namespace "Wilvor/Pipeline" `
+  --dimensions `
+    Name=Environment,Value=dev `
+    Name=Pipeline,Value=taf `
+  --query "Metrics[].{Metric:MetricName,Dimensions:Dimensions}" `
+  --output table
+
+# Expected:
+# Metrics exist for taf_poller and taf_processor.
+#
+# CloudWatch may take one to two minutes to extract new EMF metrics.
+
+
+# ============================================================
+# 93. READ TAF POLLER CUSTOM METRICS
+# ============================================================
+
+$tafPollerMetrics = @(
+  "PollSuccess",
+  "PollFailure",
+  "RecordsReceived",
+  "PublishedToKinesis",
+  "FailedKinesisRecords",
+  "RawArchiveSuccess"
+)
+
+foreach ($metric in $tafPollerMetrics) {
+  Write-Host "===== TAF POLLER: $metric ====="
+
+  aws cloudwatch get-metric-statistics `
+    --profile wilvor-dev `
+    --region us-west-1 `
+    --namespace "Wilvor/Pipeline" `
+    --metric-name $metric `
+    --dimensions `
+      Name=Environment,Value=dev `
+      Name=Pipeline,Value=taf `
+      Name=Component,Value=taf_poller `
+      Name=Stage,Value=poll `
+    --start-time $start30m `
+    --end-time $endNow `
+    --period 60 `
+    --statistics Sum `
+    --output table
+}
+
+# Healthy poll:
+# PollSuccess is greater than zero.
+# PollFailure is zero.
+# RecordsReceived equals PublishedToKinesis.
+# FailedKinesisRecords is zero.
+# RawArchiveSuccess is greater than zero.
+
+
+# ============================================================
+# 94. READ TAF PROCESSOR CUSTOM METRICS
+# ============================================================
+
+$tafProcessorMetrics = @(
+  "RecordsReceived",
+  "RecordsNew",
+  "RecordsUpdated",
+  "RecordsCorrected",
+  "RecordsUnchanged",
+  "RecordsStale",
+  "BadRecords",
+  "ProcessingFailures"
+)
+
+foreach ($metric in $tafProcessorMetrics) {
+  Write-Host "===== TAF PROCESSOR: $metric ====="
+
+  aws cloudwatch get-metric-statistics `
+    --profile wilvor-dev `
+    --region us-west-1 `
+    --namespace "Wilvor/Pipeline" `
+    --metric-name $metric `
+    --dimensions `
+      Name=Environment,Value=dev `
+      Name=Pipeline,Value=taf `
+      Name=Component,Value=taf_processor `
+      Name=Stage,Value=process `
+    --start-time $start30m `
+    --end-time $endNow `
+    --period 60 `
+    --statistics Sum `
+    --output table
+}
+
+# Healthy real NOAA processing:
+# RecordsReceived is greater than zero.
+# ProcessingFailures is zero.
+#
+# RecordsNew, RecordsUpdated, RecordsCorrected,
+# RecordsUnchanged, and RecordsStale depend on current state.
+#
+# BadRecords is expected to be greater than zero only because
+# section 89 intentionally injected one malformed record.
+
+
+# ============================================================
+# 95. CHECK TAF LAMBDA HEALTH
+# ============================================================
+
+foreach ($functionName in @($tafPoller, $tafProcessor)) {
+  Write-Host "===== LAMBDA: $functionName ====="
+
+  foreach ($metric in @("Invocations", "Errors", "Throttles")) {
+    aws cloudwatch get-metric-statistics `
+      --profile wilvor-dev `
+      --region us-west-1 `
+      --namespace "AWS/Lambda" `
+      --metric-name $metric `
+      --dimensions Name=FunctionName,Value=$functionName `
+      --start-time $start30m `
+      --end-time $endNow `
+      --period 60 `
+      --statistics Sum `
+      --output table
+  }
+
+  aws cloudwatch get-metric-statistics `
+    --profile wilvor-dev `
+    --region us-west-1 `
+    --namespace "AWS/Lambda" `
+    --metric-name "Duration" `
+    --dimensions Name=FunctionName,Value=$functionName `
+    --start-time $start30m `
+    --end-time $endNow `
+    --period 60 `
+    --statistics Average Maximum `
+    --output table
+}
+
+# Expected:
+# Invocations are present.
+# Errors are zero.
+# Throttles are zero.
+# Maximum Duration remains below each Lambda timeout.
+
+
+# ============================================================
+# 96. CHECK TAF KINESIS HEALTH
+# ============================================================
+
+foreach ($metric in @(
+  "IncomingRecords",
+  "WriteProvisionedThroughputExceeded",
+  "ReadProvisionedThroughputExceeded",
+  "GetRecords.IteratorAgeMilliseconds"
+)) {
+  Write-Host "===== TAF KINESIS: $metric ====="
+
+  aws cloudwatch get-metric-statistics `
+    --profile wilvor-dev `
+    --region us-west-1 `
+    --namespace "AWS/Kinesis" `
+    --metric-name $metric `
+    --dimensions Name=StreamName,Value=$tafStream `
+    --start-time $start30m `
+    --end-time $endNow `
+    --period 60 `
+    --statistics Sum Maximum `
+    --output table
+}
+
+# Expected:
+# IncomingRecords is present.
+# Read/write throughput-exceeded metrics are zero.
+# Iterator age returns to near zero after processing.
+
+
+# ============================================================
+# 97. CHECK TAFLATEST DYNAMODB HEALTH
+# ============================================================
+
+foreach ($metric in @(
+  "ConsumedReadCapacityUnits",
+  "ConsumedWriteCapacityUnits",
+  "ReadThrottleEvents",
+  "WriteThrottleEvents",
+  "SystemErrors"
+)) {
+  Write-Host "===== TAFLATEST DYNAMODB: $metric ====="
+
+  aws cloudwatch get-metric-statistics `
+    --profile wilvor-dev `
+    --region us-west-1 `
+    --namespace "AWS/DynamoDB" `
+    --metric-name $metric `
+    --dimensions Name=TableName,Value=$tafTable `
+    --start-time $start30m `
+    --end-time $endNow `
+    --period 60 `
+    --statistics Sum Maximum `
+    --output table
+}
+
+# Expected:
+# Consumed capacity reflects the tests.
+# ReadThrottleEvents is zero.
+# WriteThrottleEvents is zero.
+# SystemErrors is zero.
+
+
+# ============================================================
+# 98. CHECK WEATHER.CHANGED EVENTBRIDGE HEALTH
+# ============================================================
+
+foreach ($metric in @(
+  "MatchedEvents",
+  "Invocations",
+  "FailedInvocations"
+)) {
+  Write-Host "===== EVENTBRIDGE: $metric ====="
+
+  aws cloudwatch get-metric-statistics `
+    --profile wilvor-dev `
+    --region us-west-1 `
+    --namespace "AWS/Events" `
+    --metric-name $metric `
+    --dimensions Name=RuleName,Value=$weatherRuleName `
+    --start-time $start30m `
+    --end-time $endNow `
+    --period 60 `
+    --statistics Sum `
+    --output table
+}
+
+# Expected:
+# MatchedEvents is greater than zero.
+# Invocations is greater than zero.
+# FailedInvocations is zero.
+#
+# The synthetic event guarantees at least one matching event.
+# Real NEW, UPDATED, or CORRECTED TAFs add more events.
+
+
+# ============================================================
+# 99. VERIFY TAF AND WEATHER EVENTS ALARMS
+# ============================================================
+
+aws cloudwatch describe-alarms `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --alarm-name-prefix wilvor-dev-taf `
+  --query "MetricAlarms[].{Name:AlarmName,State:StateValue,Metric:MetricName,Reason:StateReason}" `
+  --output table
+
+aws cloudwatch describe-alarms `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --alarm-name-prefix wilvor-dev-weather `
+  --query "MetricAlarms[].{Name:AlarmName,State:StateValue,Metric:MetricName,Reason:StateReason}" `
+  --output table
+
+# Expected TAF alarms include:
+# - PollFailure
+# - FailedKinesisRecords
+# - ProcessingFailures
+# - BadRecords
+# - Poller Lambda Errors and Throttles
+# - Processor Lambda Errors and Throttles
+# - Kinesis read/write throttles
+# - Kinesis iterator age
+# - TafLatest read/write throttles
+#
+# Healthy operational alarms should be OK.
+#
+# The BadRecords alarm may temporarily be ALARM because section 89
+# intentionally injected one malformed record.
+#
+# Weather.changed FailedInvocations should remain OK.
+
+
+# ============================================================
+# 100. SHOW CURRENT TAF OR WEATHER ALARMS
+# ============================================================
+
+aws cloudwatch describe-alarms `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --state-value ALARM `
+  --alarm-name-prefix wilvor-dev-taf `
+  --query "MetricAlarms[].{Name:AlarmName,Metric:MetricName,Reason:StateReason}" `
+  --output table
+
+aws cloudwatch describe-alarms `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --state-value ALARM `
+  --alarm-name-prefix wilvor-dev-weather `
+  --query "MetricAlarms[].{Name:AlarmName,Metric:MetricName,Reason:StateReason}" `
+  --output table
+
+# Expected:
+# No unexpected alarms.
+#
+# taf-processor-bad-records may appear because of the controlled
+# bad-record test and should return to OK after its evaluation window.
+
+
+# ============================================================
+# 101. VIEW TAF DASHBOARDS AND ALARMS IN AWS
+# ============================================================
+
+# CloudWatch -> Dashboards:
+#
+# - wilvor-dev-taf-pipeline
+#
+# - wilvor-dev-weather-events
+#
+# Use Last 1 hour for current health.
+#
+# A longer range can show historical test failures or controlled
+# bad-record metrics that have already been resolved.
+#
+# CloudWatch -> Alarms -> All alarms:
+#
+# - Search wilvor-dev-taf
+#
+# - Search wilvor-dev-weather
+
+
+# ============================================================
+# 102. FINAL TERRAFORM DRIFT CHECK
+# ============================================================
+
+terraform plan
+
+# Expected:
+# No changes. Infrastructure matches the Terraform configuration.
+
+
+# ============================================================
+# 103. TAF PIPELINE ACCEPTANCE CHECKLIST
+# ============================================================
+
+# [ ] TAF poller Lambda exists and is Active.
+# [ ] TAF processor Lambda exists and is Active.
+# [ ] TAF polling rule exists and remains disabled during manual testing.
+# [ ] TAF raw Kinesis stream is Active.
+# [ ] TAF processor event-source mapping is Enabled.
+# [ ] Raw NOAA TAF responses are archived in S3 as gzip JSON.
+# [ ] Individual TAF records are published to Kinesis.
+# [ ] Valid TAF records are normalized into TafLatest.
+# [ ] TAF forecast periods are stored as structured data.
+# [ ] New TAF records are classified as NEW.
+# [ ] Changed issue times are classified as UPDATED.
+# [ ] Same-issue changed content is classified as CORRECTED.
+# [ ] Duplicate content is classified as UNCHANGED.
+# [ ] Older source records cannot overwrite newer state.
+# [ ] Invalid records are written to the S3 bad-record prefix.
+# [ ] One bad record does not block processing of valid records.
+# [ ] Weather.changed synthetic event is matched and delivered.
+# [ ] NEW, UPDATED, or CORRECTED TAF data publishes Weather.changed.
+# [ ] UNCHANGED TAF data does not publish duplicate events.
+# [ ] TAF poller emits Wilvor/Pipeline custom metrics.
+# [ ] TAF processor emits Wilvor/Pipeline custom metrics.
+# [ ] TAF CloudWatch dashboard exists.
+# [ ] Weather Events CloudWatch dashboard exists.
+# [ ] TAF alarms exist and current states are understood.
+# [ ] Weather.changed FailedInvocations remains zero.
+# [ ] Lambda Errors and Throttles remain zero.
+# [ ] Kinesis read/write throttling remains zero.
+# [ ] Kinesis iterator age returns to near zero.
+# [ ] DynamoDB read/write throttling remains zero.
+# [ ] DynamoDB SystemErrors remains zero.
+# [ ] Final terraform plan reports no drift.
+
+
+# ============================================================
+# 104. REMOVE LOCAL TEST FILES
+# ============================================================
+
+Remove-Item `
+  .\taf-weather-changed-test.json, `
+  .\taf-poller-response.json, `
+  .\taf-poller-response-second.json, `
+  .\taf-latest-raw.json.gz, `
+  .\taf-dynamodb-key.json, `
+  .\taf-bad-record-test.json, `
+  .\taf-bad-record-output.json `
+  -ErrorAction SilentlyContinue
+
+
+# ============================================================
+# 105. RETURN TO REPOSITORY ROOT
+# ============================================================
+
+cd ..\..
