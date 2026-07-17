@@ -1,0 +1,200 @@
+# ============================================================
+# WILVOR METAR PIPELINE - DEPLOY AND TEST
+# ============================================================
+
+# 1. Go to repository root
+cd "wilvor-infra"
+
+# 2. Build the processor only when processor Python code changed
+.\scripts\build_metar_processor.ps1
+
+
+# 3. Initialize, validate, plan, and apply Terraform
+cd .\envs\dev
+
+terraform init
+terraform validate
+terraform plan -out=metar-pipeline-plan
+
+terraform show -no-color .\metar-pipeline-plan |
+  Set-Content .\metar-pipeline-plan.txt
+
+# Confirm nothing is being destroyed or replaced
+Select-String `
+  -Path .\metar-pipeline-plan.txt `
+  -Pattern "will be destroyed|must be replaced"
+
+terraform apply .\metar-pipeline-plan
+
+
+# 4. Confirm Terraform is converged
+terraform plan
+
+# Expected:
+# No changes. Your infrastructure matches the configuration.
+
+
+# 5. Load resource names
+$MetarPoller = terraform output -raw metar_poller_function_name
+$MetarProcessor = terraform output -raw metar_processor_lambda_name
+$MetarTable = terraform output -raw metar_latest_table_name
+$MetarStream = terraform output -raw metar_raw_stream_name
+$WeatherChangedLogGroup = terraform output -raw weather_changed_log_group_name
+
+
+# 6. Verify the Kinesis-to-processor mapping
+aws lambda list-event-source-mappings `
+  --function-name $MetarProcessor `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --query "EventSourceMappings[].{State:State,LastResult:LastProcessingResult,BatchSize:BatchSize,StartingPosition:StartingPosition}" `
+  --output table
+
+# Expected:
+# State = Enabled
+# BatchSize = 10
+# StartingPosition = LATEST
+
+
+# 7. Optional reset to force NEW records
+foreach ($station in @("KSFO", "KOAK", "KSJC")) {
+  $keyFile = ".\delete-key-$station.json"
+
+  @{
+    station_id = @{
+      S = $station
+    }
+  } | ConvertTo-Json -Compress -Depth 5 |
+    Set-Content $keyFile -Encoding ascii
+
+  aws dynamodb delete-item `
+    --table-name $MetarTable `
+    --key "file://$keyFile" `
+    --profile wilvor-dev `
+    --region us-west-1
+
+  Remove-Item $keyFile
+}
+
+
+# 8. Invoke the METAR poller
+aws lambda invoke `
+  --function-name $MetarPoller `
+  --payload '{}' `
+  --cli-binary-format raw-in-base64-out `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  .\metar-test.json
+
+Get-Content .\metar-test.json
+
+Start-Sleep -Seconds 15
+
+
+# 9. Check processor logs
+aws logs tail "/aws/lambda/$MetarProcessor" `
+  --since 10m `
+  --profile wilvor-dev `
+  --region us-west-1
+
+# After a reset, expect:
+# RecordsReceived = 3
+# RecordsNew = 3
+# DynamoDBWrites = 3
+# WeatherChangedEventsPublished = 3
+# ProcessingFailures = 0
+# BatchItemFailures = 0
+
+
+# 10. Check DynamoDB
+aws dynamodb scan `
+  --table-name $MetarTable `
+  --select COUNT `
+  --profile wilvor-dev `
+  --region us-west-1
+
+# Expected:
+# Count = 3
+
+
+# 11. Check Weather.changed EventBridge logs
+aws logs tail $WeatherChangedLogGroup `
+  --since 10m `
+  --profile wilvor-dev `
+  --region us-west-1
+
+# Expected product type:
+# METAR
+
+
+# 12. Test duplicate suppression
+$DuplicateTestStart = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+
+aws lambda invoke `
+  --function-name $MetarPoller `
+  --payload '{}' `
+  --cli-binary-format raw-in-base64-out `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  .\metar-duplicate-test.json
+
+Start-Sleep -Seconds 15
+
+aws logs tail "/aws/lambda/$MetarProcessor" `
+  --since 5m `
+  --profile wilvor-dev `
+  --region us-west-1
+
+# If NOAA returned the same observations, expect:
+# RecordsUnchanged = 3
+# DynamoDBWrites = 0
+# WeatherChangedEventsPublished = 0
+#
+# A newer NOAA observation may correctly produce UPDATED instead.
+
+
+# 13. Check METAR and weather-event alarms
+aws cloudwatch describe-alarms `
+  --alarm-name-prefix "wilvor-dev-metar-" `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --query "MetricAlarms[].{Name:AlarmName,State:StateValue}" `
+  --output table
+
+aws cloudwatch describe-alarms `
+  --alarm-names "wilvor-dev-weather-changed-failed-invocations" `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --query "MetricAlarms[].{Name:AlarmName,State:StateValue}" `
+  --output table
+
+# Expected alarm state:
+# OK
+
+
+# 14. Check product-level weather-event metrics
+$start30m = (Get-Date).AddMinutes(-30).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+$endNow = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+foreach ($productType in @("METAR", "TAF", "SIGMET")) {
+  Write-Host "===== WEATHER EVENTS: $productType ====="
+
+  aws cloudwatch get-metric-statistics `
+    --profile wilvor-dev `
+    --region us-west-1 `
+    --namespace "Wilvor/WeatherEvents" `
+    --metric-name "WeatherChangedEvents" `
+    --dimensions Name=ProductType,Value=$productType `
+    --start-time $start30m `
+    --end-time $endNow `
+    --period 60 `
+    --statistics Sum `
+    --output table
+}
+
+
+# 15. Final cleanup
+Remove-Item .\metar-test.json -ErrorAction SilentlyContinue
+Remove-Item .\metar-duplicate-test.json -ErrorAction SilentlyContinue
+Remove-Item .\metar-pipeline-plan -ErrorAction SilentlyContinue
+Remove-Item .\metar-pipeline-plan.txt -ErrorAction SilentlyContinue
