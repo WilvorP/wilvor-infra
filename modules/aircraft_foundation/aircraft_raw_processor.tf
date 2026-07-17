@@ -111,8 +111,8 @@ resource "aws_lambda_function" "aircraft_raw_processor" {
 
   environment {
     variables = {
-      AIRCRAFT_ARCHIVE_BUCKET    = aws_s3_bucket.aircraft_archive.bucket
-      AIRCRAFT_CLEAN_STREAM_NAME = aws_kinesis_stream.aircraft_clean.name
+      AIRCRAFT_ARCHIVE_BUCKET     = aws_s3_bucket.aircraft_archive.bucket
+      AIRCRAFT_CLEAN_STREAM_NAME  = aws_kinesis_stream.aircraft_clean.name
     }
   }
 
