@@ -1,4 +1,6 @@
 locals {
+  weather_events_metric_namespace = "Wilvor/WeatherEvents"
+
   weather_events_alarm_dimensions = merge(
     {
       RuleName = aws_cloudwatch_event_rule.weather_changed.name
@@ -23,6 +25,10 @@ locals {
   )
 }
 
+# ============================================================
+# EVENTBRIDGE FAILURE ALARM
+# ============================================================
+
 resource "aws_cloudwatch_metric_alarm" "weather_changed_failed_invocations" {
   alarm_name          = "${var.name_prefix}-weather-changed-failed-invocations"
   alarm_description   = "Weather.changed EventBridge rule had failed target invocations."
@@ -38,6 +44,41 @@ resource "aws_cloudwatch_metric_alarm" "weather_changed_failed_invocations" {
   dimensions = local.weather_events_alarm_dimensions
 }
 
+# ============================================================
+# PRODUCT-TYPE METRIC
+#
+# Reads Weather.changed events from the shared CloudWatch Logs
+# target and publishes one custom metric with ProductType as a
+# dimension.
+#
+# Resulting metric series:
+# - ProductType = METAR
+# - ProductType = TAF
+# - ProductType = SIGMET
+# ============================================================
+
+resource "aws_cloudwatch_log_metric_filter" "weather_changed_by_product" {
+  name           = "${var.name_prefix}-weather-changed-by-product"
+  log_group_name = aws_cloudwatch_log_group.weather_changed_events.name
+
+  pattern = "{ $.detail.product_type = \"*\" }"
+
+  metric_transformation {
+    name      = "WeatherChangedEvents"
+    namespace = local.weather_events_metric_namespace
+    value     = "1"
+    unit      = "Count"
+
+    dimensions = {
+      ProductType = "$.detail.product_type"
+    }
+  }
+}
+
+# ============================================================
+# SHARED WEATHER EVENTS DASHBOARD
+# ============================================================
+
 resource "aws_cloudwatch_dashboard" "weather_events" {
   dashboard_name = "${var.name_prefix}-weather-events"
 
@@ -51,7 +92,7 @@ resource "aws_cloudwatch_dashboard" "weather_events" {
         height = 2
 
         properties = {
-          markdown = "# Wilvor Weather Events\nWeather.changed EventBridge rule and CloudWatch Logs target"
+          markdown = "# Wilvor Weather Events\nShared Weather.changed EventBridge routing and product-level event activity"
         }
       },
       {
@@ -82,6 +123,52 @@ resource "aws_cloudwatch_dashboard" "weather_events" {
               ["AWS/Events", "FailedInvocations"],
               local.weather_events_dashboard_dimensions
             )
+          ]
+        }
+      },
+      {
+        type   = "metric"
+        x      = 0
+        y      = 8
+        width  = 24
+        height = 6
+
+        properties = {
+          title   = "Weather.changed Events by Product Type"
+          region  = var.aws_region
+          stat    = "Sum"
+          period  = 60
+          view    = "timeSeries"
+          stacked = false
+
+          metrics = [
+            [
+              local.weather_events_metric_namespace,
+              "WeatherChangedEvents",
+              "ProductType",
+              "METAR",
+              {
+                label = "METAR"
+              }
+            ],
+            [
+              local.weather_events_metric_namespace,
+              "WeatherChangedEvents",
+              "ProductType",
+              "TAF",
+              {
+                label = "TAF"
+              }
+            ],
+            [
+              local.weather_events_metric_namespace,
+              "WeatherChangedEvents",
+              "ProductType",
+              "SIGMET",
+              {
+                label = "SIGMET"
+              }
+            ]
           ]
         }
       }
