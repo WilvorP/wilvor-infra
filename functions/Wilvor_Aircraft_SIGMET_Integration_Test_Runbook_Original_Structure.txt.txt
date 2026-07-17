@@ -21,12 +21,16 @@ aws sso login --profile wilvor-dev
 .\scripts\build_metar_poller.ps1
 .\scripts\build_taf_poller.ps1
 .\scripts\build_taf_processor.ps1
+.\scripts\build_metar_processor.ps1
+.\scripts\build_metar_poller.ps1
 
 Test-Path functions\weather\sigmet\poller\dist\sigmet_poller.zip
 Test-Path functions\weather\sigmet\processor\dist\sigmet_processor.zip
 Test-Path functions\weather\metar\poller\dist\metar_poller.zip
 Test-path functions\weather\taf\poller\dist\taf_poller.zip
 Test-path functions\weather\taf\processor\dist\taf_processor.zip
+Test-path functions\weather\metar\poller\dist\metar_poller.zip
+Test-path functions\weather\metar\processor\dist\metar_processor.zip
 # Expected:
 # True
 # True
@@ -2860,3 +2864,131 @@ Remove-Item `
 # ============================================================
 
 cd ..\..
+
+# ============================================================
+# 106. Load resource names
+# ============================================================
+
+$MetarPoller = terraform output -raw metar_poller_function_name
+$MetarProcessor = terraform output -raw metar_processor_lambda_name
+$MetarTable = terraform output -raw metar_latest_table_name
+$MetarStream = terraform output -raw metar_raw_stream_name
+$WeatherChangedLogGroup = terraform output -raw weather_changed_log_group_name
+
+# ============================================================
+# 107. Verify the Kinesis-to-processor mapping
+# ============================================================
+
+aws lambda list-event-source-mappings `
+  --function-name $MetarProcessor `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --query "EventSourceMappings[].{State:State,LastResult:LastProcessingResult,BatchSize:BatchSize,StartingPosition:StartingPosition}" `
+  --output table
+
+# ============================================================
+# 108. Invoke METAR Poller
+# ============================================================
+
+aws lambda invoke `
+  --function-name $MetarPoller `
+  --payload '{}' `
+  --cli-binary-format raw-in-base64-out `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  .\metar-test.json
+
+Get-Content .\metar-test.json
+
+Start-Sleep -Seconds 15
+
+# ============================================================
+# 109. Check DynamoDB Table
+# ============================================================
+
+aws dynamodb scan `
+  --table-name $MetarTable `
+  --select COUNT `
+  --profile wilvor-dev `
+  --region us-west-1
+
+
+# ============================================================
+# 110. Check Weather.changed EventBridge logs
+# ============================================================
+
+aws logs tail $WeatherChangedLogGroup `
+  --since 10m `
+  --profile wilvor-dev `
+  --region us-west-1
+
+# ============================================================
+# 111. Test duplicate suppression
+# ============================================================
+
+$DuplicateTestStart = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
+
+aws lambda invoke `
+  --function-name $MetarPoller `
+  --payload '{}' `
+  --cli-binary-format raw-in-base64-out `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  .\metar-duplicate-test.json
+
+Start-Sleep -Seconds 15
+
+aws logs tail "/aws/lambda/$MetarProcessor" `
+  --since 5m `
+  --profile wilvor-dev `
+  --region us-west-1
+
+# ============================================================
+# 112. Check METAR and weather-event alarms
+# ============================================================
+
+aws cloudwatch describe-alarms `
+  --alarm-name-prefix "wilvor-dev-metar-" `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --query "MetricAlarms[].{Name:AlarmName,State:StateValue}" `
+  --output table
+
+aws cloudwatch describe-alarms `
+  --alarm-names "wilvor-dev-weather-changed-failed-invocations" `
+  --profile wilvor-dev `
+  --region us-west-1 `
+  --query "MetricAlarms[].{Name:AlarmName,State:StateValue}" `
+  --output table
+
+# ============================================================
+# 113. Check product-level weather-event metrics
+# ============================================================
+
+$start30m = (Get-Date).AddMinutes(-30).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+$endNow = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+
+foreach ($productType in @("METAR", "TAF", "SIGMET")) {
+  Write-Host "===== WEATHER EVENTS: $productType ====="
+
+  aws cloudwatch get-metric-statistics `
+    --profile wilvor-dev `
+    --region us-west-1 `
+    --namespace "Wilvor/WeatherEvents" `
+    --metric-name "WeatherChangedEvents" `
+    --dimensions Name=ProductType,Value=$productType `
+    --start-time $start30m `
+    --end-time $endNow `
+    --period 60 `
+    --statistics Sum `
+    --output table
+}
+
+# ============================================================
+# 114. Final clean-up
+# ============================================================
+
+Remove-Item .\metar-test.json -ErrorAction SilentlyContinue
+Remove-Item .\metar-duplicate-test.json -ErrorAction SilentlyContinue
+Remove-Item .\metar-pipeline-plan -ErrorAction SilentlyContinue
+Remove-Item .\metar-pipeline-plan.txt -ErrorAction SilentlyContinue
