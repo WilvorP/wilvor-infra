@@ -15,3 +15,6 @@ functions/**/dist/
 **/.terraform/
 # Generated METAR processor build directory
 functions/weather/metar/processor/build/
+
+
+envs/dev/tfplan
