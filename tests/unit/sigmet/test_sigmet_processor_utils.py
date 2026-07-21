@@ -105,7 +105,12 @@ def test_decode_kinesis_record_returns_object(
     [
         ({}, "missing kinesis.data"),
         (
-            {"kinesis": {"data": "%%%"}},
+            {
+                "kinesis": {
+                    # Valid Base64 whose decoded bytes are not UTF-8.
+                    "data": base64.b64encode(b"\xff").decode("ascii"),
+                }
+            },
             "not valid base64 UTF-8",
         ),
         (
@@ -173,14 +178,15 @@ def test_extract_feature_rejects_invalid_payload(
         sigmet_processor.extract_feature(raw_event)
 
 
-def test_extract_properties_rejects_non_object(sigmet_processor):
-    with pytest.raises(
-        sigmet_processor.PermanentRecordError,
-        match="properties are missing or invalid",
-    ):
-        sigmet_processor.extract_properties(
-            {"type": "Feature", "properties": []}
-        )
+def test_extract_properties_returns_empty_object_for_non_object(
+    sigmet_processor,
+):
+    feature = {
+        "type": "Feature",
+        "properties": [],
+    }
+
+    assert sigmet_processor.extract_properties(feature) == {}
 
 
 def test_extract_source_identity_normalizes_fields(

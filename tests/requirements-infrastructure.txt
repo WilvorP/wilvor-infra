@@ -1,0 +1,4 @@
+-r requirements-test.txt
+
+# HCL parsing for static Terraform contract assertions
+python-hcl2>=4.3
