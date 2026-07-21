@@ -1,5 +1,6 @@
 .venv/
 __pycache__/
+*.py[cod]
 *.pyc
 .env
 .terraform/
@@ -18,3 +19,7 @@ functions/weather/metar/processor/build/
 
 
 envs/dev/tfplan
+
+# Generated runway test archives
+tests/unit/runway_metadata/*.zip
+tests/unit/runway_metadata/fixtures/*.csv
