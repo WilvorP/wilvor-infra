@@ -163,6 +163,78 @@ def build_airport_lookup(
         lookup[faa_id] = reference
     return lookup, rejected
 
+def filter_rows_to_supported_airports(
+    rows: Sequence[Mapping[str, str]],
+    *,
+    airport_lookup: Mapping[str, AirportReference],
+    supported_airport_ids: set[str] | None,
+) -> list[Mapping[str, str]]:
+    """
+    Keep only rows belonging to configured Wilvor airports.
+
+    FAA publishes runway data for facilities across the country.
+    Unsupported facilities are outside Wilvor's current scope and
+    must be skipped silently rather than treated as bad records.
+    """
+
+    supported = {
+        airport_id.strip().upper()
+        for airport_id in supported_airport_ids or set()
+        if airport_id.strip()
+    }
+
+    # An empty supported-airport set means no filtering was requested.
+    if not supported:
+        return list(rows)
+
+    supported_references = [
+        reference
+        for reference in airport_lookup.values()
+        if reference.icao_id.upper() in supported
+    ]
+
+    supported_faa_ids = {
+        reference.faa_id.upper()
+        for reference in supported_references
+    }
+
+    supported_site_numbers = {
+        reference.site_no.upper()
+        for reference in supported_references
+        if reference.site_no
+    }
+
+    filtered: list[Mapping[str, str]] = []
+
+    for source_row in rows:
+        row = normalized_row(source_row)
+
+        faa_id = (
+            get_field(
+                row,
+                "ARPT_ID",
+                "FAA_ID",
+                "LOC_ID",
+            )
+            or ""
+        ).upper()
+
+        site_no = (
+            get_field(
+                row,
+                "SITE_NO",
+            )
+            or ""
+        ).upper()
+
+        if (
+            faa_id in supported_faa_ids
+            or site_no in supported_site_numbers
+        ):
+            filtered.append(source_row)
+
+    return filtered
+
 
 def _runway_join_key(row: Mapping[str, str]) -> tuple[str, str]:
     site_no = get_field(row, "SITE_NO")
@@ -359,15 +431,54 @@ def parse_faa_rows(
     runway_end_rows: Sequence[Mapping[str, str]],
     supported_airport_ids: set[str] | None = None,
 ) -> ParseResult:
-    airport_lookup, airport_rejected = build_airport_lookup(airport_rows)
-    physical_runways, runway_rejected = parse_physical_runways(runway_rows)
-    runway_ends, end_rejected = parse_runway_ends(runway_end_rows)
-    runways, join_rejected = join_and_normalize(
+    airport_lookup, airport_rejected = build_airport_lookup(
+        airport_rows
+    )
+
+    supported = {
+        airport_id.strip().upper()
+        for airport_id in supported_airport_ids or set()
+        if airport_id.strip()
+    }
+
+    if supported:
+        scoped_airport_lookup = {
+            faa_id: reference
+            for faa_id, reference in airport_lookup.items()
+            if reference.icao_id.upper() in supported
+        }
+    else:
+        scoped_airport_lookup = dict(airport_lookup)
+
+    scoped_runway_rows = filter_rows_to_supported_airports(
+        runway_rows,
         airport_lookup=airport_lookup,
+        supported_airport_ids=supported,
+    )
+
+    scoped_runway_end_rows = filter_rows_to_supported_airports(
+        runway_end_rows,
+        airport_lookup=airport_lookup,
+        supported_airport_ids=supported,
+    )
+
+    physical_runways, runway_rejected = (
+        parse_physical_runways(
+            scoped_runway_rows
+        )
+    )
+
+    runway_ends, end_rejected = parse_runway_ends(
+        scoped_runway_end_rows
+    )
+
+    runways, join_rejected = join_and_normalize(
+        airport_lookup=scoped_airport_lookup,
         physical_runways=physical_runways,
         runway_ends=runway_ends,
-        supported_airport_ids=supported_airport_ids,
+        supported_airport_ids=supported,
     )
+
     return ParseResult(
         runways=runways,
         rejected_records=[
@@ -376,7 +487,7 @@ def parse_faa_rows(
             *end_rejected,
             *join_rejected,
         ],
-        airport_references=airport_lookup,
+        airport_references=scoped_airport_lookup,
     )
 
 

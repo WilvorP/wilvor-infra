@@ -29,3 +29,25 @@ def test_source_record_hash_is_stable() -> None:
     assert [item.source_record_hash for item in first.runways] == [
         item.source_record_hash for item in second.runways
     ]
+
+def test_unsupported_airports_are_skipped_not_rejected() -> None:
+    result = parse_faa_directory(
+        FIXTURES,
+        supported_airport_ids={
+            "KSFO",
+            "KOAK",
+        },
+    )
+
+    rejected_faa_ids = {
+        str(
+            record.raw_record.get(
+                "ARPT_ID",
+                "",
+            )
+        ).upper()
+        for record in result.rejected_records
+    }
+
+    assert "ZZZ" not in rejected_faa_ids
+    assert result.rejected_records == []

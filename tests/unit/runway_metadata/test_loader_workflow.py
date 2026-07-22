@@ -35,7 +35,7 @@ def build_config(
 
 
 def test_first_load_writes_all_outputs(
-    faa_zip_path: Path,
+    faa_zip_with_invalid_supported_runway: Path,
     tmp_path: Path,
 ) -> None:
     s3 = FakeS3Client()
@@ -46,7 +46,7 @@ def test_first_load_writes_all_outputs(
         event={
             "source_cycle": "2026-07-09",
             "source_zip_path": str(
-                faa_zip_path
+                faa_zip_with_invalid_supported_runway
             ),
             "load_id": "load-1",
         },
