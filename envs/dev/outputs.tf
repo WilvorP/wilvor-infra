@@ -189,3 +189,35 @@ output "name_prefix" {
 # output "metar_processor_event_source_mapping_uuid" {
 #   value = module.metar.processor_event_source_mapping_uuid
 # }
+
+output "runway_archive_bucket_name" {
+  value = module.runway_metadata.archive_bucket_name
+}
+
+output "runway_reference_table_name" {
+  value = module.runway_metadata.runway_reference_table_name
+}
+
+output "runway_loader_function_name" {
+  value = module.runway_metadata.loader_function_name
+}
+
+output "runway_loader_function_arn" {
+  value = module.runway_metadata.loader_function_arn
+}
+
+output "runway_loader_log_group_name" {
+  value = module.runway_metadata.loader_log_group_name
+}
+
+output "runway_loader_schedule_name" {
+  value = module.runway_metadata.schedule_name
+}
+
+output "runway_loader_schedule_state" {
+  value = module.runway_metadata.schedule_state
+}
+
+output "runway_dashboard_name" {
+  value = module.runway_metadata.dashboard_name
+}

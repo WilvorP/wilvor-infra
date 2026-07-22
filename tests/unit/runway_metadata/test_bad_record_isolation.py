@@ -1,14 +1,26 @@
 from pathlib import Path
 
-from faa_parser import parse_faa_rows, read_csv_file
+from faa_parser import (
+    parse_faa_rows,
+    read_csv_file,
+)
 
-FIXTURES = Path(__file__).parent / "fixtures"
 
+def test_one_invalid_runway_does_not_stop_valid_runways(
+    fixtures_dir: Path,
+) -> None:
+    airport_rows = read_csv_file(
+        fixtures_dir / "APT_BASE.csv"
+    )
 
-def test_one_invalid_runway_does_not_stop_valid_runways() -> None:
-    airport_rows = read_csv_file(FIXTURES / "APT_BASE.csv")
-    runway_rows = read_csv_file(FIXTURES / "APT_RWY.csv")
-    runway_end_rows = read_csv_file(FIXTURES / "APT_RWY_END.csv")
+    runway_rows = read_csv_file(
+        fixtures_dir / "APT_RWY.csv"
+    )
+
+    runway_end_rows = read_csv_file(
+        fixtures_dir / "APT_RWY_END.csv"
+    )
+
     runway_rows.append(
         {
             "SITE_NO": "00001.1*A",
@@ -27,4 +39,9 @@ def test_one_invalid_runway_does_not_stop_valid_runways() -> None:
     )
 
     assert len(result.runways) == 2
-    assert any("RWY_LEN must be numeric" in record.reason for record in result.rejected_records)
+
+    assert any(
+        "RWY_LEN must be numeric"
+        in record.reason
+        for record in result.rejected_records
+    )

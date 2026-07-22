@@ -1,0 +1,176 @@
+WILVOR RUNWAY METADATA - COMMANDS
+
+Current supported airport IDs:
+KSFO
+KOAK
+KSJC
+
+1. FROM REPOSITORY ROOT
+
+cd "C:\Users\ibrah\VS code\wilvor-infra"
+
+.\.venv\Scripts\Activate.ps1
+
+python -m pytest tests/unit/runway_metadata -q
+python -m compileall -f functions/runway_metadata/loader
+.\scripts\build_runway_metadata_loader.ps1
+
+python -c "
+import sys
+sys.path.insert(0, 'functions/runway_metadata/loader/dist/runway_metadata_loader.zip')
+import app
+print(app.lambda_handler)
+"
+
+2. TERRAFORM
+
+cd .\envs\dev
+
+terraform init
+terraform validate
+terraform plan -out=tfplan
+terraform apply tfplan
+terraform output
+
+3. SET COMMON VALUES
+
+$Region = terraform output -raw aws_region
+$FunctionName = terraform output -raw runway_loader_function_name
+$Bucket = terraform output -raw runway_archive_bucket_name
+$Table = terraform output -raw runway_reference_table_name
+$ScheduleName = terraform output -raw runway_loader_schedule_name
+
+4. CHECK DYNAMODB BILLING
+
+aws dynamodb describe-table `
+  --table-name $Table `
+  --profile wilvor-dev `
+  --region $Region `
+  --query "{Status: Table.TableStatus, ReadCapacityUnits: Table.ProvisionedThroughput.ReadCapacityUnits, WriteCapacityUnits: Table.ProvisionedThroughput.WriteCapacityUnits}"
+
+5. CHECK SCHEDULE
+
+aws events describe-rule `
+  --name $ScheduleName `
+  --profile wilvor-dev `
+  --region $Region
+
+6. FIRST REAL FAA LOAD
+
+@'
+{
+  "source_cycle": "2026-07-09",
+  "source_url": "https://nfdc.faa.gov/webContent/28DaySub/extra/09_Jul_2026_APT_CSV.zip",
+  "force_reload": false
+}
+'@ | Set-Content -Path ".\runway-request.json" -Encoding ascii
+
+aws lambda invoke `
+  --function-name $FunctionName `
+  --payload fileb://runway-request.json `
+  --cli-binary-format raw-in-base64-out `
+  --profile wilvor-dev `
+  --region $Region `
+  runway-response.json
+
+Get-Content .\runway-response.json
+
+7. CLOUDWATCH LOGS
+
+aws logs tail `
+  "/aws/lambda/$FunctionName" `
+  --profile wilvor-dev `
+  --region $Region `
+  --since 30m
+
+8. CHECK S3
+
+aws s3 ls `
+  "s3://$Bucket/raw/source=faa-nasr/" `
+  --recursive `
+  --profile wilvor-dev `
+  --region $Region
+
+aws s3 ls `
+  "s3://$Bucket/bad/source=faa-nasr/" `
+  --recursive `
+  --profile wilvor-dev `
+  --region $Region
+
+9. CHECK KSFO IN DYNAMODB
+
+@'
+{
+  ":airport_id": {
+    "S": "KSFO"
+  }
+}
+'@ | Set-Content -Path ".\ksfo-values.json" -Encoding ascii
+
+aws dynamodb query `
+  --table-name $Table `
+  --key-condition-expression "airport_id = :airport_id" `
+  --expression-attribute-values file://ksfo-values.json `
+  --profile wilvor-dev `
+  --region $Region
+
+10. CHECK CONTROL ITEM
+
+@'
+{
+  "airport_id": {
+    "S": "SYSTEM"
+  },
+  "record_id": {
+    "S": "SOURCE#FAA_NASR"
+  }
+}
+'@ | Set-Content -Path ".\runway-control-key.json" -Encoding ascii
+
+aws dynamodb get-item `
+  --table-name $Table `
+  --key file://runway-control-key.json `
+  --consistent-read `
+  --profile wilvor-dev `
+  --region $Region
+
+11. DUPLICATE TEST
+
+aws lambda invoke `
+  --function-name $FunctionName `
+  --payload fileb://runway-request.json `
+  --cli-binary-format raw-in-base64-out `
+  --profile wilvor-dev `
+  --region $Region `
+  runway-duplicate-response.json
+
+Get-Content .\runway-duplicate-response.json
+
+12. S3 REPLAY TEST
+
+$RawKey = aws s3api list-objects-v2 `
+  --bucket $Bucket `
+  --prefix "raw/source=faa-nasr/cycle=2026-07-09/" `
+  --query "Contents[0].Key" `
+  --output text `
+  --profile wilvor-dev `
+  --region $Region
+
+@"
+{
+  "source_cycle": "2026-07-09",
+  "source_s3_bucket": "$Bucket",
+  "source_s3_key": "$RawKey",
+  "force_reload": true
+}
+"@ | Set-Content -Path ".\runway-replay-request.json" -Encoding ascii
+
+aws lambda invoke `
+  --function-name $FunctionName `
+  --payload fileb://runway-replay-request.json `
+  --cli-binary-format raw-in-base64-out `
+  --profile wilvor-dev `
+  --region $Region `
+  runway-replay-response.json
+
+Get-Content .\runway-replay-response.json

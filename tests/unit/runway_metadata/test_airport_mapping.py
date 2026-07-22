@@ -1,12 +1,19 @@
 from pathlib import Path
 
-from faa_parser import build_airport_lookup, read_csv_file
+from faa_parser import (
+    build_airport_lookup,
+    read_csv_file,
+)
 
-FIXTURES = Path(__file__).parent / "fixtures"
 
-
-def test_build_airport_lookup_uses_faa_to_icao_mapping() -> None:
-    lookup, rejected = build_airport_lookup(read_csv_file(FIXTURES / "APT_BASE.csv"))
+def test_build_airport_lookup_uses_faa_to_icao_mapping(
+    fixtures_dir: Path,
+) -> None:
+    lookup, rejected = build_airport_lookup(
+        read_csv_file(
+            fixtures_dir / "APT_BASE.csv"
+        )
+    )
 
     assert rejected == []
     assert lookup["SFO"].icao_id == "KSFO"
