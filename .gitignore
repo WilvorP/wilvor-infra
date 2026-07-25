@@ -23,3 +23,4 @@ envs/dev/tfplan
 # Generated runway test archives
 tests/unit/runway_metadata/*.zip
 tests/unit/runway_metadata/fixtures/*.csv
+test-results/
