@@ -9,9 +9,11 @@ from boto3.dynamodb.conditions import Attr
 from botocore.exceptions import ClientError
 
 from wilvor_aircraft.monitoring import emit_metric
+from wilvor_aircraft.schemas import AIRCRAFT_CURRENT_STATE_SCHEMA_VERSION
 
 
 dynamodb = boto3.resource("dynamodb")
+events = boto3.client("events")
 
 
 def decode_kinesis_record(record: dict[str, Any]) -> dict[str, Any]:
@@ -30,22 +32,84 @@ def validate_clean_record(item: Any) -> list[str]:
 
     reasons: list[str] = []
 
-    if item.get("schema_version") != "aircraft_current_state.v1":
+    if item.get("schema_version") != AIRCRAFT_CURRENT_STATE_SCHEMA_VERSION:
         reasons.append("invalid_schema_version")
 
-    if not item.get("icao24"):
-        reasons.append("missing_icao24")
+    required_fields = [
+        "aircraft_id",
+        "position_time_epoch",
+        "position_time_utc",
+        "last_contact_epoch",
+        "last_contact_utc",
+        "on_ground",
+        "has_position",
+        "position_age_seconds",
+        "freshness_status",
+        "state_version",
+        "idempotency_key",
+        "source_system",
+        "source_event_time_utc",
+        "received_at_utc",
+        "processed_at_utc",
+        "correlation_id",
+        "raw_s3_uri",
+        "schema_version",
+        "expires_at_epoch",
+    ]
 
-    if item.get("last_contact_epoch") is None:
-        reasons.append("missing_last_contact_epoch")
+    for field in required_fields:
+        if item.get(field) is None:
+            reasons.append(f"missing_{field}")
 
-    if item.get("latitude") is None:
-        reasons.append("missing_latitude")
+    if item.get("source_system") != "OPEN_SKY":
+        reasons.append("invalid_source_system")
 
-    if item.get("longitude") is None:
-        reasons.append("missing_longitude")
+    if item.get("freshness_status") not in {
+        "FRESH",
+        "ACCEPTABLE",
+        "STALE",
+        "UNAVAILABLE",
+    }:
+        reasons.append("invalid_freshness_status")
 
-    return reasons
+    has_position = item.get("has_position")
+
+    if not isinstance(has_position, bool):
+        reasons.append("invalid_has_position")
+
+    if has_position is True:
+        conditional_position_fields = [
+            "latitude",
+            "longitude",
+            "current_h3_cell",
+            "h3_resolution",
+        ]
+
+        for field in conditional_position_fields:
+            if item.get(field) is None:
+                reasons.append(f"missing_{field}_when_has_position")
+
+    if has_position is False:
+        if item.get("current_h3_cell") is not None:
+            reasons.append("unexpected_h3_cell_without_position")
+
+        if item.get("h3_resolution") is not None:
+            reasons.append("unexpected_h3_resolution_without_position")
+
+    expected_version = None
+
+    if item.get("aircraft_id") and item.get("position_time_epoch") is not None:
+        expected_version = (
+            f"{item['aircraft_id']}#{int(item['position_time_epoch'])}"
+        )
+
+    if expected_version and item.get("state_version") != expected_version:
+        reasons.append("invalid_state_version")
+
+    if expected_version and item.get("idempotency_key") != expected_version:
+        reasons.append("invalid_idempotency_key")
+
+    return sorted(set(reasons))
 
 
 def convert_for_dynamodb(value: Any) -> Any:
@@ -70,23 +134,43 @@ def put_current_state_item(item: dict[str, Any]) -> str:
     table = dynamodb.Table(table_name)
 
     dynamodb_item = convert_for_dynamodb(item)
-    incoming_last_contact = Decimal(str(item["last_contact_epoch"]))
+    incoming_position_time = Decimal(
+        str(item["position_time_epoch"])
+    )
+
+    ordering_condition = (
+        Attr("position_time_epoch").not_exists()
+        | Attr("position_time_epoch").lt(incoming_position_time)
+    )
+
+    condition_expression = ordering_condition
+
+    # A record without a usable position may create a new no-position item,
+    # or replace another no-position item, but it must not overwrite a valid
+    # positioned aircraft record.
+    if item["has_position"] is False:
+        position_protection = (
+            Attr("has_position").not_exists()
+            | Attr("has_position").eq(False)
+        )
+
+        condition_expression = (
+            ordering_condition & position_protection
+        )
 
     try:
         table.put_item(
             Item=dynamodb_item,
-            ConditionExpression=(
-                Attr("last_contact_epoch").not_exists()
-                | Attr("last_contact_epoch").lte(incoming_last_contact)
-            ),
+            ConditionExpression=condition_expression,
         )
+
         return "written"
 
     except ClientError as exc:
         error_code = exc.response.get("Error", {}).get("Code")
 
         if error_code == "ConditionalCheckFailedException":
-            return "skipped_stale"
+            return "skipped_stale_duplicate_or_position_protected"
 
         raise
 
@@ -101,6 +185,7 @@ def handler(event, context):
     skipped_stale_records = 0
     rejected_records = 0
     failed_records = 0
+    published_events = 0
 
     for record in event.get("Records", []):
         total_records += 1
@@ -130,8 +215,11 @@ def handler(event, context):
             result = put_current_state_item(clean_record)
 
             if result == "written":
+                publish_aircraft_state_updated(clean_record)
                 written_records += 1
-            elif result == "skipped_stale":
+                published_events += 1
+
+            elif result == "skipped_stale_duplicate_or_position_protected":
                 skipped_stale_records += 1
 
         except Exception as exc:
@@ -159,6 +247,7 @@ def handler(event, context):
         "rejected_records": rejected_records,
         "failed_records": failed_records,
         "batch_item_failures": len(batch_item_failures),
+        "published_events": published_events,
     }
 
     print(json.dumps(summary))
@@ -176,6 +265,7 @@ def handler(event, context):
             "RejectedRecords": rejected_records,
             "FailedRecords": failed_records,
             "BatchItemFailures": len(batch_item_failures),
+            "published_events": published_events,
         },
         properties={
             "event": "aircraft_current_state_writer_metrics",
@@ -185,3 +275,46 @@ def handler(event, context):
     return {
         "batchItemFailures": batch_item_failures,
     } 
+
+def publish_aircraft_state_updated(
+    item: dict[str, Any],
+) -> str:
+    detail = {
+        "aircraft_id": item["aircraft_id"],
+        "state_version": item["state_version"],
+        "idempotency_key": item["idempotency_key"],
+
+        "position_time_epoch": item["position_time_epoch"],
+        "position_time_utc": item["position_time_utc"],
+
+        "has_position": item["has_position"],
+        "current_h3_cell": item.get("current_h3_cell"),
+        "h3_resolution": item.get("h3_resolution"),
+
+        "freshness_status": item["freshness_status"],
+
+        "correlation_id": item["correlation_id"],
+        "schema_version": item["schema_version"],
+    }
+
+    response = events.put_events(
+        Entries=[
+            {
+                "EventBusName": os.environ.get(
+                    "EVENT_BUS_NAME",
+                    "default",
+                ),
+                "Source": "wilvor.aircraft",
+                "DetailType": "aircraft.state.updated",
+                "Detail": json.dumps(detail),
+            }
+        ]
+    )
+
+    if int(response.get("FailedEntryCount", 0)) > 0:
+        raise RuntimeError(
+            "EventBridge failed to publish aircraft.state.updated: "
+            f"{response.get('Entries')}"
+        )
+
+    return response["Entries"][0]["EventId"]

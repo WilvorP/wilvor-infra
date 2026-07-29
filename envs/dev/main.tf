@@ -5,7 +5,7 @@ locals {
     Project     = var.project_name
     Environment = var.environment
     ManagedBy   = "Terraform"
-    Phase       = "runway-metadata"
+    Phase       = "aircraft-current-state-v2"
   }
 }
 
@@ -22,6 +22,14 @@ module "aircraft_foundation" {
 
   enable_opensky_poller_schedule     = false
   opensky_poller_schedule_expression = "rate(5 minutes)"
+
+  event_bus_name = local.default_event_bus_name
+  event_bus_arn  = local.default_event_bus_arn
+
+  aircraft_h3_resolution      = 4
+  aircraft_state_ttl_seconds  = 1800
+  aircraft_fresh_seconds      = 60
+  aircraft_acceptable_seconds = 180
 
   tags = local.common_tags
 }

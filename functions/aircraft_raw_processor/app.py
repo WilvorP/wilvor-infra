@@ -50,6 +50,17 @@ def validate_raw_event_envelope(raw_event: Any) -> list[str]:
 
     reasons: list[str] = []
 
+    required_envelope_fields = [
+        "poll_id",
+        "fetched_at_utc",
+        "raw_s3_bucket",
+        "raw_s3_key",
+    ]
+
+    for field in required_envelope_fields:
+        if not raw_event.get(field):
+            reasons.append(f"missing_{field}")
+
     if raw_event.get("schema_version") != OPENSKY_RAW_SCHEMA_VERSION:
         reasons.append("invalid_or_missing_schema_version")
 
@@ -138,7 +149,7 @@ def build_clean_kinesis_record(
     clean_record: dict[str, Any],
     sequence_number: str,
 ) -> dict[str, Any]:
-    partition_key = clean_record.get("icao24") or clean_record.get("aircraft_id")
+    partition_key = clean_record["aircraft_id"]
 
     return {
         "PartitionKey": str(partition_key),
@@ -229,7 +240,21 @@ def handler(event, context):
             bad_record_sequence_numbers.append(sequence_number)
             continue
 
-        clean_record, mapping_reasons = map_raw_event_to_current_state(raw_event)
+        clean_record, mapping_reasons = map_raw_event_to_current_state(
+            raw_event,
+            ttl_seconds=int(
+                os.environ.get("AIRCRAFT_STATE_TTL_SECONDS", "1800")
+            ),
+            h3_resolution=int(
+                os.environ.get("AIRCRAFT_H3_RESOLUTION", "4")
+            ),
+            fresh_seconds=int(
+                os.environ.get("AIRCRAFT_FRESH_SECONDS", "60")
+            ),
+            acceptable_seconds=int(
+                os.environ.get("AIRCRAFT_ACCEPTABLE_SECONDS", "180")
+            ),
+        )
 
         if mapping_reasons:
             rejected_records += 1

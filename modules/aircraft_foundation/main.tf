@@ -131,15 +131,50 @@ resource "aws_dynamodb_table" "aircraft_current_state" {
   read_capacity  = 5
   write_capacity = 5
 
-  hash_key = "icao24"
+  hash_key = "aircraft_id"
 
   attribute {
-    name = "icao24"
+    name = "aircraft_id"
     type = "S"
   }
 
+  attribute {
+    name = "current_h3_cell"
+    type = "S"
+  }
+
+  attribute {
+    name = "position_time_epoch"
+    type = "N"
+  }
+
+  attribute {
+    name = "callsign"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name            = "current_h3_cell-position_time_epoch-index"
+    hash_key        = "current_h3_cell"
+    range_key       = "position_time_epoch"
+    projection_type = "ALL"
+
+    read_capacity  = 5
+    write_capacity = 5
+  }
+
+  global_secondary_index {
+    name            = "callsign-position_time_epoch-index"
+    hash_key        = "callsign"
+    range_key       = "position_time_epoch"
+    projection_type = "ALL"
+
+    read_capacity  = 5
+    write_capacity = 5
+  }
+
   ttl {
-    attribute_name = "ttl_epoch"
+    attribute_name = "expires_at_epoch"
     enabled        = true
   }
 

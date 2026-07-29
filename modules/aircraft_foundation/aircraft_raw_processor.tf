@@ -113,6 +113,11 @@ resource "aws_lambda_function" "aircraft_raw_processor" {
     variables = {
       AIRCRAFT_ARCHIVE_BUCKET    = aws_s3_bucket.aircraft_archive.bucket
       AIRCRAFT_CLEAN_STREAM_NAME = aws_kinesis_stream.aircraft_clean.name
+
+      AIRCRAFT_H3_RESOLUTION      = tostring(var.aircraft_h3_resolution)
+      AIRCRAFT_STATE_TTL_SECONDS  = tostring(var.aircraft_state_ttl_seconds)
+      AIRCRAFT_FRESH_SECONDS      = tostring(var.aircraft_fresh_seconds)
+      AIRCRAFT_ACCEPTABLE_SECONDS = tostring(var.aircraft_acceptable_seconds)
     }
   }
 
