@@ -154,9 +154,9 @@ resource "aws_dynamodb_table" "aircraft_current_state" {
   }
 
   global_secondary_index {
-    name            = "current_h3_cell-position_time_epoch-index"
-    hash_key        = "current_h3_cell"
-    range_key       = "position_time_epoch"
+    name = "current_h3_cell-position_time_epoch-index"
+    hash_key = "current_h3_cell"
+    range_key = "position_time_epoch"
     projection_type = "ALL"
 
     read_capacity  = 5
@@ -164,9 +164,9 @@ resource "aws_dynamodb_table" "aircraft_current_state" {
   }
 
   global_secondary_index {
-    name            = "callsign-position_time_epoch-index"
-    hash_key        = "callsign"
-    range_key       = "position_time_epoch"
+    name = "callsign-position_time_epoch-index"
+    hash_key = "callsign"
+    range_key = "position_time_epoch"
     projection_type = "ALL"
 
     read_capacity  = 5
