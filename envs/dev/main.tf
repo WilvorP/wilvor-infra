@@ -182,3 +182,40 @@ module "runway_metadata" {
 
   tags = local.common_tags
 }
+
+module "station_reference" {
+  source = "../../modules/station_reference"
+
+  name_prefix = local.name_prefix
+  environment = var.environment
+  aws_region  = var.aws_region
+
+  account_id = data.aws_caller_identity.current.account_id
+
+  station_reference_loader_zip_path = (
+    "${path.root}/../../functions/station_reference/loader/dist/station_reference_loader.zip"
+  )
+
+  station_cache_url = "https://aviationweather.gov/data/cache/stations.cache.json.gz"
+
+  # Static/reference load. Keep schedule disabled until manual AWS testing passes.
+  enable_station_reference_loader_schedule     = false
+  station_reference_loader_schedule_expression = "rate(1 day)"
+
+  station_h3_resolution = 4
+
+  event_bus_name = local.default_event_bus_name
+  event_bus_arn  = local.default_event_bus_arn
+
+  archive_force_destroy         = true
+  bad_record_retention_days     = 30
+  log_retention_days            = 3
+  lambda_memory_size            = 1024
+  lambda_timeout_seconds        = 300
+  http_timeout_seconds          = 60
+  enable_point_in_time_recovery = false
+  dynamodb_read_capacity        = 10
+  dynamodb_write_capacity       = 200
+
+  tags = local.common_tags
+}

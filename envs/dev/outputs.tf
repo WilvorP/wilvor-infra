@@ -221,3 +221,35 @@ output "runway_loader_schedule_state" {
 output "runway_dashboard_name" {
   value = module.runway_metadata.dashboard_name
 }
+
+output "station_reference_archive_bucket_name" {
+  value = module.station_reference.archive_bucket_name
+}
+
+output "station_reference_table_name" {
+  value = module.station_reference.station_reference_table_name
+}
+
+output "station_reference_table_arn" {
+  value = module.station_reference.station_reference_table_arn
+}
+
+output "station_reference_loader_function_name" {
+  value = module.station_reference.loader_function_name
+}
+
+output "station_reference_loader_function_arn" {
+  value = module.station_reference.loader_function_arn
+}
+
+output "station_reference_loader_log_group_name" {
+  value = module.station_reference.loader_log_group_name
+}
+
+output "station_reference_loader_schedule_name" {
+  value = module.station_reference.schedule_name
+}
+
+output "station_reference_loader_schedule_state" {
+  value = module.station_reference.schedule_state
+}
