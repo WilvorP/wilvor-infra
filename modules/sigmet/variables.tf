@@ -23,6 +23,10 @@ variable "sigmet_processor_zip_path" {
   type = string
 }
 
+variable "sigmet_hazard_coordinates_processor_zip_path" {
+  type = string
+}
+
 variable "enable_sigmet_poller_schedule" {
   type    = bool
   default = false

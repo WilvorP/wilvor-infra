@@ -63,6 +63,10 @@ module "sigmet" {
     "${path.root}/../../functions/weather/sigmet/processor/dist/sigmet_processor.zip"
   )
 
+  sigmet_hazard_coordinates_processor_zip_path = (
+    "${path.root}/../../functions/weather/sigmet/hazard_coordinates_processor/dist/sigmet_hazard_coordinates_processor.zip"
+  )
+
   enable_sigmet_poller_schedule     = false
   sigmet_poller_schedule_expression = "rate(2 minutes)"
   sigmet_api_url                    = "https://aviationweather.gov/api/data/airsigmet?format=geojson"

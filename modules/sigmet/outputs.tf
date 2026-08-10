@@ -42,3 +42,15 @@ output "dashboard_name" {
   description = "Name of the SIGMET CloudWatch dashboard"
   value       = aws_cloudwatch_dashboard.sigmet_pipeline.dashboard_name
 }
+
+output "hazard_coordinates_table_name" {
+  value = aws_dynamodb_table.hazard_coordinates.name
+}
+
+output "hazard_coordinates_processor_function_name" {
+  value = aws_lambda_function.sigmet_hazard_coordinates_processor.function_name
+}
+
+output "hazard_coordinates_processor_function_arn" {
+  value = aws_lambda_function.sigmet_hazard_coordinates_processor.arn
+}
