@@ -253,3 +253,15 @@ output "station_reference_loader_schedule_name" {
 output "station_reference_loader_schedule_state" {
   value = module.station_reference.schedule_state
 }
+
+output "hazard_coordinates_table_name" {
+  value = module.sigmet.hazard_coordinates_table_name
+}
+
+output "impact_cells_table_name" {
+  value = module.sigmet.impact_cells_table_name
+}
+
+output "hazard_station_candidates_table_name" {
+  value = module.sigmet.hazard_station_candidates_table_name
+}

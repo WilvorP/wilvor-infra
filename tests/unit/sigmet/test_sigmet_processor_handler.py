@@ -130,18 +130,23 @@ def test_lambda_handler_success_aggregates_processor_metrics(
         "process_decoded_record",
         lambda payload: {
             "active_hazards_written": 1,
+            "hazard_coordinates_written": 5,
             "hazard_cells_written": 3,
-            "hazard_cells_removed": 1,
-            "eventbridge_events_published": 1,
+            "impact_cells_written": 9,
+            "eventbridge_events_published": 0,
             "new_records": 1,
             "updated_records": 0,
             "unchanged_records": 0,
+            "stale_records": 0,
         },
     )
+
     monkeypatch.setattr(
         sigmet_processor,
         "emit_metric",
-        lambda **kwargs: metrics.append(kwargs),
+        lambda **kwargs: metrics.append(
+            kwargs
+        ),
     )
 
     result = sigmet_processor.lambda_handler(
@@ -157,19 +162,48 @@ def test_lambda_handler_success_aggregates_processor_metrics(
                 ),
             ]
         },
-        SimpleNamespace(aws_request_id="request-1"),
+        SimpleNamespace(
+            aws_request_id="request-1"
+        ),
     )
 
-    assert result == {"batchItemFailures": []}
+    assert result == {
+        "batchItemFailures": []
+    }
+
     emitted = metrics[0]["metrics"]
+
     assert emitted["RecordsReceived"] == 2
     assert emitted["RecordsProcessed"] == 2
     assert emitted["RecordsFailed"] == 0
-    assert emitted["ActiveHazardsWritten"] == 2
-    assert emitted["HazardCellsWritten"] == 6
-    assert emitted["HazardCellsRemoved"] == 2
-    assert emitted["EventBridgeEventsPublished"] == 2
+
+    assert (
+        emitted["ActiveHazardsWritten"]
+        == 2
+    )
+
+    assert (
+        emitted["HazardCoordinatesWritten"]
+        == 10
+    )
+
+    assert (
+        emitted["HazardCellsWritten"]
+        == 6
+    )
+
+    assert (
+        emitted["ImpactCellsWritten"]
+        == 18
+    )
+
+    assert (
+        emitted["EventBridgeEventsPublished"]
+        == 0
+    )
+
     assert emitted["NewRecords"] == 2
+    assert emitted["StaleRecords"] == 0
 
 
 def test_lambda_handler_quarantines_permanent_error_without_retry(

@@ -4,7 +4,9 @@ import hashlib
 import json
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal, InvalidOperation
 from typing import Any
 
 import boto3
@@ -12,44 +14,152 @@ import h3
 from botocore.exceptions import BotoCoreError, ClientError
 from wilvor_weather.monitoring import emit_metric
 
+
 logger = logging.getLogger()
 logger.setLevel(logging.INFO)
 
-dynamodb = boto3.resource("dynamodb")
-events = boto3.client("events")
-s3 = boto3.client("s3")
 
-ACTIVE_HAZARDS_TABLE_NAME = os.environ["ACTIVE_HAZARDS_TABLE_NAME"]
-HAZARD_CELLS_TABLE_NAME = os.environ["HAZARD_CELLS_TABLE_NAME"]
+# ---------------------------------------------------------------------------
+# Configuration
+# ---------------------------------------------------------------------------
 
-H3_RESOLUTION = int(os.environ.get("H3_RESOLUTION", "4"))
-SCHEMA_VERSION = os.environ.get("SCHEMA_VERSION", "internal.sigmet.v1")
-EVENT_BUS_NAME = os.environ.get("EVENT_BUS_NAME", "default")
+IMPACT_RADIUS_NM = Decimal(
+    os.environ.get("IMPACT_RADIUS_NM", "50")
+)
 
-BAD_RECORDS_BUCKET_NAME = os.environ.get("BAD_RECORDS_BUCKET_NAME")
+if IMPACT_RADIUS_NM < 0:
+    raise RuntimeError("IMPACT_RADIUS_NM cannot be negative")
+
+
+ACTIVE_HAZARDS_TABLE_NAME = os.environ[
+    "ACTIVE_HAZARDS_TABLE_NAME"
+]
+
+HAZARD_COORDINATES_TABLE_NAME = os.environ[
+    "HAZARD_COORDINATES_TABLE_NAME"
+]
+
+HAZARD_CELLS_TABLE_NAME = os.environ[
+    "HAZARD_CELLS_TABLE_NAME"
+]
+
+IMPACT_CELLS_TABLE_NAME = os.environ[
+    "IMPACT_CELLS_TABLE_NAME"
+]
+
+
+H3_RESOLUTION = int(
+    os.environ.get("H3_RESOLUTION", "4")
+)
+
+IMPACT_GRID_DISTANCE = int(
+    os.environ.get("IMPACT_GRID_DISTANCE", "2")
+)
+
+if IMPACT_GRID_DISTANCE < 0:
+    raise RuntimeError(
+        "IMPACT_GRID_DISTANCE cannot be negative"
+    )
+
+
+SCHEMA_VERSION = os.environ.get(
+    "SCHEMA_VERSION",
+    "wilvor.active_hazards.v4.0",
+)
+
+RETENTION_AFTER_VALID_TO_HOURS = int(
+    os.environ.get(
+        "RETENTION_AFTER_VALID_TO_HOURS",
+        "6",
+    )
+)
+
+if RETENTION_AFTER_VALID_TO_HOURS < 0:
+    raise RuntimeError(
+        "RETENTION_AFTER_VALID_TO_HOURS "
+        "cannot be negative"
+    )
+
+
+SOURCE_SYSTEM = "NOAA_AVIATIONWEATHER_SIGMET"
+
+
+BAD_RECORDS_BUCKET_NAME = os.environ.get(
+    "BAD_RECORDS_BUCKET_NAME"
+)
+
 BAD_RECORDS_PREFIX = os.environ.get(
     "BAD_RECORDS_PREFIX",
     "bad-records/source=sigmet_processor",
 )
 
-active_hazards_table = dynamodb.Table(ACTIVE_HAZARDS_TABLE_NAME)
-hazard_cells_table = dynamodb.Table(HAZARD_CELLS_TABLE_NAME)
 
+# ---------------------------------------------------------------------------
+# AWS clients/resources
+# ---------------------------------------------------------------------------
+
+dynamodb = boto3.resource("dynamodb")
+s3 = boto3.client("s3")
+
+
+active_hazards_table = dynamodb.Table(
+    ACTIVE_HAZARDS_TABLE_NAME
+)
+
+hazard_coordinates_table = dynamodb.Table(
+    HAZARD_COORDINATES_TABLE_NAME
+)
+
+hazard_cells_table = dynamodb.Table(
+    HAZARD_CELLS_TABLE_NAME
+)
+
+impact_cells_table = dynamodb.Table(
+    IMPACT_CELLS_TABLE_NAME
+)
+
+
+# ---------------------------------------------------------------------------
+# Exceptions
+# ---------------------------------------------------------------------------
 
 class PermanentRecordError(Exception):
-    """A validation error that will not be fixed by retrying the same Kinesis record."""
+    """
+    Validation error that will not be fixed by retrying
+    the same Kinesis record.
+    """
 
+
+# ---------------------------------------------------------------------------
+# Generic helpers
+# ---------------------------------------------------------------------------
 
 def json_default(value: Any) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
+
+    if isinstance(value, Decimal):
+        return str(value)
+
     if isinstance(value, set):
         return sorted(value)
+
     return str(value)
 
 
-def log_event(message: str, **kwargs: Any) -> None:
-    logger.info(json.dumps({"message": message, **kwargs}, default=json_default))
+def log_event(
+    message: str,
+    **kwargs: Any,
+) -> None:
+    logger.info(
+        json.dumps(
+            {
+                "message": message,
+                **kwargs,
+            },
+            default=json_default,
+        )
+    )
 
 
 def now_utc() -> datetime:
@@ -67,626 +177,2820 @@ def stable_hash(value: Any) -> str:
         separators=(",", ":"),
         default=json_default,
     )
-    return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
+
+    return hashlib.sha256(
+        serialized.encode("utf-8")
+    ).hexdigest()
 
 
-def parse_time(value: Any) -> datetime | None:
+def parse_time(
+    value: Any,
+) -> datetime | None:
     if value is None:
         return None
 
+    if isinstance(value, Decimal):
+        value = float(value)
+
     if isinstance(value, (int, float)):
-        # Support epoch seconds or epoch milliseconds.
+        # Epoch milliseconds.
         if value > 10_000_000_000:
             value = value / 1000
-        return datetime.fromtimestamp(value, tz=timezone.utc)
+
+        try:
+            return datetime.fromtimestamp(
+                value,
+                tz=timezone.utc,
+            )
+        except (ValueError, OSError, OverflowError):
+            return None
 
     if not isinstance(value, str):
         return None
 
     cleaned = value.strip()
+
     if not cleaned:
         return None
 
-    # Some NOAA fields can arrive as numeric strings.
-    if cleaned.isdigit():
-        return parse_time(int(cleaned))
+    # Numeric epoch represented as a string.
+    try:
+        numeric_value = Decimal(cleaned)
+
+        if re.fullmatch(
+            r"-?\d+(\.\d+)?",
+            cleaned,
+        ):
+            return parse_time(
+                float(numeric_value)
+            )
+
+    except InvalidOperation:
+        pass
 
     try:
         if cleaned.endswith("Z"):
-            cleaned = cleaned[:-1] + "+00:00"
+            cleaned = (
+                cleaned[:-1]
+                + "+00:00"
+            )
 
-        parsed = datetime.fromisoformat(cleaned)
+        parsed = datetime.fromisoformat(
+            cleaned
+        )
+
         if parsed.tzinfo is None:
-            parsed = parsed.replace(tzinfo=timezone.utc)
+            parsed = parsed.replace(
+                tzinfo=timezone.utc
+            )
 
-        return parsed.astimezone(timezone.utc)
+        return parsed.astimezone(
+            timezone.utc
+        )
+
     except ValueError:
         return None
 
 
-def iso_or_none(dt: datetime | None) -> str | None:
+def iso_or_none(
+    dt: datetime | None,
+) -> str | None:
     return dt.isoformat() if dt else None
 
 
-def clean_string(value: Any) -> str | None:
+def clean_string(
+    value: Any,
+) -> str | None:
     if value is None:
         return None
 
-    if isinstance(value, (dict, list)):
-        text = json.dumps(value, sort_keys=True, separators=(",", ":"), default=json_default)
+    if isinstance(
+        value,
+        (dict, list),
+    ):
+        text = json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=json_default,
+        )
+
     else:
         text = str(value)
 
     text = text.strip()
+
     return text if text else None
 
 
-def canonical_time_or_string(value: Any) -> str | None:
+def canonical_time_or_string(
+    value: Any,
+) -> str | None:
     parsed = parse_time(value)
+
     if parsed:
         return parsed.isoformat()
+
     return clean_string(value)
 
 
-def get_first_property(properties: dict[str, Any], keys: list[str]) -> Any:
+def get_first_property(
+    properties: dict[str, Any],
+    keys: list[str],
+) -> Any:
     for key in keys:
         value = properties.get(key)
-        if value is not None and str(value).strip():
-            return value
+
+        if value is None:
+            continue
+
+        if isinstance(value, str):
+            if not value.strip():
+                continue
+
+        return value
+
     return None
 
 
-def decode_kinesis_record(record: dict[str, Any]) -> dict[str, Any]:
-    try:
-        encoded_data = record["kinesis"]["data"]
-    except KeyError as exc:
-        raise PermanentRecordError("Kinesis record is missing kinesis.data") from exc
+def decimal_or_none(
+    value: Any,
+) -> Decimal | None:
+    if value is None:
+        return None
+
+    if isinstance(value, bool):
+        return None
+
+    if isinstance(value, str):
+        value = value.strip()
+
+        if not value:
+            return None
 
     try:
-        decoded = base64.b64decode(encoded_data).decode("utf-8")
-    except (binascii.Error, UnicodeDecodeError) as exc:
-        raise PermanentRecordError("Kinesis record data is not valid base64 UTF-8") from exc
+        return Decimal(str(value))
+
+    except (
+        InvalidOperation,
+        ValueError,
+        TypeError,
+    ):
+        return None
+
+
+def normalized_upper_or_none(
+    value: Any,
+) -> str | None:
+    cleaned = clean_string(value)
+
+    if not cleaned:
+        return None
+
+    return (
+        cleaned.upper()
+        .replace("-", "_")
+        .replace(" ", "_")
+    )
+
+
+# ---------------------------------------------------------------------------
+# Kinesis decoding
+# ---------------------------------------------------------------------------
+
+def decode_kinesis_record(
+    record: dict[str, Any],
+) -> dict[str, Any]:
+    try:
+        encoded_data = record[
+            "kinesis"
+        ]["data"]
+
+    except KeyError as exc:
+        raise PermanentRecordError(
+            "Kinesis record is missing kinesis.data"
+        ) from exc
+
+    try:
+        decoded = (
+            base64.b64decode(
+                encoded_data
+            )
+            .decode("utf-8")
+        )
+
+    except (
+        binascii.Error,
+        UnicodeDecodeError,
+    ) as exc:
+        raise PermanentRecordError(
+            "Kinesis record data is not "
+            "valid base64 UTF-8"
+        ) from exc
 
     try:
         payload = json.loads(decoded)
+
     except json.JSONDecodeError as exc:
-        raise PermanentRecordError("Kinesis record data is not valid JSON") from exc
+        raise PermanentRecordError(
+            "Kinesis record data is not valid JSON"
+        ) from exc
 
     if not isinstance(payload, dict):
-        raise PermanentRecordError("Decoded Kinesis payload is not a JSON object")
+        raise PermanentRecordError(
+            "Decoded Kinesis payload "
+            "is not a JSON object"
+        )
 
     return payload
 
 
-def extract_feature(raw_event: dict[str, Any]) -> dict[str, Any]:
-    feature = raw_event.get("feature")
+# ---------------------------------------------------------------------------
+# GeoJSON extraction
+# ---------------------------------------------------------------------------
 
-    if not isinstance(feature, dict):
-        raise PermanentRecordError("Kinesis payload does not contain a valid GeoJSON feature")
+def extract_feature(
+    raw_event: dict[str, Any],
+) -> dict[str, Any]:
+    feature = raw_event.get(
+        "feature"
+    )
+
+    if not isinstance(
+        feature,
+        dict,
+    ):
+        raise PermanentRecordError(
+            "Kinesis payload does not contain "
+            "a valid GeoJSON feature"
+        )
 
     if feature.get("type") != "Feature":
-        raise PermanentRecordError("SIGMET record is not a GeoJSON Feature")
+        raise PermanentRecordError(
+            "SIGMET record is not a "
+            "GeoJSON Feature"
+        )
 
     return feature
 
 
-def extract_properties(feature: dict[str, Any]) -> dict[str, Any]:
-    properties = feature.get("properties") or {}
+def extract_properties(
+    feature: dict[str, Any],
+) -> dict[str, Any]:
+    properties = (
+        feature.get("properties")
+        or {}
+    )
 
-    if not isinstance(properties, dict):
-        raise PermanentRecordError("SIGMET feature properties are missing or invalid")
+    if not isinstance(
+        properties,
+        dict,
+    ):
+        raise PermanentRecordError(
+            "SIGMET feature properties "
+            "are missing or invalid"
+        )
 
     return properties
 
 
-def extract_source_identity(properties: dict[str, Any]) -> dict[str, str | None]:
+# ---------------------------------------------------------------------------
+# Hazard identity
+# ---------------------------------------------------------------------------
+
+def normalize_identity_part(
+    value: Any,
+) -> str | None:
+    cleaned = clean_string(value)
+
+    if not cleaned:
+        return None
+
+    return cleaned.upper()
+
+
+def extract_source_identity(
+    properties: dict[str, Any],
+) -> dict[str, str | None]:
     identity = {
-        "source_icao_id": clean_string(properties.get("icaoId")),
-        "air_sigmet_type": clean_string(properties.get("airSigmetType")),
-        "alpha_char": clean_string(properties.get("alphaChar")),
-        "series_id": clean_string(properties.get("seriesId")),
-        "creation_time": canonical_time_or_string(properties.get("creationTime")),
-        "valid_time_from": canonical_time_or_string(properties.get("validTimeFrom")),
-        "valid_time_to": canonical_time_or_string(properties.get("validTimeTo")),
+        "source_icao_id": (
+            normalize_identity_part(
+                properties.get(
+                    "icaoId"
+                )
+            )
+        ),
+        "air_sigmet_type": (
+            normalize_identity_part(
+                properties.get(
+                    "airSigmetType"
+                )
+            )
+        ),
+        "alpha_char": (
+            normalize_identity_part(
+                properties.get(
+                    "alphaChar"
+                )
+            )
+        ),
+        "series_id": (
+            normalize_identity_part(
+                properties.get(
+                    "seriesId"
+                )
+            )
+        ),
     }
 
     if not any(identity.values()):
-        raise PermanentRecordError("SIGMET record has no usable identity fields")
+        raise PermanentRecordError(
+            "SIGMET record has no usable "
+            "source identity fields"
+        )
 
     return identity
 
 
-def build_hazard_id(properties: dict[str, Any]) -> str:
-    identity = extract_source_identity(properties)
+def build_source_product_id(
+    properties: dict[str, Any],
+) -> str:
+    """
+    Source-product identity that should remain
+    stable across amendments/corrections.
 
-    identity_string = "|".join(
+    Prefer an explicit source ID when available.
+    Otherwise construct a deterministic identity
+    from NOAA product identity fields.
+    """
+
+    explicit_id = get_first_property(
+        properties,
         [
-            identity.get("source_icao_id") or "",
-            identity.get("air_sigmet_type") or "",
-            identity.get("alpha_char") or "",
-            identity.get("series_id") or "",
-            identity.get("creation_time") or "",
-            identity.get("valid_time_from") or "",
-            identity.get("valid_time_to") or "",
+            "id",
+            "airSigmetId",
+            "sigmetId",
+            "productId",
+        ],
+    )
+
+    if explicit_id is not None:
+        cleaned = clean_string(
+            explicit_id
+        )
+
+        if cleaned:
+            return cleaned
+
+    identity = extract_source_identity(
+        properties
+    )
+
+    if (
+        not identity.get("series_id")
+        and not identity.get("alpha_char")
+    ):
+        raise PermanentRecordError(
+            "SIGMET record lacks sufficient "
+            "stable product identity"
+        )
+
+    return "|".join(
+        [
+            identity.get(
+                "source_icao_id"
+            )
+            or "",
+            identity.get(
+                "air_sigmet_type"
+            )
+            or "",
+            identity.get(
+                "alpha_char"
+            )
+            or "",
+            identity.get(
+                "series_id"
+            )
+            or "",
         ]
     )
 
-    return f"sigmet-{stable_hash(identity_string)[:24]}"
 
+def build_hazard_id(
+    properties: dict[str, Any],
+) -> str:
+    """
+    Stable Wilvor hazard identity.
 
-def build_source_version(feature: dict[str, Any]) -> str:
-    properties = extract_properties(feature)
+    Creation time, validity period, geometry,
+    altitude and movement are intentionally
+    excluded so an amendment keeps the same
+    hazard_id.
+    """
 
-    content_fingerprint = {
-        "rawAirSigmet": properties.get("rawAirSigmet"),
-        "rawSigmet": properties.get("rawSigmet"),
-        "coords": properties.get("coords"),
-        "geometry": feature.get("geometry"),
-        "hazard": properties.get("hazard"),
-        "severity": properties.get("severity"),
-        "altitudeHi1": properties.get("altitudeHi1"),
-        "altitudeLow1": properties.get("altitudeLow1"),
-        "altitudeHi2": properties.get("altitudeHi2"),
-        "altitudeLow2": properties.get("altitudeLow2"),
-        "movementDir": properties.get("movementDir"),
-        "movementSpd": properties.get("movementSpd"),
-        "postProcessFlag": properties.get("postProcessFlag"),
-        "validTimeFrom": canonical_time_or_string(properties.get("validTimeFrom")),
-        "validTimeTo": canonical_time_or_string(properties.get("validTimeTo")),
-        "creationTime": canonical_time_or_string(properties.get("creationTime")),
+    source_product_id = (
+        build_source_product_id(
+            properties
+        )
+    )
+
+    fingerprint = {
+        "source_system": SOURCE_SYSTEM,
+        "source_product_id": (
+            source_product_id
+        ),
     }
 
-    return stable_hash(content_fingerprint)[:32]
+    return (
+        "sigmet-"
+        f"{stable_hash(fingerprint)[:24]}"
+    )
 
 
-def get_valid_from(properties: dict[str, Any]) -> datetime | None:
+def build_source_version(
+    feature: dict[str, Any],
+) -> str:
+    """
+    Revision identifier.
+
+    Unlike hazard_id, this SHOULD change when
+    the source product materially changes.
+    """
+
+    properties = extract_properties(
+        feature
+    )
+
+    content_fingerprint = {
+        "rawAirSigmet": properties.get(
+            "rawAirSigmet"
+        ),
+        "rawSigmet": properties.get(
+            "rawSigmet"
+        ),
+        "coords": properties.get(
+            "coords"
+        ),
+        "geometry": feature.get(
+            "geometry"
+        ),
+        "hazard": properties.get(
+            "hazard"
+        ),
+        "severity": properties.get(
+            "severity"
+        ),
+        "altitudeHi1": properties.get(
+            "altitudeHi1"
+        ),
+        "altitudeLow1": properties.get(
+            "altitudeLow1"
+        ),
+        "altitudeHi2": properties.get(
+            "altitudeHi2"
+        ),
+        "altitudeLow2": properties.get(
+            "altitudeLow2"
+        ),
+        "movementDir": properties.get(
+            "movementDir"
+        ),
+        "movementSpd": properties.get(
+            "movementSpd"
+        ),
+        "postProcessFlag": properties.get(
+            "postProcessFlag"
+        ),
+        "validTimeFrom": (
+            canonical_time_or_string(
+                properties.get(
+                    "validTimeFrom"
+                )
+            )
+        ),
+        "validTimeTo": (
+            canonical_time_or_string(
+                properties.get(
+                    "validTimeTo"
+                )
+            )
+        ),
+        "creationTime": (
+            canonical_time_or_string(
+                properties.get(
+                    "creationTime"
+                )
+            )
+        ),
+    }
+
+    return stable_hash(
+        content_fingerprint
+    )[:32]
+
+
+# ---------------------------------------------------------------------------
+# SIGMET metadata
+# ---------------------------------------------------------------------------
+
+def get_valid_from(
+    properties: dict[str, Any],
+) -> datetime | None:
     return parse_time(
         get_first_property(
             properties,
-            ["validTimeFrom", "valid_from", "validFrom", "valid_from_time"],
+            [
+                "validTimeFrom",
+                "valid_from",
+                "validFrom",
+                "valid_from_time",
+            ],
         )
     )
 
 
-def get_valid_to(properties: dict[str, Any]) -> datetime | None:
+def get_valid_to(
+    properties: dict[str, Any],
+) -> datetime | None:
     return parse_time(
         get_first_property(
             properties,
-            ["validTimeTo", "valid_to", "validTo", "valid_to_time"],
+            [
+                "validTimeTo",
+                "valid_to",
+                "validTo",
+                "valid_to_time",
+            ],
         )
     )
 
 
-def get_issued_at(properties: dict[str, Any]) -> datetime | None:
+def get_issued_at(
+    properties: dict[str, Any],
+) -> datetime | None:
     return parse_time(
         get_first_property(
             properties,
-            ["creationTime", "issueTime", "issued_at", "issuedAt", "issuanceTime"],
+            [
+                "creationTime",
+                "issueTime",
+                "issued_at",
+                "issuedAt",
+                "issuanceTime",
+            ],
         )
     )
 
 
-def get_hazard_type(properties: dict[str, Any]) -> str:
-    value = get_first_property(
-        properties,
-        ["hazard", "hazardType", "hazard_type", "phenomenon", "airSigmetType"],
+def normalize_hazard_type(
+    value: str,
+) -> str:
+    normalized = (
+        value.strip()
+        .upper()
+        .replace("-", "_")
+        .replace(" ", "_")
     )
 
-    if value:
-        return str(value).strip().upper().replace(" ", "_")
+    if (
+        "TURB" in normalized
+        or "TURBULENCE" in normalized
+    ):
+        return "TURBULENCE"
 
-    raw_text = get_first_property(properties, ["rawAirSigmet", "rawSigmet", "raw_text", "rawText"])
+    if (
+        "ICING" in normalized
+        or normalized == "ICE"
+    ):
+        return "ICING"
 
-    if raw_text:
-        text = str(raw_text).upper()
-        for keyword in [
-            "CONVECTIVE",
-            "THUNDERSTORM",
-            "TURB",
-            "TURBULENCE",
-            "ICE",
-            "ICING",
-            "IFR",
-            "MTN OBSCN",
-            "VOLCANIC",
-            "ASH",
-        ]:
-            if keyword in text:
-                return keyword.replace(" ", "_")
+    if (
+        "CONVECT" in normalized
+        or "THUNDERSTORM" in normalized
+    ):
+        return "CONVECTION"
 
-    return "UNKNOWN"
+    if (
+        "VOLCANIC" in normalized
+        and "ASH" in normalized
+    ):
+        return "VOLCANIC_ASH"
 
+    if normalized == "ASH":
+        return "VOLCANIC_ASH"
 
-def get_raw_text(properties: dict[str, Any]) -> str | None:
-    value = get_first_property(
-        properties,
-        ["rawAirSigmet", "rawSigmet", "raw_text", "rawText", "text"],
-    )
-    return str(value) if value is not None else None
+    if (
+        "MTN_OBSCN" in normalized
+        or "MOUNTAIN_OBSCURATION" in normalized
+    ):
+        return "MOUNTAIN_OBSCURATION"
 
-
-def ttl_from_valid_to(valid_to: datetime | None) -> int:
-    if valid_to:
-        return int((valid_to + timedelta(hours=6)).timestamp())
-
-    return int((now_utc() + timedelta(hours=6)).timestamp())
-
-
-def normalize_ring_lonlat_to_latlng(ring: list[Any]) -> list[tuple[float, float]]:
-    normalized: list[tuple[float, float]] = []
-
-    for point in ring:
-        if not isinstance(point, list) or len(point) < 2:
-            continue
-
-        lon = point[0]
-        lat = point[1]
-
-        if not isinstance(lat, (int, float)) or not isinstance(lon, (int, float)):
-            continue
-
-        normalized.append((float(lat), float(lon)))
-
-    # H3 LatLngPoly does not need the closing duplicate point.
-    if len(normalized) >= 2 and normalized[0] == normalized[-1]:
-        normalized = normalized[:-1]
+    if normalized == "IFR":
+        return "IFR"
 
     return normalized
 
 
-def polygon_to_h3_cells(polygon_coordinates: list[Any], resolution: int) -> set[str]:
-    if not isinstance(polygon_coordinates, list) or not polygon_coordinates:
-        raise PermanentRecordError("Polygon coordinates are missing or invalid")
+def get_raw_text(
+    properties: dict[str, Any],
+) -> str | None:
+    value = get_first_property(
+        properties,
+        [
+            "rawAirSigmet",
+            "rawSigmet",
+            "raw_text",
+            "rawText",
+            "text",
+        ],
+    )
 
-    outer = normalize_ring_lonlat_to_latlng(polygon_coordinates[0])
-    holes = [
-        normalize_ring_lonlat_to_latlng(ring)
-        for ring in polygon_coordinates[1:]
-        if isinstance(ring, list)
-    ]
+    if value is None:
+        return None
 
-    if len(outer) < 3:
-        raise PermanentRecordError("Polygon outer ring has fewer than three valid points")
+    return str(value)
 
-    holes = [hole for hole in holes if len(hole) >= 3]
 
-    try:
-        polygon = h3.LatLngPoly(outer, *holes)
-        return set(h3.polygon_to_cells(polygon, resolution))
-    except Exception as exc:
-        raise PermanentRecordError(f"Failed to convert polygon to H3 cells: {exc}") from exc
+def get_hazard_type(
+    properties: dict[str, Any],
+) -> str:
+    value = get_first_property(
+        properties,
+        [
+            "hazard",
+            "hazardType",
+            "hazard_type",
+            "phenomenon",
+        ],
+    )
 
-def polygon_centroid_cell(polygon_coordinates: list[Any], resolution: int) -> str:
-    if not isinstance(polygon_coordinates, list) or not polygon_coordinates:
-        raise PermanentRecordError("Polygon coordinates are missing or invalid")
+    if value:
+        return normalize_hazard_type(
+            str(value)
+        )
 
-    outer_ring = polygon_coordinates[0]
-    if not isinstance(outer_ring, list) or len(outer_ring) < 3:
-        raise PermanentRecordError("Polygon outer ring has fewer than three points")
+    raw_text = get_raw_text(
+        properties
+    )
 
-    lat_values = []
-    lon_values = []
+    if raw_text:
+        text = raw_text.upper()
 
-    for point in outer_ring:
-        if not isinstance(point, list) or len(point) < 2:
+        if (
+            "VOLCANIC" in text
+            and "ASH" in text
+        ):
+            return "VOLCANIC_ASH"
+
+        if (
+            "CONVECT" in text
+            or "THUNDERSTORM" in text
+        ):
+            return "CONVECTION"
+
+        if "TURB" in text:
+            return "TURBULENCE"
+
+        if (
+            "ICING" in text
+            or re.search(r"\bICE\b", text)
+        ):
+            return "ICING"
+
+        if "MTN OBSCN" in text:
+            return "MOUNTAIN_OBSCURATION"
+
+        if re.search(r"\bIFR\b", text):
+            return "IFR"
+
+    # airSigmetType can sometimes contain a useful
+    # hazard classification such as Convective.
+    air_sigmet_type = normalized_upper_or_none(
+        properties.get("airSigmetType")
+    )
+
+    if (
+        air_sigmet_type
+        and air_sigmet_type
+        not in {"SIGMET", "AIRMET"}
+    ):
+        return normalize_hazard_type(
+            air_sigmet_type
+        )
+
+    return "UNKNOWN"
+
+
+def get_product_type(
+    properties: dict[str, Any],
+) -> str:
+    value = get_first_property(
+        properties,
+        [
+            "productType",
+            "product_type",
+            "airSigmetType",
+        ],
+    )
+
+    normalized = (
+        normalized_upper_or_none(
+            value
+        )
+    )
+
+    if (
+        normalized
+        and "AIRMET" in normalized
+    ):
+        return "AIRMET"
+
+    return "SIGMET"
+
+
+def get_amendment_type(
+    properties: dict[str, Any],
+) -> str:
+    explicit = (
+        normalized_upper_or_none(
+            get_first_property(
+                properties,
+                [
+                    "amendmentType",
+                    "amendment_type",
+                    "productAction",
+                ],
+            )
+        )
+    )
+
+    mapping = {
+        "ORIGINAL": "ORIGINAL",
+        "AMENDMENT": "AMENDMENT",
+        "AMD": "AMENDMENT",
+        "AMENDED": "AMENDMENT",
+        "CORRECTION": "CORRECTION",
+        "COR": "CORRECTION",
+        "CORRECTED": "CORRECTION",
+        "CANCELLATION": "CANCELLATION",
+        "CANCELLED": "CANCELLATION",
+        "CANCELED": "CANCELLATION",
+        "CNL": "CANCELLATION",
+    }
+
+    if explicit in mapping:
+        return mapping[explicit]
+
+    source_status = (
+        normalized_upper_or_none(
+            get_first_property(
+                properties,
+                [
+                    "status",
+                    "productStatus",
+                    "state",
+                ],
+            )
+        )
+    )
+
+    if source_status in {
+        "CANCELLED",
+        "CANCELED",
+        "CNL",
+    }:
+        return "CANCELLATION"
+
+    raw_text = get_raw_text(
+        properties
+    )
+
+    if raw_text:
+        text = raw_text.upper()
+
+        if re.search(
+            r"\bCNL\b",
+            text,
+        ):
+            return "CANCELLATION"
+
+        if re.search(
+            r"\bCOR\b",
+            text,
+        ):
+            return "CORRECTION"
+
+        if re.search(
+            r"\bAMD\b",
+            text,
+        ):
+            return "AMENDMENT"
+
+    # Do not invent ORIGINAL if the source does
+    # not provide enough information.
+    return "UNKNOWN"
+
+
+def build_altitude_bands(
+    properties: dict[str, Any],
+) -> tuple[
+    list[dict[str, Any]],
+    Decimal | None,
+    Decimal | None,
+]:
+    bands: list[
+        dict[str, Any]
+    ] = []
+
+    lower_values: list[
+        Decimal
+    ] = []
+
+    upper_values: list[
+        Decimal
+    ] = []
+
+    for band_index in (1, 2):
+        lower = decimal_or_none(
+            properties.get(
+                f"altitudeLow{band_index}"
+            )
+        )
+
+        upper = decimal_or_none(
+            properties.get(
+                f"altitudeHi{band_index}"
+            )
+        )
+
+        if (
+            lower is None
+            and upper is None
+        ):
+            continue
+
+        band: dict[str, Any] = {
+            "source_band_index": (
+                band_index
+            )
+        }
+
+        if lower is not None:
+            band[
+                "lower_altitude_ft"
+            ] = lower
+
+            lower_values.append(
+                lower
+            )
+
+        if upper is not None:
+            band[
+                "upper_altitude_ft"
+            ] = upper
+
+            upper_values.append(
+                upper
+            )
+
+        bands.append(band)
+
+    minimum_lower = (
+        min(lower_values)
+        if lower_values
+        else None
+    )
+
+    maximum_upper = (
+        max(upper_values)
+        if upper_values
+        else None
+    )
+
+    return (
+        bands,
+        minimum_lower,
+        maximum_upper,
+    )
+
+
+def get_hazard_status(
+    properties: dict[str, Any],
+    valid_to: datetime | None,
+    amendment_type: str,
+) -> str:
+    if amendment_type == "CANCELLATION":
+        return "CANCELLED"
+
+    source_status = (
+        normalized_upper_or_none(
+            get_first_property(
+                properties,
+                [
+                    "status",
+                    "productStatus",
+                    "state",
+                ],
+            )
+        )
+    )
+
+    if source_status in {
+        "CANCELLED",
+        "CANCELED",
+        "CNL",
+    }:
+        return "CANCELLED"
+
+    if (
+        valid_to
+        and valid_to <= now_utc()
+    ):
+        return "EXPIRED"
+
+    return "ACTIVE"
+
+
+def ttl_for_hazard(
+    valid_to: datetime,
+    status: str,
+) -> int:
+    retention = timedelta(
+        hours=(
+            RETENTION_AFTER_VALID_TO_HOURS
+        )
+    )
+
+    if status == "CANCELLED":
+        return int(
+            (
+                now_utc()
+                + retention
+            ).timestamp()
+        )
+
+    return int(
+        (
+            valid_to
+            + retention
+        ).timestamp()
+    )
+
+
+# ---------------------------------------------------------------------------
+# Geometry validation and H3
+# ---------------------------------------------------------------------------
+
+def normalize_ring_lonlat_to_latlng(
+    ring: list[Any],
+) -> list[tuple[float, float]]:
+    normalized: list[
+        tuple[float, float]
+    ] = []
+
+    for point in ring:
+        if (
+            not isinstance(
+                point,
+                (list, tuple),
+            )
+            or len(point) < 2
+        ):
             continue
 
         lon = point[0]
         lat = point[1]
 
-        if isinstance(lat, (int, float)) and isinstance(lon, (int, float)):
-            lat_values.append(float(lat))
-            lon_values.append(float(lon))
+        if (
+            isinstance(lat, bool)
+            or isinstance(lon, bool)
+            or not isinstance(
+                lat,
+                (int, float),
+            )
+            or not isinstance(
+                lon,
+                (int, float),
+            )
+        ):
+            continue
 
-    if not lat_values or not lon_values:
-        raise PermanentRecordError("Polygon has no valid coordinates for centroid fallback")
+        normalized.append(
+            (
+                float(lat),
+                float(lon),
+            )
+        )
 
-    centroid_lat = sum(lat_values) / len(lat_values)
-    centroid_lon = sum(lon_values) / len(lon_values)
+    # Closing duplicate is not needed by H3.
+    if (
+        len(normalized) >= 2
+        and normalized[0]
+        == normalized[-1]
+    ):
+        normalized = normalized[
+            :-1
+        ]
 
-    return h3.latlng_to_cell(centroid_lat, centroid_lon, resolution)
+    return normalized
 
-def geometry_to_h3_cells(geometry: dict[str, Any], resolution: int) -> list[str]:
-    if not isinstance(geometry, dict):
-        raise PermanentRecordError("Geometry is missing or invalid")
 
-    geometry_type = geometry.get("type")
-    coordinates = geometry.get("coordinates")
+def polygon_to_h3_cells(
+    polygon_coordinates: list[Any],
+    resolution: int,
+) -> set[str]:
+    if (
+        not isinstance(
+            polygon_coordinates,
+            list,
+        )
+        or not polygon_coordinates
+    ):
+        raise PermanentRecordError(
+            "Polygon coordinates "
+            "are missing or invalid"
+        )
+
+    outer = (
+        normalize_ring_lonlat_to_latlng(
+            polygon_coordinates[0]
+        )
+    )
+
+    holes = [
+        normalize_ring_lonlat_to_latlng(
+            ring
+        )
+        for ring in (
+            polygon_coordinates[1:]
+        )
+        if isinstance(
+            ring,
+            list,
+        )
+    ]
+
+    if len(outer) < 3:
+        raise PermanentRecordError(
+            "Polygon outer ring has fewer "
+            "than three valid points"
+        )
+
+    holes = [
+        hole
+        for hole in holes
+        if len(hole) >= 3
+    ]
+
+    try:
+        polygon = h3.LatLngPoly(
+            outer,
+            *holes,
+        )
+
+        return set(
+            h3.polygon_to_cells(
+                polygon,
+                resolution,
+            )
+        )
+
+    except Exception as exc:
+        raise PermanentRecordError(
+            "Failed to convert polygon "
+            f"to H3 cells: {exc}"
+        ) from exc
+
+
+def polygon_centroid_cell(
+    polygon_coordinates: list[Any],
+    resolution: int,
+) -> str:
+    if (
+        not isinstance(
+            polygon_coordinates,
+            list,
+        )
+        or not polygon_coordinates
+    ):
+        raise PermanentRecordError(
+            "Polygon coordinates "
+            "are missing or invalid"
+        )
+
+    outer_ring = (
+        polygon_coordinates[0]
+    )
+
+    if (
+        not isinstance(
+            outer_ring,
+            list,
+        )
+        or len(outer_ring) < 3
+    ):
+        raise PermanentRecordError(
+            "Polygon outer ring has "
+            "fewer than three points"
+        )
+
+    lat_values: list[float] = []
+    lon_values: list[float] = []
+
+    for point in outer_ring:
+        if (
+            not isinstance(
+                point,
+                (list, tuple),
+            )
+            or len(point) < 2
+        ):
+            continue
+
+        lon = point[0]
+        lat = point[1]
+
+        if (
+            isinstance(lat, bool)
+            or isinstance(lon, bool)
+        ):
+            continue
+
+        if (
+            isinstance(
+                lat,
+                (int, float),
+            )
+            and isinstance(
+                lon,
+                (int, float),
+            )
+        ):
+            lat_values.append(
+                float(lat)
+            )
+
+            lon_values.append(
+                float(lon)
+            )
+
+    if (
+        not lat_values
+        or not lon_values
+    ):
+        raise PermanentRecordError(
+            "Polygon has no valid "
+            "coordinates for centroid fallback"
+        )
+
+    centroid_lat = (
+        sum(lat_values)
+        / len(lat_values)
+    )
+
+    centroid_lon = (
+        sum(lon_values)
+        / len(lon_values)
+    )
+
+    return h3.latlng_to_cell(
+        centroid_lat,
+        centroid_lon,
+        resolution,
+    )
+
+
+def geometry_to_h3_cells(
+    geometry: dict[str, Any],
+    resolution: int,
+) -> list[str]:
+    if not isinstance(
+        geometry,
+        dict,
+    ):
+        raise PermanentRecordError(
+            "Geometry is missing or invalid"
+        )
+
+    geometry_type = geometry.get(
+        "type"
+    )
+
+    coordinates = geometry.get(
+        "coordinates"
+    )
 
     if geometry_type == "Polygon":
-        cells = polygon_to_h3_cells(coordinates, resolution)
+        cells = polygon_to_h3_cells(
+            coordinates,
+            resolution,
+        )
 
         if not cells:
-            cells.add(polygon_centroid_cell(coordinates, resolution))
+            cells.add(
+                polygon_centroid_cell(
+                    coordinates,
+                    resolution,
+                )
+            )
 
     elif geometry_type == "MultiPolygon":
-        if not isinstance(coordinates, list):
-            raise PermanentRecordError("MultiPolygon coordinates are missing or invalid")
+        if not isinstance(
+            coordinates,
+            list,
+        ):
+            raise PermanentRecordError(
+                "MultiPolygon coordinates "
+                "are missing or invalid"
+            )
 
         cells: set[str] = set()
 
         for polygon_coordinates in coordinates:
-            polygon_cells = polygon_to_h3_cells(polygon_coordinates, resolution)
+            polygon_cells = (
+                polygon_to_h3_cells(
+                    polygon_coordinates,
+                    resolution,
+                )
+            )
 
             if not polygon_cells:
-                polygon_cells.add(polygon_centroid_cell(polygon_coordinates, resolution))
+                polygon_cells.add(
+                    polygon_centroid_cell(
+                        polygon_coordinates,
+                        resolution,
+                    )
+                )
 
-            cells.update(polygon_cells)
+            cells.update(
+                polygon_cells
+            )
 
     else:
-        raise PermanentRecordError(f"Unsupported geometry type: {geometry_type}")
+        raise PermanentRecordError(
+            "Unsupported geometry type: "
+            f"{geometry_type}"
+        )
 
     if not cells:
-        raise PermanentRecordError("SIGMET geometry produced zero H3 cells after centroid fallback")
+        raise PermanentRecordError(
+            "SIGMET geometry produced zero "
+            "H3 cells after centroid fallback"
+        )
 
     return sorted(cells)
 
 
-def build_raw_s3_uri(raw_event: dict[str, Any]) -> str | None:
-    raw_s3_bucket = raw_event.get("raw_s3_bucket")
-    raw_s3_key = raw_event.get("raw_s3_key")
+def normalize_geojson_ring(
+    ring: list[Any],
+) -> list[list[float]]:
+    """
+    Validate and normalize a GeoJSON ring while
+    preserving source coordinate ordering.
 
-    if raw_s3_bucket and raw_s3_key:
-        return f"s3://{raw_s3_bucket}/{raw_s3_key}"
+    GeoJSON input order is [longitude, latitude].
+
+    The closing coordinate is intentionally preserved
+    because HazardCoordinates stores the exact ordered
+    geometry records used for reconstruction.
+    """
+
+    normalized: list[list[float]] = []
+
+    for sequence_number, point in enumerate(ring):
+        if (
+            not isinstance(point, (list, tuple))
+            or len(point) < 2
+        ):
+            raise PermanentRecordError(
+                "Invalid coordinate point: "
+                f"sequence={sequence_number}"
+            )
+
+        longitude = point[0]
+        latitude = point[1]
+
+        if (
+            isinstance(longitude, bool)
+            or isinstance(latitude, bool)
+            or not isinstance(longitude, (int, float))
+            or not isinstance(latitude, (int, float))
+        ):
+            raise PermanentRecordError(
+                "Coordinate latitude or longitude "
+                "is not numeric"
+            )
+
+        longitude = float(longitude)
+        latitude = float(latitude)
+
+        if not -180.0 <= longitude <= 180.0:
+            raise PermanentRecordError(
+                f"Longitude out of range: {longitude}"
+            )
+
+        if not -90.0 <= latitude <= 90.0:
+            raise PermanentRecordError(
+                f"Latitude out of range: {latitude}"
+            )
+
+        normalized.append(
+            [
+                longitude,
+                latitude,
+            ]
+        )
+
+    if len(normalized) < 3:
+        raise PermanentRecordError(
+            "Geometry ring has fewer than three points"
+        )
+
+    return normalized
+
+
+def flatten_geometry_points(
+    geometry: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """
+    Convert Polygon or MultiPolygon coordinates
+    into deterministic ordered coordinate rows.
+
+    Duplicate GeoJSON closing coordinates are removed.
+    """
+
+    if not isinstance(
+        geometry,
+        dict,
+    ):
+        raise PermanentRecordError(
+            "Geometry is missing or invalid"
+        )
+
+    geometry_type = geometry.get(
+        "type"
+    )
+
+    coordinates = geometry.get(
+        "coordinates"
+    )
+
+    if geometry_type == "Polygon":
+        if not isinstance(
+            coordinates,
+            list,
+        ):
+            raise PermanentRecordError(
+                "Polygon coordinates "
+                "are missing or invalid"
+            )
+
+        polygons = [
+            coordinates
+        ]
+
+        normalized_geometry_type = (
+            "POLYGON"
+        )
+
+    elif geometry_type == "MultiPolygon":
+        if not isinstance(
+            coordinates,
+            list,
+        ):
+            raise PermanentRecordError(
+                "MultiPolygon coordinates "
+                "are missing or invalid"
+            )
+
+        polygons = coordinates
+
+        normalized_geometry_type = (
+            "MULTIPOLYGON"
+        )
+
+    else:
+        raise PermanentRecordError(
+            "Unsupported geometry type: "
+            f"{geometry_type}"
+        )
+
+    flattened: list[
+        dict[str, Any]
+    ] = []
+
+    for (
+        polygon_index,
+        polygon,
+    ) in enumerate(polygons):
+        if (
+            not isinstance(
+                polygon,
+                list,
+            )
+            or not polygon
+        ):
+            raise PermanentRecordError(
+                f"Polygon {polygon_index} "
+                "has no valid rings"
+            )
+
+        for (
+            ring_index,
+            ring,
+        ) in enumerate(polygon):
+            if not isinstance(
+                ring,
+                list,
+            ):
+                raise PermanentRecordError(
+                    "Geometry ring is invalid"
+                )
+
+            normalized_ring = (
+                normalize_geojson_ring(
+                    ring
+                )
+            )
+
+            for (
+                sequence_number,
+                point,
+            ) in enumerate(
+                normalized_ring
+            ):
+                longitude = point[0]
+                latitude = point[1]
+
+                flattened.append(
+                    {
+                        "geometry_type": (
+                            normalized_geometry_type
+                        ),
+                        "polygon_index": (
+                            polygon_index
+                        ),
+                        "ring_index": (
+                            ring_index
+                        ),
+                        "sequence_number": (
+                            sequence_number
+                        ),
+                        "latitude": (
+                            latitude
+                        ),
+                        "longitude": (
+                            longitude
+                        ),
+                    }
+                )
+
+    if not flattened:
+        raise PermanentRecordError(
+            "SIGMET geometry produced "
+            "no coordinate points"
+        )
+
+    return flattened
+
+
+def build_geometry_hash(
+    geometry: dict[str, Any],
+) -> str:
+    """
+    Hash deterministic normalized ordered geometry.
+    """
+
+    points = flatten_geometry_points(
+        geometry
+    )
+
+    canonical_geometry = [
+        {
+            "geometry_type": (
+                point[
+                    "geometry_type"
+                ]
+            ),
+            "polygon_index": (
+                point[
+                    "polygon_index"
+                ]
+            ),
+            "ring_index": (
+                point[
+                    "ring_index"
+                ]
+            ),
+            "sequence_number": (
+                point[
+                    "sequence_number"
+                ]
+            ),
+            "latitude": (
+                point[
+                    "latitude"
+                ]
+            ),
+            "longitude": (
+                point[
+                    "longitude"
+                ]
+            ),
+        }
+        for point in points
+    ]
+
+    return stable_hash(
+        canonical_geometry
+    )
+
+
+def expand_impact_cells(
+    hazard_cells: list[str],
+    max_grid_distance: int,
+) -> dict[str, int]:
+    """
+    Return:
+        impact_cell -> minimum H3 grid distance
+                       from an exact HazardCell.
+    """
+
+    if max_grid_distance < 0:
+        raise ValueError(
+            "max_grid_distance "
+            "cannot be negative"
+        )
+
+    exact_cells = sorted(
+        {
+            str(cell).strip()
+            for cell in hazard_cells
+            if str(cell).strip()
+        }
+    )
+
+    if not exact_cells:
+        raise PermanentRecordError(
+            "Cannot generate ImpactCells "
+            "without HazardCells"
+        )
+
+    minimum_distances: dict[
+        str,
+        int,
+    ] = {}
+
+    for exact_cell in exact_cells:
+        minimum_distances[
+            exact_cell
+        ] = 0
+
+        for distance in range(
+            1,
+            max_grid_distance + 1,
+        ):
+            try:
+                ring_cells = (
+                    h3.grid_ring(
+                        exact_cell,
+                        distance,
+                    )
+                )
+
+            except Exception as exc:
+                raise PermanentRecordError(
+                    "Failed to expand H3 "
+                    "impact cells from "
+                    f"{exact_cell} at distance "
+                    f"{distance}: {exc}"
+                ) from exc
+
+            for impact_cell in ring_cells:
+                current_distance = (
+                    minimum_distances.get(
+                        impact_cell
+                    )
+                )
+
+                if (
+                    current_distance
+                    is None
+                    or distance
+                    < current_distance
+                ):
+                    minimum_distances[
+                        impact_cell
+                    ] = distance
+
+    return dict(
+        sorted(
+            minimum_distances.items()
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# Lineage / materialization
+# ---------------------------------------------------------------------------
+
+def build_raw_s3_uri(
+    raw_event: dict[str, Any],
+) -> str | None:
+    raw_s3_bucket = raw_event.get(
+        "raw_s3_bucket"
+    )
+
+    raw_s3_key = raw_event.get(
+        "raw_s3_key"
+    )
+
+    if (
+        raw_s3_bucket
+        and raw_s3_key
+    ):
+        return (
+            f"s3://{raw_s3_bucket}/"
+            f"{raw_s3_key}"
+        )
 
     return None
 
 
+def build_correlation_id(
+    raw_event: dict[str, Any],
+    feature: dict[str, Any],
+) -> str:
+    existing = clean_string(
+        raw_event.get(
+            "correlation_id"
+        )
+    )
+
+    if existing:
+        return existing
+
+    poll_id = clean_string(
+        raw_event.get(
+            "poll_id"
+        )
+    )
+
+    record_index = raw_event.get(
+        "record_index"
+    )
+
+    if poll_id:
+        if record_index is not None:
+            return (
+                f"{poll_id}:"
+                f"{record_index}"
+            )
+
+        return poll_id
+
+    return (
+        "sigmet-"
+        f"{stable_hash(feature)[:24]}"
+    )
+
+
+def build_materialization_id(
+    hazard_id: str,
+    source_version: str,
+    geometry_hash: str,
+) -> str:
+    fingerprint = {
+        "hazard_id": hazard_id,
+        "source_version": (
+            source_version
+        ),
+        "geometry_hash": (
+            geometry_hash
+        ),
+    }
+
+    return (
+        "hazard-materialization-"
+        f"{stable_hash(fingerprint)[:24]}"
+    )
+
+
+def build_hazard_version_key(
+    hazard_id: str,
+    source_version: str,
+) -> str:
+    return (
+        f"{hazard_id}#"
+        f"{source_version}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# ActiveHazards v4 parent item
+# ---------------------------------------------------------------------------
+
 def build_active_hazard_item(
     raw_event: dict[str, Any],
     feature: dict[str, Any],
-    h3_cells: list[str],
+    geometry_points: list[
+        dict[str, Any]
+    ],
+    hazard_cell_count: int,
+    impact_cell_count: int,
 ) -> dict[str, Any]:
-    properties = extract_properties(feature)
-    geometry = feature.get("geometry")
+    properties = extract_properties(
+        feature
+    )
 
-    identity = extract_source_identity(properties)
+    geometry = feature.get(
+        "geometry"
+    )
 
-    hazard_id = build_hazard_id(properties)
-    hazard_type = get_hazard_type(properties)
-    issued_at = get_issued_at(properties)
-    valid_from = get_valid_from(properties)
-    valid_to = get_valid_to(properties)
+    if not geometry_points:
+        raise PermanentRecordError(
+            "Cannot create ActiveHazards "
+            "without geometry points"
+        )
 
-    status = "ACTIVE"
-    if valid_to and valid_to < now_utc():
-        status = "EXPIRED"
+    created_at = get_issued_at(
+        properties
+    )
 
-    updated_at = now_utc_iso()
+    valid_from = get_valid_from(
+        properties
+    )
 
-    return {
-        "hazard_id": hazard_id,
-        "product_type": "SIGMET",
-        "hazard_type": hazard_type,
+    valid_to = get_valid_to(
+        properties
+    )
+
+    received_at = parse_time(
+        raw_event.get(
+            "received_at"
+        )
+    )
+
+    if created_at is None:
+        raise PermanentRecordError(
+            "SIGMET record has no valid "
+            "creation/issuance time"
+        )
+
+    if valid_from is None:
+        raise PermanentRecordError(
+            "SIGMET record has no "
+            "valid valid-from time"
+        )
+
+    if valid_to is None:
+        raise PermanentRecordError(
+            "SIGMET record has no "
+            "valid valid-to time"
+        )
+
+    if received_at is None:
+        raise PermanentRecordError(
+            "SIGMET raw event has no "
+            "valid received_at"
+        )
+
+    raw_s3_uri = build_raw_s3_uri(
+        raw_event
+    )
+
+    if not raw_s3_uri:
+        raise PermanentRecordError(
+            "SIGMET raw event has no "
+            "raw S3 lineage URI"
+        )
+
+    identity = extract_source_identity(
+        properties
+    )
+
+    hazard_id = build_hazard_id(
+        properties
+    )
+
+    source_product_id = (
+        build_source_product_id(
+            properties
+        )
+    )
+
+    source_version = (
+        build_source_version(
+            feature
+        )
+    )
+
+    geometry_hash = (
+        build_geometry_hash(
+            geometry
+        )
+    )
+
+    materialization_id = (
+        build_materialization_id(
+            hazard_id,
+            source_version,
+            geometry_hash,
+        )
+    )
+
+    amendment_type = (
+        get_amendment_type(
+            properties
+        )
+    )
+
+    status = get_hazard_status(
+        properties,
+        valid_to,
+        amendment_type,
+    )
+
+    (
+        altitude_bands,
+        minimum_lower_altitude_ft,
+        maximum_upper_altitude_ft,
+    ) = build_altitude_bands(
+        properties
+    )
+
+    item: dict[str, Any] = {
+        "hazard_id": (
+            hazard_id
+        ),
+        "source_version": (
+            source_version
+        ),
+        "source_product_id": (
+            source_product_id
+        ),
+        "amendment_type": (
+            amendment_type
+        ),
+        "created_at_utc": (
+            created_at.isoformat()
+        ),
+        "valid_from_epoch": (
+            int(
+                valid_from.timestamp()
+            )
+        ),
+        "valid_from_utc": (
+            valid_from.isoformat()
+        ),
+        "valid_to_epoch": (
+            int(
+                valid_to.timestamp()
+            )
+        ),
+        "valid_to_utc": (
+            valid_to.isoformat()
+        ),
+        "product_type": (
+            get_product_type(
+                properties
+            )
+        ),
+        "hazard_type": (
+            get_hazard_type(
+                properties
+            )
+        ),
+        "geometry_type": (
+            geometry_points[0][
+                "geometry_type"
+            ]
+        ),
+        "geometry_point_count": (
+            len(
+                geometry_points
+            )
+        ),
+        "hazard_cell_count": (
+            hazard_cell_count
+        ),
+        "impact_cell_count": (
+            impact_cell_count
+        ),
+        "geometry_hash": (
+            geometry_hash
+        ),
+
+        # The parent remains BUILDING until
+        # HazardCoordinates, HazardCells and
+        # ImpactCells are all migrated and
+        # completeness validation is implemented.
+        "materialization_status": (
+            "BUILDING"
+        ),
+        "materialization_id": (
+            materialization_id
+        ),
+
         "status": status,
-        "issued_at": iso_or_none(issued_at),
-        "valid_from": iso_or_none(valid_from),
-        "valid_to": iso_or_none(valid_to),
-        "source_icao_id": identity.get("source_icao_id"),
-        "alpha_char": identity.get("alpha_char"),
-        "series_id": identity.get("series_id"),
-        "creation_time": identity.get("creation_time"),
-        "air_sigmet_type": identity.get("air_sigmet_type"),
-        "raw_text": get_raw_text(properties),
-        "geometry_json": json.dumps(geometry, separators=(",", ":"), default=json_default),
-        "h3_resolution": H3_RESOLUTION,
-        "h3_cells": h3_cells,
-        "h3_cell_count": len(h3_cells),
-        "source": "NOAA AviationWeather",
-        "source_version": build_source_version(feature),
-        "schema_version": SCHEMA_VERSION,
-        "poll_id": raw_event.get("poll_id"),
-        "raw_s3_uri": build_raw_s3_uri(raw_event),
-        "received_at": raw_event.get("received_at"),
-        "updated_at": updated_at,
-        "expires_at": ttl_from_valid_to(valid_to),
+        "source_system": (
+            SOURCE_SYSTEM
+        ),
+        "source_event_time_utc": (
+            created_at.isoformat()
+        ),
+        "received_at_utc": (
+            received_at.isoformat()
+        ),
+        "processed_at_utc": (
+            now_utc_iso()
+        ),
+        "correlation_id": (
+            build_correlation_id(
+                raw_event,
+                feature,
+            )
+        ),
+        "raw_s3_uri": (
+            raw_s3_uri
+        ),
+        "schema_version": (
+            SCHEMA_VERSION
+        ),
+        "expires_at_epoch": (
+            ttl_for_hazard(
+                valid_to,
+                status,
+            )
+        ),
     }
 
+    source_icao_id = identity.get(
+        "source_icao_id"
+    )
 
-def get_existing_hazard(hazard_id: str) -> dict[str, Any] | None:
-    response = active_hazards_table.get_item(Key={"hazard_id": hazard_id})
-    item = response.get("Item")
-    return item if isinstance(item, dict) else None
+    if source_icao_id:
+        item[
+            "source_icao_id"
+        ] = source_icao_id
 
+    series_id = identity.get(
+        "series_id"
+    )
 
-def determine_change_type(existing: dict[str, Any] | None, item: dict[str, Any]) -> tuple[str, bool, bool]:
-    """
-    Returns:
-      change_type
-      should_write_state
-      should_publish_event
-    """
-    if existing is None:
-        return "NEW", True, True
+    if series_id:
+        item[
+            "series_id"
+        ] = series_id
 
-    existing_source_version = existing.get("source_version")
-    new_source_version = item["source_version"]
+    alpha_char = identity.get(
+        "alpha_char"
+    )
 
-    if existing_source_version != new_source_version:
-        return "UPDATED", True, True
+    if alpha_char:
+        item[
+            "alpha_char"
+        ] = alpha_char
 
-    # If the DynamoDB write succeeded in a previous attempt but EventBridge publish failed,
-    # retry publishing instead of silently losing the Weather.changed event.
-    last_published_source_version = existing.get("last_published_source_version")
-    existing_change_type = existing.get("change_type")
+    receipt_time = parse_time(
+        get_first_property(
+            properties,
+            [
+                "receiptTime",
+                "receipt_time",
+                "receiptAt",
+            ],
+        )
+    )
+
+    if receipt_time:
+        item[
+            "receipt_time_utc"
+        ] = receipt_time.isoformat()
+
+    severity = (
+        normalized_upper_or_none(
+            properties.get(
+                "severity"
+            )
+        )
+    )
+
+    if severity:
+        item[
+            "severity"
+        ] = severity
+
+    if altitude_bands:
+        item[
+            "altitude_bands"
+        ] = altitude_bands
 
     if (
-        existing_change_type in {"NEW", "UPDATED"}
-        and last_published_source_version != new_source_version
+        minimum_lower_altitude_ft
+        is not None
     ):
-        return str(existing_change_type), False, True
+        item[
+            "minimum_lower_altitude_ft"
+        ] = minimum_lower_altitude_ft
 
-    return "UNCHANGED", False, False
+    if (
+        maximum_upper_altitude_ft
+        is not None
+    ):
+        item[
+            "maximum_upper_altitude_ft"
+        ] = maximum_upper_altitude_ft
 
+    movement_direction = (
+        decimal_or_none(
+            properties.get(
+                "movementDir"
+            )
+        )
+    )
 
-def sync_hazard_cells(
-    *,
-    hazard_id: str,
-    hazard_type: str,
-    valid_from: str | None,
-    valid_to: str | None,
-    expires_at: int,
-    h3_cells: list[str],
-    previous_h3_cells: list[str] | None,
-) -> tuple[int, int]:
-    updated_at = now_utc_iso()
-    new_cells = set(h3_cells)
-    old_cells = set(previous_h3_cells or [])
+    if movement_direction is not None:
+        item[
+            "movement_direction_deg"
+        ] = movement_direction
 
-    removed_cells = old_cells - new_cells
+    movement_speed = (
+        decimal_or_none(
+            properties.get(
+                "movementSpd"
+            )
+        )
+    )
 
-    with hazard_cells_table.batch_writer(overwrite_by_pkeys=["cell_id", "hazard_id"]) as batch:
-        for cell_id in removed_cells:
-            batch.delete_item(Key={"cell_id": cell_id, "hazard_id": hazard_id})
+    if movement_speed is not None:
+        item[
+            "movement_speed_kt"
+        ] = movement_speed
 
-        for cell_id in sorted(new_cells):
-            batch.put_item(
-                Item={
-                    "cell_id": cell_id,
-                    "hazard_id": hazard_id,
-                    "hazard_type": hazard_type,
-                    "valid_from": valid_from,
-                    "valid_to": valid_to,
-                    "updated_at": updated_at,
-                    "expires_at": expires_at,
-                }
+    raw_text = get_raw_text(
+        properties
+    )
+
+    if raw_text:
+        item[
+            "raw_text"
+        ] = raw_text
+
+    post_process_flag = (
+        properties.get(
+            "postProcessFlag"
+        )
+    )
+
+    if post_process_flag is not None:
+        if isinstance(
+            post_process_flag,
+            bool,
+        ):
+            item[
+                "post_process_flag"
+            ] = post_process_flag
+
+        else:
+            cleaned_flag = (
+                clean_string(
+                    post_process_flag
+                )
             )
 
-    return len(new_cells), len(removed_cells)
+            if cleaned_flag:
+                item[
+                    "post_process_flag"
+                ] = cleaned_flag
+
+    return item
 
 
-def update_last_seen(hazard_id: str, received_at: str | None) -> None:
-    active_hazards_table.update_item(
-        Key={"hazard_id": hazard_id},
-        UpdateExpression="SET last_seen_at = :last_seen_at, received_at = :received_at",
-        ExpressionAttributeValues={
-            ":last_seen_at": now_utc_iso(),
-            ":received_at": received_at,
-        },
+# ---------------------------------------------------------------------------
+# ActiveHazards state comparison
+# ---------------------------------------------------------------------------
+
+def get_existing_hazard(
+    hazard_id: str,
+) -> dict[str, Any] | None:
+    response = (
+        active_hazards_table.get_item(
+            Key={
+                "hazard_id": (
+                    hazard_id
+                )
+            }
+        )
+    )
+
+    item = response.get(
+        "Item"
+    )
+
+    return (
+        item
+        if isinstance(
+            item,
+            dict,
+        )
+        else None
     )
 
 
-def publish_weather_changed(item: dict[str, Any], change_type: str) -> None:
-    detail = {
-        "event_type": "weather.changed",
-        "product_type": "SIGMET",
-        "hazard_id": item["hazard_id"],
-        "hazard_type": item["hazard_type"],
-        "change_type": change_type,
-        "status": item["status"],
-        "valid_from": item.get("valid_from"),
-        "valid_to": item.get("valid_to"),
-        "h3_resolution": item["h3_resolution"],
-        "h3_cell_count": item["h3_cell_count"],
-        "source": item["source"],
-        "schema_version": item["schema_version"],
-        "source_version": item["source_version"],
-        "updated_at": item["updated_at"],
-    }
+def determine_change_type(
+    existing: dict[str, Any] | None,
+    item: dict[str, Any],
+) -> tuple[str, bool]:
+    """
+    Returns:
+        change_type
+        should_write_state
+    """
 
-    response = events.put_events(
-        Entries=[
-            {
-                "Source": "wilvor.weather",
-                "DetailType": "Weather.changed",
-                "EventBusName": EVENT_BUS_NAME,
-                "Detail": json.dumps(detail, separators=(",", ":"), default=json_default),
-            }
+    if existing is None:
+        return (
+            "NEW",
+            True,
+        )
+
+    existing_source_version = (
+        existing.get(
+            "source_version"
+        )
+    )
+
+    incoming_source_version = (
+        item[
+            "source_version"
         ]
     )
 
-    failed_count = int(response.get("FailedEntryCount", 0))
-    if failed_count:
-        raise RuntimeError(f"EventBridge PutEvents failed: {response.get('Entries')}")
+    if (
+        existing_source_version
+        == incoming_source_version
+    ):
+        return (
+            "UNCHANGED",
+            False,
+        )
 
+    existing_event_time = (
+        parse_time(
+            existing.get(
+                "source_event_time_utc"
+            )
+            or existing.get(
+                "created_at_utc"
+            )
+        )
+    )
 
-def mark_event_published(hazard_id: str, source_version: str) -> None:
-    active_hazards_table.update_item(
-        Key={"hazard_id": hazard_id},
-        UpdateExpression=(
-            "SET last_published_source_version = :source_version, "
-            "last_published_at = :published_at"
-        ),
-        ExpressionAttributeValues={
-            ":source_version": source_version,
-            ":published_at": now_utc_iso(),
-        },
+    incoming_event_time = (
+        parse_time(
+            item.get(
+                "source_event_time_utc"
+            )
+        )
+    )
+
+    if (
+        existing_event_time
+        is not None
+        and incoming_event_time
+        is not None
+        and incoming_event_time
+        < existing_event_time
+    ):
+        return (
+            "STALE",
+            False,
+        )
+
+    return (
+        "UPDATED",
+        True,
     )
 
 
-def process_decoded_record(raw_event: dict[str, Any]) -> dict[str, int]:
-    feature = extract_feature(raw_event)
-    geometry = feature.get("geometry")
+# ---------------------------------------------------------------------------
+# Current child-table item builders
+#
+# These retain the existing physical key structure for now.
+# They will be migrated individually to the v4 contracts next.
+# ---------------------------------------------------------------------------
 
-    h3_cells = geometry_to_h3_cells(geometry, H3_RESOLUTION)
-    item = build_active_hazard_item(raw_event, feature, h3_cells)
+def build_coordinate_items(
+    active_hazard: dict[str, Any],
+    geometry_points: list[
+        dict[str, Any]
+    ],
+    materialized_at_utc: str,
+) -> list[dict[str, Any]]:
+    hazard_id = active_hazard[
+        "hazard_id"
+    ]
 
-    existing = get_existing_hazard(item["hazard_id"])
-    change_type, should_write_state, should_publish_event = determine_change_type(existing, item)
+    source_version = (
+        active_hazard[
+            "source_version"
+        ]
+    )
 
-    hazard_cells_written = 0
-    hazard_cells_removed = 0
-    active_hazards_written = 0
-    eventbridge_events_published = 0
-    unchanged = 0
-
-    if should_write_state:
-        first_seen_at = now_utc_iso()
-        if existing:
-            first_seen_at = existing.get("first_seen_at") or existing.get("updated_at") or first_seen_at
-
-        item["first_seen_at"] = first_seen_at
-        item["last_seen_at"] = now_utc_iso()
-        item["change_type"] = change_type
-
-        active_hazards_table.put_item(Item=item)
-        active_hazards_written = 1
-
-        previous_h3_cells = None
-        if existing and isinstance(existing.get("h3_cells"), list):
-            previous_h3_cells = existing.get("h3_cells")
-
-        hazard_cells_written, hazard_cells_removed = sync_hazard_cells(
-            hazard_id=item["hazard_id"],
-            hazard_type=item["hazard_type"],
-            valid_from=item.get("valid_from"),
-            valid_to=item.get("valid_to"),
-            expires_at=item["expires_at"],
-            h3_cells=h3_cells,
-            previous_h3_cells=previous_h3_cells,
+    hazard_version_key = (
+        build_hazard_version_key(
+            hazard_id,
+            source_version,
         )
-    else:
-        update_last_seen(item["hazard_id"], raw_event.get("received_at"))
-        if change_type == "UNCHANGED":
-            unchanged = 1
+    )
 
-    if should_publish_event:
-        publish_weather_changed(item, change_type)
-        mark_event_published(item["hazard_id"], item["source_version"])
-        eventbridge_events_published = 1
+    items: list[
+        dict[str, Any]
+    ] = []
+
+    for point in geometry_points:
+        polygon_index = int(
+            point[
+                "polygon_index"
+            ]
+        )
+
+        ring_index = int(
+            point[
+                "ring_index"
+            ]
+        )
+
+        sequence_number = int(
+            point[
+                "sequence_number"
+            ]
+        )
+
+        coordinate_key = (
+            f"{source_version}#"
+            f"{polygon_index:04d}#"
+            f"{ring_index:04d}#"
+            f"{sequence_number:08d}"
+        )
+
+        items.append(
+            {
+                # Existing current physical key.
+                "hazard_id": (
+                    hazard_id
+                ),
+                "coordinate_key": (
+                    coordinate_key
+                ),
+
+                # Added now for easier later migration.
+                "hazard_version_key": (
+                    hazard_version_key
+                ),
+
+                "source_version": (
+                    source_version
+                ),
+                "geometry_type": (
+                    point[
+                        "geometry_type"
+                    ]
+                ),
+                "polygon_index": (
+                    polygon_index
+                ),
+                "ring_index": (
+                    ring_index
+                ),
+                "sequence_number": (
+                    sequence_number
+                ),
+                "latitude": Decimal(
+                    str(
+                        point[
+                            "latitude"
+                        ]
+                    )
+                ),
+                "longitude": Decimal(
+                    str(
+                        point[
+                            "longitude"
+                        ]
+                    )
+                ),
+                "materialization_id": (
+                    active_hazard[
+                        "materialization_id"
+                    ]
+                ),
+                "geometry_hash": (
+                    active_hazard[
+                        "geometry_hash"
+                    ]
+                ),
+                "correlation_id": (
+                    active_hazard[
+                        "correlation_id"
+                    ]
+                ),
+                "schema_version": (
+                    SCHEMA_VERSION
+                ),
+                "created_at_utc": (
+                    materialized_at_utc
+                ),
+                "expires_at_epoch": (
+                    active_hazard[
+                        "expires_at_epoch"
+                    ]
+                ),
+            }
+        )
+
+    return items
+
+
+def build_hazard_cell_items(
+    active_hazard: dict[str, Any],
+    h3_cells: list[str],
+    materialized_at_utc: str,
+) -> list[dict[str, Any]]:
+    hazard_id = active_hazard[
+        "hazard_id"
+    ]
+
+    source_version = (
+        active_hazard[
+            "source_version"
+        ]
+    )
+
+    hazard_version_key = (
+        build_hazard_version_key(
+            hazard_id,
+            source_version,
+        )
+    )
+
+    return [
+        {
+            "h3_cell": h3_cell,
+            "hazard_version_key": (
+                hazard_version_key
+            ),
+            "hazard_id": (
+                hazard_id
+            ),
+            "hazard_source_version": (
+                source_version
+            ),
+            "h3_resolution": (
+                H3_RESOLUTION
+            ),
+            "hazard_type": (
+                active_hazard[
+                    "hazard_type"
+                ]
+            ),
+            "severity": (
+                active_hazard.get(
+                    "severity"
+                )
+            ),
+            "valid_from_utc": (
+                active_hazard.get(
+                    "valid_from_utc"
+                )
+            ),
+            "valid_to_utc": (
+                active_hazard.get(
+                    "valid_to_utc"
+                )
+            ),
+            "materialization_id": (
+                active_hazard[
+                    "materialization_id"
+                ]
+            ),
+            "correlation_id": (
+                active_hazard[
+                    "correlation_id"
+                ]
+            ),
+            "schema_version": (
+                SCHEMA_VERSION
+            ),
+            "created_at_utc": (
+                materialized_at_utc
+            ),
+            "expires_at_epoch": (
+                active_hazard[
+                    "expires_at_epoch"
+                ]
+            ),
+        }
+        for h3_cell in sorted(
+            set(h3_cells)
+        )
+    ]
+
+
+def build_impact_cell_items(
+    active_hazard: dict[str, Any],
+    impact_cells: dict[
+        str,
+        int,
+    ],
+    materialized_at_utc: str,
+) -> list[dict[str, Any]]:
+    hazard_id = active_hazard[
+        "hazard_id"
+    ]
+
+    source_version = (
+        active_hazard[
+            "source_version"
+        ]
+    )
+
+    hazard_version_key = (
+        build_hazard_version_key(
+            hazard_id,
+            source_version,
+        )
+    )
+
+    return [
+        {
+            "impact_cell": (
+                impact_cell
+            ),
+            "hazard_version_key": (
+                hazard_version_key
+            ),
+            "hazard_id": (
+                hazard_id
+            ),
+            "hazard_source_version": (
+                source_version
+            ),
+            "h3_resolution": (
+                H3_RESOLUTION
+            ),
+            "minimum_grid_distance": (
+                minimum_distance
+            ),
+            "impact_radius_nm": (
+                IMPACT_RADIUS_NM
+            ),
+            "impact_scope": (
+                "PROJECTION_TRIGGER_AREA"
+            ),
+            "valid_from_utc": (
+                active_hazard.get(
+                    "valid_from_utc"
+                )
+            ),
+            "valid_to_utc": (
+                active_hazard.get(
+                    "valid_to_utc"
+                )
+            ),
+            "materialization_id": (
+                active_hazard[
+                    "materialization_id"
+                ]
+            ),
+            "correlation_id": (
+                active_hazard[
+                    "correlation_id"
+                ]
+            ),
+            "created_at_utc": (
+                materialized_at_utc
+            ),
+            "schema_version": (
+                SCHEMA_VERSION
+            ),
+            "expires_at_epoch": (
+                active_hazard[
+                    "expires_at_epoch"
+                ]
+            ),
+        }
+        for (
+            impact_cell,
+            minimum_distance,
+        ) in sorted(
+            impact_cells.items()
+        )
+    ]
+
+
+# ---------------------------------------------------------------------------
+# DynamoDB child writes
+# ---------------------------------------------------------------------------
+
+def batch_put_items(
+    table: Any,
+    *,
+    overwrite_by_pkeys: list[str],
+    items: list[dict[str, Any]],
+) -> int:
+    if not items:
+        return 0
+
+    with table.batch_writer(
+        overwrite_by_pkeys=(
+            overwrite_by_pkeys
+        )
+    ) as batch:
+        for item in items:
+            batch.put_item(
+                Item=item
+            )
+
+    return len(items)
+
+
+def materialize_dependent_rows(
+    *,
+    active_hazard: dict[str, Any],
+    geometry_points: list[
+        dict[str, Any]
+    ],
+    h3_cells: list[str],
+    impact_cells: dict[
+        str,
+        int,
+    ],
+) -> dict[str, int]:
+    materialized_at_utc = (
+        now_utc_iso()
+    )
+
+    coordinate_items = (
+        build_coordinate_items(
+            active_hazard,
+            geometry_points,
+            materialized_at_utc,
+        )
+    )
+
+    hazard_cell_items = (
+        build_hazard_cell_items(
+            active_hazard,
+            h3_cells,
+            materialized_at_utc,
+        )
+    )
+
+    impact_cell_items = (
+        build_impact_cell_items(
+            active_hazard,
+            impact_cells,
+            materialized_at_utc,
+        )
+    )
+
+    coordinates_written = (
+        batch_put_items(
+            hazard_coordinates_table,
+            overwrite_by_pkeys=[
+                "hazard_id",
+                "coordinate_key",
+            ],
+            items=(
+                coordinate_items
+            ),
+        )
+    )
+
+    hazard_cells_written = (
+        batch_put_items(
+            hazard_cells_table,
+            overwrite_by_pkeys=[
+                "h3_cell",
+                "hazard_version_key",
+            ],
+            items=(
+                hazard_cell_items
+            ),
+        )
+    )
+
+    impact_cells_written = (
+        batch_put_items(
+            impact_cells_table,
+            overwrite_by_pkeys=[
+                "impact_cell",
+                "hazard_version_key",
+            ],
+            items=(
+                impact_cell_items
+            ),
+        )
+    )
 
     return {
-        "active_hazards_written": active_hazards_written,
-        "hazard_cells_written": hazard_cells_written,
-        "hazard_cells_removed": hazard_cells_removed,
-        "eventbridge_events_published": eventbridge_events_published,
-        "new_records": 1 if change_type == "NEW" else 0,
-        "updated_records": 1 if change_type == "UPDATED" else 0,
-        "unchanged_records": unchanged,
+        "hazard_coordinates_written": (
+            coordinates_written
+        ),
+        "hazard_cells_written": (
+            hazard_cells_written
+        ),
+        "impact_cells_written": (
+            impact_cells_written
+        ),
     }
 
 
-def get_record_sequence_number(record: dict[str, Any]) -> str | None:
-    return record.get("kinesis", {}).get("sequenceNumber")
+# ---------------------------------------------------------------------------
+# Record processor
+# ---------------------------------------------------------------------------
+
+def process_decoded_record(
+    raw_event: dict[str, Any],
+) -> dict[str, int]:
+    feature = extract_feature(
+        raw_event
+    )
+
+    geometry = feature.get(
+        "geometry"
+    )
+
+    geometry_points = (
+        flatten_geometry_points(
+            geometry
+        )
+    )
+
+    h3_cells = (
+        geometry_to_h3_cells(
+            geometry,
+            H3_RESOLUTION,
+        )
+    )
+
+    impact_cells = (
+        expand_impact_cells(
+            h3_cells,
+            IMPACT_GRID_DISTANCE,
+        )
+    )
+
+    item = (
+        build_active_hazard_item(
+            raw_event,
+            feature,
+            geometry_points,
+            hazard_cell_count=(
+                len(h3_cells)
+            ),
+            impact_cell_count=(
+                len(impact_cells)
+            ),
+        )
+    )
+
+    existing = (
+        get_existing_hazard(
+            item[
+                "hazard_id"
+            ]
+        )
+    )
+
+    (
+        change_type,
+        should_write_state,
+    ) = determine_change_type(
+        existing,
+        item,
+    )
+
+    result = {
+        "active_hazards_written": 0,
+        "hazard_coordinates_written": 0,
+        "hazard_cells_written": 0,
+        "impact_cells_written": 0,
+
+        # No EventBridge event until the full v4
+        # child materialization reaches READY.
+        "eventbridge_events_published": 0,
+
+        "new_records": (
+            1
+            if change_type == "NEW"
+            else 0
+        ),
+        "updated_records": (
+            1
+            if change_type == "UPDATED"
+            else 0
+        ),
+        "unchanged_records": (
+            1
+            if change_type == "UNCHANGED"
+            else 0
+        ),
+        "stale_records": (
+            1
+            if change_type == "STALE"
+            else 0
+        ),
+    }
+
+    if should_write_state:
+        dependent_counts = (
+            materialize_dependent_rows(
+                active_hazard=item,
+                geometry_points=(
+                    geometry_points
+                ),
+                h3_cells=(
+                    h3_cells
+                ),
+                impact_cells=(
+                    impact_cells
+                ),
+            )
+        )
+
+        result.update(
+            dependent_counts
+        )
+
+        # Parent intentionally written last.
+        #
+        # It remains BUILDING until the three
+        # child tables have been individually
+        # migrated to the complete v4 contract.
+        active_hazards_table.put_item(
+            Item=item
+        )
+
+        result[
+            "active_hazards_written"
+        ] = 1
+
+    return result
 
 
-def get_record_arrival_timestamp(record: dict[str, Any]) -> Any:
-    return record.get("kinesis", {}).get("approximateArrivalTimestamp")
+# ---------------------------------------------------------------------------
+# Bad-record handling
+# ---------------------------------------------------------------------------
+
+def get_record_sequence_number(
+    record: dict[str, Any],
+) -> str | None:
+    return (
+        record.get(
+            "kinesis",
+            {},
+        )
+        .get(
+            "sequenceNumber"
+        )
+    )
 
 
-def get_record_base64(record: dict[str, Any]) -> str | None:
-    value = record.get("kinesis", {}).get("data")
-    return str(value) if value is not None else None
+def get_record_arrival_timestamp(
+    record: dict[str, Any],
+) -> Any:
+    return (
+        record.get(
+            "kinesis",
+            {},
+        )
+        .get(
+            "approximateArrivalTimestamp"
+        )
+    )
+
+
+def get_record_base64(
+    record: dict[str, Any],
+) -> str | None:
+    value = (
+        record.get(
+            "kinesis",
+            {},
+        )
+        .get(
+            "data"
+        )
+    )
+
+    return (
+        str(value)
+        if value is not None
+        else None
+    )
 
 
 def write_bad_record(
@@ -694,174 +2998,463 @@ def write_bad_record(
     record: dict[str, Any],
     error_type: str,
     error_message: str,
-    decoded_payload: dict[str, Any] | None,
+    decoded_payload: (
+        dict[str, Any]
+        | None
+    ),
     raw_base64: str | None,
 ) -> str:
     if not BAD_RECORDS_BUCKET_NAME:
-        raise RuntimeError("BAD_RECORDS_BUCKET_NAME is not configured")
+        raise RuntimeError(
+            "BAD_RECORDS_BUCKET_NAME "
+            "is not configured"
+        )
 
     received_at_dt = now_utc()
-    sequence_number = get_record_sequence_number(record)
+
+    sequence_number = (
+        get_record_sequence_number(
+            record
+        )
+    )
 
     bad_record = {
-        "schema_version": "bad_record.v1",
-        "service": "sigmet_processor",
-        "error_type": error_type,
-        "error_message": error_message,
-        "sequence_number": sequence_number,
-        "approximate_arrival_timestamp": get_record_arrival_timestamp(record),
-        "record_received_at": received_at_dt.isoformat(),
-        "decoded_payload": decoded_payload,
-        "raw_base64": raw_base64 if decoded_payload is None else None,
+        "schema_version": (
+            "bad_record.v1"
+        ),
+        "service": (
+            "sigmet_processor"
+        ),
+        "error_type": (
+            error_type
+        ),
+        "error_message": (
+            error_message
+        ),
+        "sequence_number": (
+            sequence_number
+        ),
+        "approximate_arrival_timestamp": (
+            get_record_arrival_timestamp(
+                record
+            )
+        ),
+        "record_received_at": (
+            received_at_dt.isoformat()
+        ),
+        "decoded_payload": (
+            decoded_payload
+        ),
+        "raw_base64": (
+            raw_base64
+            if decoded_payload is None
+            else None
+        ),
     }
 
-    sequence_part = sequence_number or stable_hash(raw_base64 or bad_record)[:24]
+    sequence_part = (
+        sequence_number
+        or stable_hash(
+            raw_base64
+            or bad_record
+        )[:24]
+    )
+
     key = (
         f"{BAD_RECORDS_PREFIX.rstrip('/')}/"
         f"year={received_at_dt.year:04d}/"
         f"month={received_at_dt.month:02d}/"
         f"day={received_at_dt.day:02d}/"
         f"hour={received_at_dt.hour:02d}/"
-        f"{received_at_dt.strftime('%Y%m%dT%H%M%S%f')}-{sequence_part}.json"
+        f"{received_at_dt.strftime('%Y%m%dT%H%M%S%f')}-"
+        f"{sequence_part}.json"
     )
 
     s3.put_object(
-        Bucket=BAD_RECORDS_BUCKET_NAME,
+        Bucket=(
+            BAD_RECORDS_BUCKET_NAME
+        ),
         Key=key,
-        Body=json.dumps(bad_record, separators=(",", ":"), default=json_default).encode("utf-8"),
-        ContentType="application/json",
+        Body=json.dumps(
+            bad_record,
+            separators=(",", ":"),
+            default=json_default,
+        ).encode(
+            "utf-8"
+        ),
+        ContentType=(
+            "application/json"
+        ),
     )
 
-    return f"s3://{BAD_RECORDS_BUCKET_NAME}/{key}"
+    return (
+        f"s3://"
+        f"{BAD_RECORDS_BUCKET_NAME}/"
+        f"{key}"
+    )
 
 
-def lambda_handler(event, context):
-    records = event.get("Records", [])
-    records_received = len(records)
+# ---------------------------------------------------------------------------
+# Lambda
+# ---------------------------------------------------------------------------
+
+def lambda_handler(
+    event,
+    context,
+):
+    records = event.get(
+        "Records",
+        [],
+    )
+
+    records_received = len(
+        records
+    )
 
     records_processed = 0
     records_failed = 0
     bad_records_written = 0
 
     active_hazards_written = 0
+    hazard_coordinates_written = 0
     hazard_cells_written = 0
-    hazard_cells_removed = 0
+    impact_cells_written = 0
     eventbridge_events_published = 0
+
     new_records = 0
     updated_records = 0
     unchanged_records = 0
+    stale_records = 0
 
     batch_item_failures = []
 
     for record in records:
-        sequence_number = get_record_sequence_number(record)
+        sequence_number = (
+            get_record_sequence_number(
+                record
+            )
+        )
+
         decoded_payload = None
-        raw_base64 = get_record_base64(record)
+
+        raw_base64 = (
+            get_record_base64(
+                record
+            )
+        )
 
         try:
-            decoded_payload = decode_kinesis_record(record)
-            result = process_decoded_record(decoded_payload)
+            decoded_payload = (
+                decode_kinesis_record(
+                    record
+                )
+            )
+
+            result = (
+                process_decoded_record(
+                    decoded_payload
+                )
+            )
 
             records_processed += 1
-            active_hazards_written += result["active_hazards_written"]
-            hazard_cells_written += result["hazard_cells_written"]
-            hazard_cells_removed += result["hazard_cells_removed"]
-            eventbridge_events_published += result["eventbridge_events_published"]
-            new_records += result["new_records"]
-            updated_records += result["updated_records"]
-            unchanged_records += result["unchanged_records"]
+
+            active_hazards_written += (
+                result[
+                    "active_hazards_written"
+                ]
+            )
+
+            hazard_coordinates_written += (
+                result[
+                    "hazard_coordinates_written"
+                ]
+            )
+
+            hazard_cells_written += (
+                result[
+                    "hazard_cells_written"
+                ]
+            )
+
+            impact_cells_written += (
+                result[
+                    "impact_cells_written"
+                ]
+            )
+
+            eventbridge_events_published += (
+                result[
+                    "eventbridge_events_published"
+                ]
+            )
+
+            new_records += (
+                result[
+                    "new_records"
+                ]
+            )
+
+            updated_records += (
+                result[
+                    "updated_records"
+                ]
+            )
+
+            unchanged_records += (
+                result[
+                    "unchanged_records"
+                ]
+            )
+
+            stale_records += (
+                result[
+                    "stale_records"
+                ]
+            )
 
         except PermanentRecordError as exc:
             try:
-                bad_record_uri = write_bad_record(
-                    record=record,
-                    error_type=exc.__class__.__name__,
-                    error_message=str(exc),
-                    decoded_payload=decoded_payload,
-                    raw_base64=raw_base64,
+                bad_record_uri = (
+                    write_bad_record(
+                        record=record,
+                        error_type=(
+                            exc.__class__.__name__
+                        ),
+                        error_message=(
+                            str(exc)
+                        ),
+                        decoded_payload=(
+                            decoded_payload
+                        ),
+                        raw_base64=(
+                            raw_base64
+                        ),
+                    )
                 )
+
                 bad_records_written += 1
                 records_processed += 1
 
                 log_event(
-                    "Permanent SIGMET record failure written to S3",
-                    error_type=exc.__class__.__name__,
-                    sequence_number=sequence_number,
-                    bad_record_uri=bad_record_uri,
+                    (
+                        "Permanent SIGMET "
+                        "record failure "
+                        "written to S3"
+                    ),
+                    error_type=(
+                        exc.__class__.__name__
+                    ),
+                    sequence_number=(
+                        sequence_number
+                    ),
+                    bad_record_uri=(
+                        bad_record_uri
+                    ),
                 )
+
             except Exception as quarantine_exc:
                 records_failed += 1
-                log_event(
-                    "Failed to write permanent SIGMET failure to S3",
-                    error_type=quarantine_exc.__class__.__name__,
-                    sequence_number=sequence_number,
-                    error=str(quarantine_exc),
-                )
-                if sequence_number:
-                    batch_item_failures.append({"itemIdentifier": sequence_number})
 
-        except (ClientError, BotoCoreError, RuntimeError) as exc:
+                log_event(
+                    (
+                        "Failed to write "
+                        "permanent SIGMET "
+                        "failure to S3"
+                    ),
+                    error_type=(
+                        quarantine_exc
+                        .__class__
+                        .__name__
+                    ),
+                    sequence_number=(
+                        sequence_number
+                    ),
+                    error=(
+                        str(
+                            quarantine_exc
+                        )
+                    ),
+                )
+
+                if sequence_number:
+                    batch_item_failures.append(
+                        {
+                            "itemIdentifier": (
+                                sequence_number
+                            )
+                        }
+                    )
+
+        except (
+            ClientError,
+            BotoCoreError,
+            RuntimeError,
+        ) as exc:
             records_failed += 1
+
             log_event(
-                "Temporary SIGMET processor failure",
-                error_type=exc.__class__.__name__,
-                sequence_number=sequence_number,
+                (
+                    "Temporary SIGMET "
+                    "processor failure"
+                ),
+                error_type=(
+                    exc.__class__.__name__
+                ),
+                sequence_number=(
+                    sequence_number
+                ),
                 error=str(exc),
             )
+
             if sequence_number:
-                batch_item_failures.append({"itemIdentifier": sequence_number})
+                batch_item_failures.append(
+                    {
+                        "itemIdentifier": (
+                            sequence_number
+                        )
+                    }
+                )
 
         except Exception as exc:
             records_failed += 1
+
             log_event(
-                "Unexpected SIGMET processor failure",
-                error_type=exc.__class__.__name__,
-                sequence_number=sequence_number,
+                (
+                    "Unexpected SIGMET "
+                    "processor failure"
+                ),
+                error_type=(
+                    exc.__class__.__name__
+                ),
+                sequence_number=(
+                    sequence_number
+                ),
                 error=str(exc),
             )
-            if sequence_number:
-                batch_item_failures.append({"itemIdentifier": sequence_number})
 
-    batch_item_failures_count = len(batch_item_failures)
+            if sequence_number:
+                batch_item_failures.append(
+                    {
+                        "itemIdentifier": (
+                            sequence_number
+                        )
+                    }
+                )
+
+    batch_item_failures_count = (
+        len(
+            batch_item_failures
+        )
+    )
 
     emit_metric(
         pipeline="sigmet",
-        component="sigmet_processor",
+        component=(
+            "sigmet_processor"
+        ),
         stage="raw_to_state",
         metrics={
-            "RecordsReceived": records_received,
-            "RecordsProcessed": records_processed,
-            "RecordsFailed": records_failed,
-            "BadRecordsWritten": bad_records_written,
-            "ActiveHazardsWritten": active_hazards_written,
-            "HazardCellsWritten": hazard_cells_written,
-            "HazardCellsRemoved": hazard_cells_removed,
-            "EventBridgeEventsPublished": eventbridge_events_published,
-            "NewRecords": new_records,
-            "UpdatedRecords": updated_records,
-            "UnchangedRecords": unchanged_records,
-            "BatchItemFailures": batch_item_failures_count,
+            "RecordsReceived": (
+                records_received
+            ),
+            "RecordsProcessed": (
+                records_processed
+            ),
+            "RecordsFailed": (
+                records_failed
+            ),
+            "BadRecordsWritten": (
+                bad_records_written
+            ),
+            "ActiveHazardsWritten": (
+                active_hazards_written
+            ),
+            "HazardCoordinatesWritten": (
+                hazard_coordinates_written
+            ),
+            "HazardCellsWritten": (
+                hazard_cells_written
+            ),
+            "ImpactCellsWritten": (
+                impact_cells_written
+            ),
+            "EventBridgeEventsPublished": (
+                eventbridge_events_published
+            ),
+            "NewRecords": (
+                new_records
+            ),
+            "UpdatedRecords": (
+                updated_records
+            ),
+            "UnchangedRecords": (
+                unchanged_records
+            ),
+            "StaleRecords": (
+                stale_records
+            ),
+            "BatchItemFailures": (
+                batch_item_failures_count
+            ),
         },
         properties={
-            "H3Resolution": H3_RESOLUTION,
+            "H3Resolution": (
+                H3_RESOLUTION
+            ),
         },
     )
 
     log_event(
         "SIGMET processor completed",
-        records_received=records_received,
-        records_processed=records_processed,
-        records_failed=records_failed,
-        bad_records_written=bad_records_written,
-        active_hazards_written=active_hazards_written,
-        hazard_cells_written=hazard_cells_written,
-        hazard_cells_removed=hazard_cells_removed,
-        eventbridge_events_published=eventbridge_events_published,
-        new_records=new_records,
-        updated_records=updated_records,
-        unchanged_records=unchanged_records,
-        batch_item_failures=batch_item_failures_count,
-        h3_resolution=H3_RESOLUTION,
+        records_received=(
+            records_received
+        ),
+        records_processed=(
+            records_processed
+        ),
+        records_failed=(
+            records_failed
+        ),
+        bad_records_written=(
+            bad_records_written
+        ),
+        active_hazards_written=(
+            active_hazards_written
+        ),
+        hazard_coordinates_written=(
+            hazard_coordinates_written
+        ),
+        hazard_cells_written=(
+            hazard_cells_written
+        ),
+        impact_cells_written=(
+            impact_cells_written
+        ),
+        eventbridge_events_published=(
+            eventbridge_events_published
+        ),
+        new_records=(
+            new_records
+        ),
+        updated_records=(
+            updated_records
+        ),
+        unchanged_records=(
+            unchanged_records
+        ),
+        stale_records=(
+            stale_records
+        ),
+        batch_item_failures=(
+            batch_item_failures_count
+        ),
+        h3_resolution=(
+            H3_RESOLUTION
+        ),
     )
 
-    return {"batchItemFailures": batch_item_failures}
+    return {
+        "batchItemFailures": (
+            batch_item_failures
+        )
+    }

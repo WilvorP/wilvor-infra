@@ -193,8 +193,12 @@ def test_extract_source_identity_normalizes_fields(
     sigmet_processor,
     sigmet_feature,
 ):
-    identity = sigmet_processor.extract_source_identity(
-        sigmet_feature["properties"]
+    identity = (
+        sigmet_processor.extract_source_identity(
+            sigmet_feature[
+                "properties"
+            ]
+        )
     )
 
     assert identity == {
@@ -202,9 +206,6 @@ def test_extract_source_identity_normalizes_fields(
         "air_sigmet_type": "SIGMET",
         "alpha_char": "A",
         "series_id": "12",
-        "creation_time": "2026-07-18T12:00:00+00:00",
-        "valid_time_from": "2026-07-18T12:00:00+00:00",
-        "valid_time_to": "2026-07-18T18:00:00+00:00",
     }
 
 
@@ -213,9 +214,13 @@ def test_extract_source_identity_requires_usable_field(
 ):
     with pytest.raises(
         sigmet_processor.PermanentRecordError,
-        match="no usable identity fields",
+        match=(
+            "no usable source identity fields"
+        ),
     ):
-        sigmet_processor.extract_source_identity({})
+        sigmet_processor.extract_source_identity(
+            {}
+        )
 
 
 def test_build_hazard_id_is_stable_and_identity_sensitive(
@@ -236,6 +241,35 @@ def test_build_hazard_id_is_stable_and_identity_sensitive(
     assert len(first) == len("sigmet-") + 24
     assert third != first
 
+
+def test_hazard_id_stays_stable_across_revision_times(
+    sigmet_processor,
+    sigmet_feature,
+):
+    original = dict(
+        sigmet_feature["properties"]
+    )
+
+    amended = dict(original)
+
+    amended["creationTime"] = (
+        "2026-07-18T13:00:00Z"
+    )
+    amended["validTimeFrom"] = (
+        "2026-07-18T13:00:00Z"
+    )
+    amended["validTimeTo"] = (
+        "2026-07-18T19:00:00Z"
+    )
+
+    assert (
+        sigmet_processor.build_hazard_id(
+            original
+        )
+        == sigmet_processor.build_hazard_id(
+            amended
+        )
+    )
 
 def test_build_source_version_is_content_sensitive(
     sigmet_processor,
@@ -258,15 +292,55 @@ def test_build_source_version_is_content_sensitive(
 @pytest.mark.parametrize(
     ("properties", "expected"),
     [
-        ({"hazard": "Severe Turbulence"}, "SEVERE_TURBULENCE"),
-        ({"airSigmetType": "Convective"}, "CONVECTIVE"),
-        ({"rawAirSigmet": "SEV TURB EXPECTED"}, "TURB"),
-        ({"rawSigmet": "VOLCANIC ASH CLOUD"}, "VOLCANIC"),
-        ({}, "UNKNOWN"),
+        (
+            {
+                "hazard": (
+                    "Severe Turbulence"
+                )
+            },
+            "TURBULENCE",
+        ),
+        (
+            {
+                "airSigmetType": (
+                    "Convective"
+                )
+            },
+            "CONVECTION",
+        ),
+        (
+            {
+                "rawAirSigmet": (
+                    "SEV TURB EXPECTED"
+                )
+            },
+            "TURBULENCE",
+        ),
+        (
+            {
+                "rawSigmet": (
+                    "VOLCANIC ASH CLOUD"
+                )
+            },
+            "VOLCANIC_ASH",
+        ),
+        (
+            {},
+            "UNKNOWN",
+        ),
     ],
 )
-def test_get_hazard_type(sigmet_processor, properties, expected):
-    assert sigmet_processor.get_hazard_type(properties) == expected
+def test_get_hazard_type(
+    sigmet_processor,
+    properties,
+    expected,
+):
+    assert (
+        sigmet_processor.get_hazard_type(
+            properties
+        )
+        == expected
+    )
 
 
 def test_build_raw_s3_uri(sigmet_processor):
@@ -280,7 +354,7 @@ def test_build_raw_s3_uri(sigmet_processor):
     assert sigmet_processor.build_raw_s3_uri({}) is None
 
 
-def test_ttl_from_valid_to_adds_six_hours(
+def test_ttl_for_active_hazard_adds_retention(
     sigmet_processor,
 ):
     valid_to = datetime(
@@ -292,7 +366,10 @@ def test_ttl_from_valid_to_adds_six_hours(
         tzinfo=timezone.utc,
     )
 
-    assert sigmet_processor.ttl_from_valid_to(valid_to) == int(
+    assert sigmet_processor.ttl_for_hazard(
+        valid_to,
+        "ACTIVE",
+    ) == int(
         datetime(
             2026,
             7,
