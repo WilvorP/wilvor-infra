@@ -63,6 +63,21 @@ module "sigmet" {
     "${path.root}/../../functions/weather/sigmet/processor/dist/sigmet_processor.zip"
   )
 
+  sigmet_hazard_coordinates_processor_zip_path = (
+    "${path.root}/../../functions/weather/sigmet/hazard_coordinates_processor/dist/sigmet_hazard_coordinates_processor.zip"
+  )
+
+  sigmet_hazard_station_candidates_processor_zip_path = (
+    "${path.root}/../../functions/weather/sigmet/hazard_station_candidates_processor/dist/sigmet_hazard_station_candidates_processor.zip"
+  )
+
+  station_reference_table_name    = module.station_reference.station_reference_table_name
+  station_reference_table_arn     = module.station_reference.station_reference_table_arn
+  station_reference_h3_index_name = "h3-station-index"
+
+  hazard_station_selection_radius_nm      = 50
+  hazard_station_selection_config_version = "hazard-station-selection-v1"
+
   enable_sigmet_poller_schedule     = false
   sigmet_poller_schedule_expression = "rate(2 minutes)"
   sigmet_api_url                    = "https://aviationweather.gov/api/data/airsigmet?format=geojson"

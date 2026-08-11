@@ -210,3 +210,85 @@ resource "aws_dynamodb_table" "hazard_station_candidates" {
     DataType  = "station-candidate"
   })
 }
+
+resource "aws_dynamodb_table" "hazard_coordinates" {
+  name         = "${var.name_prefix}-hazard-coordinates"
+  billing_mode = "PROVISIONED"
+
+  read_capacity  = 5
+  write_capacity = 25
+
+  hash_key  = "hazard_version_key"
+  range_key = "coordinate_key"
+
+  attribute {
+    name = "hazard_version_key"
+    type = "S"
+  }
+
+  attribute {
+    name = "coordinate_key"
+    type = "S"
+  }
+
+  ttl {
+    attribute_name = "expires_at_epoch"
+    enabled        = true
+  }
+
+  point_in_time_recovery {
+    enabled = false
+  }
+
+  tags = merge(var.tags, {
+    Name      = "${var.name_prefix}-hazard-coordinates"
+    Component = "weather-ingestion"
+    TableRole = "versioned-spatial-child"
+  })
+}
+
+resource "aws_dynamodb_table" "hazard_station_candidates" {
+  name         = "${var.name_prefix}-hazard-station-candidates"
+  billing_mode = "PROVISIONED"
+
+  read_capacity  = 25
+  write_capacity = 75
+
+  hash_key  = "hazard_version_key"
+  range_key = "station_id"
+
+  attribute {
+    name = "hazard_version_key"
+    type = "S"
+  }
+
+  attribute {
+    name = "station_id"
+    type = "S"
+  }
+
+  global_secondary_index {
+    name            = "station-hazard-index"
+    hash_key        = "station_id"
+    range_key       = "hazard_version_key"
+    projection_type = "ALL"
+
+    read_capacity  = 25
+    write_capacity = 75
+  }
+
+  ttl {
+    attribute_name = "expires_at_epoch"
+    enabled        = true
+  }
+
+  point_in_time_recovery {
+    enabled = false
+  }
+
+  tags = merge(var.tags, {
+    Name      = "${var.name_prefix}-hazard-station-candidates"
+    Component = "weather-ingestion"
+    TableRole = "derived-spatial-relationship"
+  })
+}

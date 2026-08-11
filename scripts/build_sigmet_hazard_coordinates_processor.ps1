@@ -1,19 +1,20 @@
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-$FunctionDir = Join-Path $RepoRoot "functions\runway_metadata\loader"
+$FunctionDir = Join-Path $RepoRoot "functions\weather\sigmet\hazard_coordinates_processor"
 $DistDir = Join-Path $FunctionDir "dist"
-$ZipPath = Join-Path $DistDir "runway_metadata_loader.zip"
+$ZipPath = Join-Path $DistDir "sigmet_hazard_coordinates_processor.zip"
 
-$TempRoot = Join-Path $env:TEMP ("wilvor-runway-metadata-loader-" + [guid]::NewGuid().ToString())
+$TempRoot = Join-Path $env:TEMP ("wilvor-hazard-coordinates-processor-" + [guid]::NewGuid().ToString())
 $PackageDir = Join-Path $TempRoot "package"
 
 if (-not (Test-Path $FunctionDir)) {
-    throw "Runway metadata loader directory not found: $FunctionDir"
+    throw "SIGMET HazardCoordinates processor directory not found: $FunctionDir"
 }
 
 try {
     Remove-Item -Recurse -Force $DistDir -ErrorAction SilentlyContinue
+
     New-Item -ItemType Directory -Force $DistDir | Out-Null
     New-Item -ItemType Directory -Force $PackageDir | Out-Null
 
@@ -26,13 +27,11 @@ try {
             -t $PackageDir
 
         if ($LASTEXITCODE -ne 0) {
-            throw "pip install failed for runway metadata loader."
+            throw "pip install failed for SIGMET HazardCoordinates processor."
         }
     }
 
-    Get-ChildItem -Path $FunctionDir -File -Filter "*.py" | ForEach-Object {
-        Copy-Item $_.FullName -Destination $PackageDir -Force
-    }
+    Copy-Item (Join-Path $FunctionDir "app.py") (Join-Path $PackageDir "app.py") -Force
 
     Compress-Archive `
         -Path (Join-Path $PackageDir "*") `
