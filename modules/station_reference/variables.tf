@@ -136,7 +136,7 @@ variable "enable_point_in_time_recovery" {
 variable "dynamodb_read_capacity" {
   description = "Provisioned DynamoDB read capacity units"
   type        = number
-  default     = 5
+  default     = 50
 
   validation {
     condition     = var.dynamodb_read_capacity >= 1
@@ -147,7 +147,7 @@ variable "dynamodb_read_capacity" {
 variable "dynamodb_write_capacity" {
   description = "Provisioned DynamoDB write capacity units"
   type        = number
-  default     = 5
+  default     = 25
 
   validation {
     condition     = var.dynamodb_write_capacity >= 1

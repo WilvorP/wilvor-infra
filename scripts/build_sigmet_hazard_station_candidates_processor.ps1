@@ -1,15 +1,15 @@
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-$FunctionDir = Join-Path $RepoRoot "functions\weather\sigmet\hazard_coordinates_processor"
+$FunctionDir = Join-Path $RepoRoot "functions\weather\sigmet\hazard_station_candidates_processor"
 $DistDir = Join-Path $FunctionDir "dist"
-$ZipPath = Join-Path $DistDir "sigmet_hazard_coordinates_processor.zip"
+$ZipPath = Join-Path $DistDir "sigmet_hazard_station_candidates_processor.zip"
 
-$TempRoot = Join-Path $env:TEMP ("wilvor-hazard-coordinates-processor-" + [guid]::NewGuid().ToString())
+$TempRoot = Join-Path $env:TEMP ("wilvor-hsc-processor-" + [guid]::NewGuid().ToString())
 $PackageDir = Join-Path $TempRoot "package"
 
 if (-not (Test-Path $FunctionDir)) {
-    throw "SIGMET HazardCoordinates processor directory not found: $FunctionDir"
+    throw "SIGMET HazardStationCandidates processor directory not found: $FunctionDir"
 }
 
 try {
@@ -23,11 +23,15 @@ try {
     if (Test-Path $RequirementsPath) {
         python -m pip install `
             --upgrade `
-            -r $RequirementsPath `
-            -t $PackageDir
+            --platform manylinux2014_x86_64 `
+            --implementation cp `
+            --python-version 3.12 `
+            --only-binary=:all: `
+            --target $PackageDir `
+            -r $RequirementsPath
 
         if ($LASTEXITCODE -ne 0) {
-            throw "pip install failed for SIGMET HazardCoordinates processor."
+            throw "pip install failed for SIGMET HazardStationCandidates processor."
         }
     }
 

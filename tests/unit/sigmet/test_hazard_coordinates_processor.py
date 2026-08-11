@@ -144,6 +144,16 @@ def test_polygon_creates_required_coordinate_rows(monkeypatch):
     assert "hazard.coordinates.materialized" in event_detail
     assert fake_events.entries[0]["DetailType"] == "HazardCoordinates.materialized"
 
+    assert item["hazard_type"] == "TURBULENCE"
+    assert item["severity"] == "SEV"
+    assert item["valid_from_utc"] == "2026-08-10T19:00:00+00:00"
+    assert item["valid_to_utc"] == "2026-08-10T23:00:00+00:00"
+
+    event_detail = fake_events.entries[0]["Detail"]
+    assert "hazard_type" in event_detail
+    assert "valid_from_utc" in event_detail
+    assert "valid_to_utc" in event_detail
+
 
 def test_multipolygon_preserves_polygon_ring_sequence(monkeypatch):
     fake_table = FakeHazardCoordinatesTable(existing_count=0)
@@ -194,7 +204,7 @@ def test_multipolygon_preserves_polygon_ring_sequence(monkeypatch):
     assert all(item["geometry_type"] == "MULTIPOLYGON" for item in fake_table.items)
 
 
-def test_existing_materialization_skips_write_but_still_publishes_event(monkeypatch):
+def test_existing_materialization_upserts_rows_and_publishes_event(monkeypatch):
     fake_table = FakeHazardCoordinatesTable(existing_count=3)
     fake_events = FakeEventsClient()
 
@@ -217,11 +227,11 @@ def test_existing_materialization_skips_write_but_still_publishes_event(monkeypa
 
     result = app.process_decoded_record(raw_event)
 
-    assert result["coordinate_rows_written"] == 0
+    assert result["coordinate_rows_written"] == 3
     assert result["already_materialized"] == 1
     assert result["eventbridge_events_published"] == 1
-    assert fake_table.items == []
-    assert "ALREADY_EXISTS" in fake_events.entries[0]["Detail"]
+    assert len(fake_table.items) == 3
+    assert "UPSERTED_EXISTING_VERSION" in fake_events.entries[0]["Detail"]
 
 
 def test_invalid_geometry_raises_permanent_error():

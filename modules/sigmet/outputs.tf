@@ -54,3 +54,15 @@ output "hazard_coordinates_processor_function_name" {
 output "hazard_coordinates_processor_function_arn" {
   value = aws_lambda_function.sigmet_hazard_coordinates_processor.arn
 }
+
+output "hazard_station_candidates_table_name" {
+  value = aws_dynamodb_table.hazard_station_candidates.name
+}
+
+output "hazard_station_candidates_processor_function_name" {
+  value = aws_lambda_function.sigmet_hazard_station_candidates_processor.function_name
+}
+
+output "hazard_station_candidates_processor_function_arn" {
+  value = aws_lambda_function.sigmet_hazard_station_candidates_processor.arn
+}

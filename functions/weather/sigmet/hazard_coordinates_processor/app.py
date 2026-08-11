@@ -203,6 +203,27 @@ def get_hazard_type(properties: dict[str, Any]) -> str:
 
     return "UNKNOWN"
 
+def get_severity(properties: dict[str, Any]) -> str | None:
+    value = get_first_property(
+        properties,
+        ["severity", "hazardSeverity", "hazard_severity", "intensity"],
+    )
+
+    if value:
+        return str(value).strip().upper().replace(" ", "_")
+
+    raw_text = get_first_property(properties, ["rawAirSigmet", "rawSigmet", "raw_text", "rawText"])
+    if raw_text:
+        text = str(raw_text).upper()
+
+        if "SEV" in text or "SEVERE" in text:
+            return "SEVERE"
+
+        if "MOD" in text or "MODERATE" in text:
+            return "MODERATE"
+
+    return None
+
 
 def extract_source_identity(properties: dict[str, Any]) -> dict[str, str | None]:
     identity = {
@@ -452,8 +473,12 @@ def build_hazard_coordinate_items(
     created_at_utc = now_utc_iso()
     valid_from = get_valid_from(properties)
     valid_to = get_valid_to(properties)
+    valid_from_utc = iso_or_none(valid_from)
+    valid_to_utc = iso_or_none(valid_to)
     expires_at_epoch = ttl_from_valid_to(valid_to)
     correlation_id = build_correlation_id(raw_event, feature)
+    hazard_type = get_hazard_type(properties)
+    severity = get_severity(properties)
 
     items: list[dict[str, Any]] = []
 
@@ -463,30 +488,44 @@ def build_hazard_coordinate_items(
                 latitude = point[0]
                 longitude = point[1]
 
-                items.append(
-                    {
-                        "hazard_version_key": hazard_version_key,
-                        "coordinate_key": build_coordinate_key(
-                            polygon_index=polygon_index,
-                            ring_index=ring_index,
-                            sequence_number=sequence_number,
-                        ),
-                        "hazard_id": hazard_id,
-                        "source_version": source_version,
-                        "geometry_type": normalized_geometry["type"],
-                        "polygon_index": polygon_index,
-                        "ring_index": ring_index,
-                        "sequence_number": sequence_number,
-                        "latitude": decimal_number(latitude),
-                        "longitude": decimal_number(longitude),
-                        "materialization_id": materialization_id,
-                        "geometry_hash": geometry_hash,
-                        "created_at_utc": created_at_utc,
-                        "correlation_id": correlation_id,
-                        "schema_version": SCHEMA_VERSION,
-                        "expires_at_epoch": expires_at_epoch,
-                    }
-                )
+                item = {
+                    "hazard_version_key": hazard_version_key,
+                    "coordinate_key": build_coordinate_key(
+                        polygon_index=polygon_index,
+                        ring_index=ring_index,
+                        sequence_number=sequence_number,
+                    ),
+                    "hazard_id": hazard_id,
+                    "source_version": source_version,
+                    "geometry_type": normalized_geometry["type"],
+                    "polygon_index": polygon_index,
+                    "ring_index": ring_index,
+                    "sequence_number": sequence_number,
+                    "latitude": decimal_number(latitude),
+                    "longitude": decimal_number(longitude),
+                    "materialization_id": materialization_id,
+                    "geometry_hash": geometry_hash,
+                    "created_at_utc": created_at_utc,
+                    "correlation_id": correlation_id,
+                    "schema_version": SCHEMA_VERSION,
+                    "expires_at_epoch": expires_at_epoch,
+
+                    # Extra compact hazard snapshot for downstream derived tables.
+                    # These are not part of the core HazardCoordinates key model,
+                    # but they let HazardStationCandidates rebuild without ActiveHazards for now.
+                    "hazard_type": hazard_type,
+                }
+
+                if severity:
+                    item["severity"] = severity
+
+                if valid_from_utc:
+                    item["valid_from_utc"] = valid_from_utc
+
+                if valid_to_utc:
+                    item["valid_to_utc"] = valid_to_utc
+
+                items.append(item)
 
     if not items:
         raise PermanentRecordError("Geometry produced zero coordinate rows")
@@ -499,8 +538,10 @@ def build_hazard_coordinate_items(
         "geometry_hash": geometry_hash,
         "coordinate_count": len(items),
         "materialization_id": materialization_id,
-        "valid_from_utc": iso_or_none(valid_from),
-        "valid_to_utc": iso_or_none(valid_to),
+        "hazard_type": hazard_type,
+        "severity": severity,
+        "valid_from_utc": valid_from_utc,
+        "valid_to_utc": valid_to_utc,
         "created_at_utc": created_at_utc,
         "expires_at_epoch": expires_at_epoch,
         "correlation_id": correlation_id,
@@ -559,6 +600,8 @@ def publish_hazard_coordinates_materialized(
         "geometry_hash": summary["geometry_hash"],
         "coordinate_count": summary["coordinate_count"],
         "materialization_id": summary["materialization_id"],
+        "hazard_type": summary.get("hazard_type", "UNKNOWN"),
+        "severity": summary.get("severity"),
         "coordinate_write_status": coordinate_write_status,
         "valid_from_utc": summary.get("valid_from_utc"),
         "valid_to_utc": summary.get("valid_to_utc"),
@@ -592,15 +635,14 @@ def process_decoded_record(raw_event: dict[str, Any]) -> dict[str, int]:
 
     existing_count = count_existing_hazard_coordinates(summary["hazard_version_key"])
 
-    coordinate_rows_written = 0
-    already_materialized = 0
-    coordinate_write_status = "WRITTEN"
+    coordinate_rows_written = write_hazard_coordinate_items(items)
+    already_materialized = 1 if existing_count == len(items) else 0
 
-    if existing_count == len(items):
-        already_materialized = 1
-        coordinate_write_status = "ALREADY_EXISTS"
-    else:
-        coordinate_rows_written = write_hazard_coordinate_items(items)
+    coordinate_write_status = (
+        "UPSERTED_EXISTING_VERSION"
+        if already_materialized
+        else "WRITTEN"
+    )
 
     publish_hazard_coordinates_materialized(
         summary,

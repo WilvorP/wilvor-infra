@@ -65,3 +65,35 @@ variable "bad_record_retention_days" {
   type    = number
   default = 7
 }
+
+variable "sigmet_hazard_station_candidates_processor_zip_path" {
+  type = string
+}
+
+variable "station_reference_table_name" {
+  type = string
+}
+
+variable "station_reference_table_arn" {
+  type = string
+}
+
+variable "hazard_station_selection_radius_nm" {
+  type    = number
+  default = 50
+}
+
+variable "hazard_station_selection_config_version" {
+  type    = string
+  default = "hazard-station-selection-v1"
+}
+
+variable "station_reference_h3_index_name" {
+  type    = string
+  default = "h3_cell-station_id-index"
+}
+
+variable "hazard_station_candidate_h3_resolution" {
+  type    = number
+  default = 4
+}
