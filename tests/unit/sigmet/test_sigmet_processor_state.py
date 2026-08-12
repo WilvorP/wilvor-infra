@@ -448,7 +448,10 @@ def test_build_coordinate_items(
     )
     assert (
         first["coordinate_key"]
-        == "v1#0000#0000#00000000"
+        == "P#0000#R#0000#S#000000"
+    )
+    assert first["schema_version"] == (
+        "wilvor.hazard_coordinates.v4.0"
     )
 
     assert first["source_version"] == "v1"
@@ -647,7 +650,7 @@ def test_materialize_dependent_rows(
     }
 
     assert calls[0][1] == [
-        "hazard_id",
+        "hazard_version_key",
         "coordinate_key",
     ]
 

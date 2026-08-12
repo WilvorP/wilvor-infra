@@ -67,6 +67,11 @@ SCHEMA_VERSION = os.environ.get(
     "wilvor.active_hazards.v4.0",
 )
 
+HAZARD_COORDINATES_SCHEMA_VERSION = os.environ.get(
+    "HAZARD_COORDINATES_SCHEMA_VERSION",
+    "wilvor.hazard_coordinates.v4.0",
+)
+
 RETENTION_AFTER_VALID_TO_HOURS = int(
     os.environ.get(
         "RETENTION_AFTER_VALID_TO_HOURS",
@@ -2381,133 +2386,98 @@ def determine_change_type(
 # They will be migrated individually to the v4 contracts next.
 # ---------------------------------------------------------------------------
 
+def build_coordinate_key(
+    *,
+    polygon_index: int,
+    ring_index: int,
+    sequence_number: int,
+) -> str:
+    return (
+        f"P#{polygon_index:04d}#"
+        f"R#{ring_index:04d}#"
+        f"S#{sequence_number:06d}"
+    )
+
 def build_coordinate_items(
     active_hazard: dict[str, Any],
-    geometry_points: list[
-        dict[str, Any]
-    ],
+    geometry_points: list[dict[str, Any]],
     materialized_at_utc: str,
 ) -> list[dict[str, Any]]:
-    hazard_id = active_hazard[
-        "hazard_id"
-    ]
+    hazard_id = active_hazard["hazard_id"]
+    source_version = active_hazard["source_version"]
 
-    source_version = (
-        active_hazard[
-            "source_version"
-        ]
+    hazard_version_key = build_hazard_version_key(
+        hazard_id,
+        source_version,
     )
 
-    hazard_version_key = (
-        build_hazard_version_key(
-            hazard_id,
-            source_version,
-        )
-    )
-
-    items: list[
-        dict[str, Any]
-    ] = []
+    items: list[dict[str, Any]] = []
 
     for point in geometry_points:
         polygon_index = int(
-            point[
-                "polygon_index"
-            ]
+            point["polygon_index"]
         )
-
         ring_index = int(
-            point[
-                "ring_index"
-            ]
+            point["ring_index"]
         )
-
         sequence_number = int(
-            point[
-                "sequence_number"
-            ]
+            point["sequence_number"]
         )
 
-        coordinate_key = (
-            f"{source_version}#"
-            f"{polygon_index:04d}#"
-            f"{ring_index:04d}#"
-            f"{sequence_number:08d}"
+        coordinate_key = build_coordinate_key(
+            polygon_index=polygon_index,
+            ring_index=ring_index,
+            sequence_number=sequence_number,
         )
 
         items.append(
             {
-                # Existing current physical key.
-                "hazard_id": (
-                    hazard_id
-                ),
-                "coordinate_key": (
-                    coordinate_key
-                ),
+                "hazard_version_key": hazard_version_key,
+                "coordinate_key": coordinate_key,
 
-                # Added now for easier later migration.
-                "hazard_version_key": (
-                    hazard_version_key
-                ),
+                "hazard_id": hazard_id,
+                "source_version": source_version,
 
-                "source_version": (
-                    source_version
-                ),
-                "geometry_type": (
-                    point[
-                        "geometry_type"
-                    ]
-                ),
-                "polygon_index": (
-                    polygon_index
-                ),
-                "ring_index": (
-                    ring_index
-                ),
-                "sequence_number": (
-                    sequence_number
-                ),
+                "geometry_type": point[
+                    "geometry_type"
+                ],
+                "polygon_index": polygon_index,
+                "ring_index": ring_index,
+                "sequence_number": sequence_number,
+
                 "latitude": Decimal(
-                    str(
-                        point[
-                            "latitude"
-                        ]
-                    )
+                    str(point["latitude"])
                 ),
                 "longitude": Decimal(
-                    str(
-                        point[
-                            "longitude"
-                        ]
-                    )
+                    str(point["longitude"])
                 ),
-                "materialization_id": (
-                    active_hazard[
-                        "materialization_id"
-                    ]
-                ),
-                "geometry_hash": (
-                    active_hazard[
-                        "geometry_hash"
-                    ]
-                ),
-                "correlation_id": (
-                    active_hazard[
-                        "correlation_id"
-                    ]
-                ),
+
+                "materialization_id": active_hazard[
+                    "materialization_id"
+                ],
+                "geometry_hash": active_hazard[
+                    "geometry_hash"
+                ],
+
+                "created_at_utc": materialized_at_utc,
+
+                "correlation_id": active_hazard[
+                    "correlation_id"
+                ],
+
                 "schema_version": (
-                    SCHEMA_VERSION
+                    HAZARD_COORDINATES_SCHEMA_VERSION
                 ),
-                "created_at_utc": (
-                    materialized_at_utc
-                ),
-                "expires_at_epoch": (
-                    active_hazard[
-                        "expires_at_epoch"
-                    ]
-                ),
+
+                "expires_at_epoch": active_hazard[
+                    "expires_at_epoch"
+                ],
             }
+        )
+
+    if not items:
+        raise PermanentRecordError(
+            "Geometry produced zero HazardCoordinates rows"
         )
 
     return items
@@ -2756,17 +2726,13 @@ def materialize_dependent_rows(
         )
     )
 
-    coordinates_written = (
-        batch_put_items(
-            hazard_coordinates_table,
-            overwrite_by_pkeys=[
-                "hazard_id",
-                "coordinate_key",
-            ],
-            items=(
-                coordinate_items
-            ),
-        )
+    coordinates_written = batch_put_items(
+        hazard_coordinates_table,
+        overwrite_by_pkeys=[
+            "hazard_version_key",
+            "coordinate_key",
+        ],
+        items=coordinate_items,
     )
 
     hazard_cells_written = (

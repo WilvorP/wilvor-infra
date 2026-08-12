@@ -135,13 +135,14 @@ resource "aws_lambda_function" "sigmet_processor" {
       HAZARD_CELLS_TABLE_NAME       = aws_dynamodb_table.hazard_cells.name
       IMPACT_CELLS_TABLE_NAME       = aws_dynamodb_table.impact_cells.name
 
-      H3_RESOLUTION                  = "4"
-      IMPACT_GRID_DISTANCE           = "2"
-      SCHEMA_VERSION                 = "wilvor.active_hazards.v4.0"
-      EVENT_BUS_NAME                 = var.event_bus_name
-      BAD_RECORDS_BUCKET_NAME        = aws_s3_bucket.sigmet_archive.bucket
-      BAD_RECORDS_PREFIX             = "bad-records/source=sigmet_processor"
-      RETENTION_AFTER_VALID_TO_HOURS = "6"
+      H3_RESOLUTION                     = "4"
+      IMPACT_GRID_DISTANCE              = "2"
+      SCHEMA_VERSION                    = "wilvor.active_hazards.v4.0"
+      HAZARD_COORDINATES_SCHEMA_VERSION = "wilvor.hazard_coordinates.v4.0"
+      EVENT_BUS_NAME                    = var.event_bus_name
+      BAD_RECORDS_BUCKET_NAME           = aws_s3_bucket.sigmet_archive.bucket
+      BAD_RECORDS_PREFIX                = "bad-records/source=sigmet_processor"
+      RETENTION_AFTER_VALID_TO_HOURS    = "6"
     }
   }
 

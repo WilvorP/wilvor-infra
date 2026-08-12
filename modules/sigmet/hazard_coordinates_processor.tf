@@ -152,6 +152,8 @@ resource "aws_lambda_event_source_mapping" "sigmet_raw_to_hazard_coordinates_pro
   function_name     = aws_lambda_function.sigmet_hazard_coordinates_processor.arn
   starting_position = "LATEST"
 
+  enabled = false
+
   batch_size                         = 100
   maximum_batching_window_in_seconds = 1
   function_response_types            = ["ReportBatchItemFailures"]

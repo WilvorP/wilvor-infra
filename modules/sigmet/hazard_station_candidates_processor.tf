@@ -132,7 +132,7 @@ resource "aws_lambda_function" "sigmet_hazard_station_candidates_processor" {
 
   environment {
     variables = {
-      ENVIRONMENT                           = replace(var.name_prefix, "wilvor-", "")
+      ENVIRONMENT                          = replace(var.name_prefix, "wilvor-", "")
       HAZARD_COORDINATES_TABLE_NAME        = aws_dynamodb_table.hazard_coordinates.name
       STATION_REFERENCE_TABLE_NAME         = var.station_reference_table_name
       HAZARD_STATION_CANDIDATES_TABLE_NAME = aws_dynamodb_table.hazard_station_candidates.name
@@ -140,8 +140,8 @@ resource "aws_lambda_function" "sigmet_hazard_station_candidates_processor" {
       EVENT_BUS_NAME                       = var.event_bus_name
       SELECTION_RADIUS_NM                  = tostring(var.hazard_station_selection_radius_nm)
       SELECTION_CONFIG_VERSION             = var.hazard_station_selection_config_version
-      STATION_REFERENCE_H3_INDEX_NAME = var.station_reference_h3_index_name
-      H3_RESOLUTION                   = tostring(var.hazard_station_candidate_h3_resolution)
+      STATION_REFERENCE_H3_INDEX_NAME      = var.station_reference_h3_index_name
+      H3_RESOLUTION                        = tostring(var.hazard_station_candidate_h3_resolution)
     }
   }
 
