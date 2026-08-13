@@ -92,7 +92,7 @@ data "aws_iam_policy_document" "metar_processor_policy" {
   }
 
   statement {
-    sid    = "PublishWeatherChangedEvents"
+    sid    = "PublishMetarUpdatedEvents"
     effect = "Allow"
 
     actions = [
@@ -100,7 +100,7 @@ data "aws_iam_policy_document" "metar_processor_policy" {
     ]
 
     resources = [
-      "arn:aws:events:${var.aws_region}:${var.account_id}:event-bus/default",
+      "arn:aws:events:${var.aws_region}:${var.account_id}:event-bus/${var.event_bus_name}",
     ]
   }
 }
@@ -126,12 +126,47 @@ resource "aws_lambda_function" "metar_processor" {
 
   environment {
     variables = {
-      METAR_LATEST_TABLE_NAME = aws_dynamodb_table.metar_latest.name
-      BAD_RECORDS_BUCKET_NAME = aws_s3_bucket.metar_archive.bucket
-      BAD_RECORDS_PREFIX      = "bad-records/source=metar_processor"
-      SCHEMA_VERSION          = "metar_latest.v1"
-      EVENT_BUS_NAME          = "default"
-      ENVIRONMENT             = lookup(var.tags, "Environment", "dev")
+      METAR_LATEST_TABLE_NAME = (
+        aws_dynamodb_table.metar_latest.name
+      )
+
+      BAD_RECORDS_BUCKET_NAME = (
+        aws_s3_bucket.metar_archive.bucket
+      )
+
+      BAD_RECORDS_PREFIX = (
+        "bad-records/source=metar_processor"
+      )
+
+      SCHEMA_VERSION = (
+        "wilvor.metar_latest.v4.0"
+      )
+
+      EVENT_SCHEMA_VERSION = (
+        "wilvor.event.metar.updated.v1"
+      )
+
+      EVENT_BUS_NAME = (
+        var.event_bus_name
+      )
+
+      ENVIRONMENT = lookup(
+        var.tags,
+        "Environment",
+        "dev"
+      )
+
+      METAR_FRESH_SECONDS = tostring(
+        var.metar_fresh_seconds
+      )
+
+      METAR_ACCEPTABLE_SECONDS = tostring(
+        var.metar_acceptable_seconds
+      )
+
+      METAR_TTL_SECONDS = tostring(
+        var.metar_ttl_seconds
+      )
     }
   }
 
@@ -147,20 +182,29 @@ resource "aws_lambda_function" "metar_processor" {
 }
 
 resource "aws_lambda_event_source_mapping" "metar_raw_to_processor" {
-  event_source_arn = aws_kinesis_stream.metar_raw.arn
-  function_name    = aws_lambda_function.metar_processor.arn
+  event_source_arn = (
+    aws_kinesis_stream.metar_raw.arn
+  )
 
-  starting_position                  = "LATEST"
-  batch_size                         = 10
+  function_name = (
+    aws_lambda_function.metar_processor.arn
+  )
+
+  starting_position = "LATEST"
+
+  batch_size = 10
+
   maximum_batching_window_in_seconds = 1
-  parallelization_factor             = 1
+
+  parallelization_factor = 1
 
   function_response_types = [
     "ReportBatchItemFailures",
   ]
 
   maximum_retry_attempts = 3
-  enabled                = true
+
+  enabled = true
 
   depends_on = [
     aws_iam_role_policy.metar_processor_lambda,

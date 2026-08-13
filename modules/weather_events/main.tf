@@ -9,13 +9,23 @@ resource "aws_cloudwatch_log_group" "weather_changed_events" {
 }
 
 resource "aws_cloudwatch_event_rule" "weather_changed" {
-  name           = "${var.name_prefix}-weather-changed"
-  description    = "Captures Wilvor Weather.changed events"
+  name = "${var.name_prefix}-weather-changed"
+
+  description = (
+    "Captures Wilvor weather domain events for integration verification"
+  )
+
   event_bus_name = var.event_bus_name
 
   event_pattern = jsonencode({
-    source      = ["wilvor.weather"]
-    detail-type = ["Weather.changed"]
+    source = [
+      "wilvor.weather"
+    ]
+
+    detail-type = [
+      "Weather.changed",
+      "metar.updated",
+    ]
   })
 
   tags = var.tags

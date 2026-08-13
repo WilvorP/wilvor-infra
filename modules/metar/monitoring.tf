@@ -479,7 +479,7 @@ resource "aws_cloudwatch_dashboard" "metar_pipeline" {
           stacked = false
 
           metrics = [
-            [local.wilvor_metric_namespace, "WeatherChangedEventsPublished", "Environment", local.metar_environment, "Pipeline", "metar", "Component", "metar_processor", "Stage", "latest_state"],
+            [local.wilvor_metric_namespace, "MetarUpdatedEventsPublished", "Environment", local.metar_environment, "Pipeline", "metar", "Component", "metar_processor", "Stage", "latest_state"],
             [local.wilvor_metric_namespace, "BadRecordsWritten", "Environment", local.metar_environment, "Pipeline", "metar", "Component", "metar_processor", "Stage", "latest_state"],
             [local.wilvor_metric_namespace, "ProcessingFailures", "Environment", local.metar_environment, "Pipeline", "metar", "Component", "metar_processor", "Stage", "latest_state"],
             [local.wilvor_metric_namespace, "BatchItemFailures", "Environment", local.metar_environment, "Pipeline", "metar", "Component", "metar_processor", "Stage", "latest_state"]

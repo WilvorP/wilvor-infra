@@ -47,6 +47,20 @@ data "aws_iam_policy_document" "metar_poller_policy" {
   }
 
   statement {
+    sid    = "ReadHazardStationCandidates"
+    effect = "Allow"
+
+    actions = [
+      "dynamodb:Query",
+      "dynamodb:Scan",
+    ]
+
+    resources = [
+      var.hazard_station_candidates_table_arn,
+    ]
+  }
+
+  statement {
     sid    = "WriteLambdaLogs"
     effect = "Allow"
 
@@ -90,16 +104,38 @@ resource "aws_lambda_function" "metar_poller" {
   runtime = "python3.12"
   handler = "app.lambda_handler"
 
-  memory_size = 128
-  timeout     = 30
+  memory_size = 256
+  timeout     = 120
 
   environment {
     variables = {
-      ENVIRONMENT           = replace(var.name_prefix, "wilvor-", "")
-      METAR_RAW_STREAM_NAME = aws_kinesis_stream.metar_raw.name
-      ARCHIVE_BUCKET_NAME   = aws_s3_bucket.metar_archive.bucket
-      NOAA_METAR_URL        = var.metar_api_url
-      RAW_PREFIX            = "raw/source=metar"
+      ENVIRONMENT = replace(
+        var.name_prefix,
+        "wilvor-",
+        ""
+      )
+
+      METAR_RAW_STREAM_NAME = (
+        aws_kinesis_stream.metar_raw.name
+      )
+
+      ARCHIVE_BUCKET_NAME = (
+        aws_s3_bucket.metar_archive.bucket
+      )
+
+      NOAA_METAR_URL = (
+        var.metar_api_url
+      )
+
+      RAW_PREFIX = "raw/source=metar"
+
+      HAZARD_STATION_CANDIDATES_TABLE_NAME = (
+        var.hazard_station_candidates_table_name
+      )
+
+      METAR_STATION_CHUNK_SIZE = tostring(
+        var.metar_station_chunk_size
+      )
     }
   }
 
@@ -114,28 +150,117 @@ resource "aws_lambda_function" "metar_poller" {
   })
 }
 
-resource "aws_cloudwatch_event_rule" "metar_poller_schedule" {
-  name                = "${var.name_prefix}-metar-poller-schedule"
-  description         = "Schedule for NOAA METAR polling"
-  schedule_expression = var.metar_poller_schedule_expression
-  state               = var.enable_metar_poller_schedule ? "ENABLED" : "DISABLED"
+resource "aws_cloudwatch_event_rule" "metar_hazard_stations_ready" {
+  name = (
+    "${var.name_prefix}-metar-hazard-stations-ready"
+  )
+
+  description = (
+    "Invoke METAR poller after HazardStationCandidates becomes ready"
+  )
+
+  event_bus_name = var.event_bus_name
+
+  event_pattern = jsonencode({
+    source      = ["wilvor.weather"]
+    detail-type = ["hazard.stations.ready"]
+  })
 
   tags = merge(var.tags, {
-    Name      = "${var.name_prefix}-metar-poller-schedule"
+    Name = (
+      "${var.name_prefix}-metar-hazard-stations-ready"
+    )
+    Component = "weather-ingestion"
+  })
+}
+
+resource "aws_cloudwatch_event_target" "metar_hazard_stations_ready" {
+  rule = (
+    aws_cloudwatch_event_rule
+    .metar_hazard_stations_ready
+    .name
+  )
+
+  event_bus_name = var.event_bus_name
+
+  target_id = (
+    "MetarPollerFromHazardStationCandidates"
+  )
+
+  arn = aws_lambda_function.metar_poller.arn
+}
+
+resource "aws_lambda_permission" "allow_eventbridge_metar_hazard_stations_ready" {
+  statement_id = (
+    "AllowExecutionFromHazardStationsReady"
+  )
+
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.metar_poller.function_name
+  principal     = "events.amazonaws.com"
+
+  source_arn = (
+    aws_cloudwatch_event_rule
+    .metar_hazard_stations_ready
+    .arn
+  )
+}
+
+resource "aws_cloudwatch_event_rule" "metar_poller_schedule" {
+  name = (
+    "${var.name_prefix}-metar-poller-schedule"
+  )
+
+  description = (
+    "Refresh current METAR data for active hazard-station candidates"
+  )
+
+  schedule_expression = (
+    var.metar_poller_schedule_expression
+  )
+
+  state = (
+    var.enable_metar_poller_schedule
+    ? "ENABLED"
+    : "DISABLED"
+  )
+
+  tags = merge(var.tags, {
+    Name = (
+      "${var.name_prefix}-metar-poller-schedule"
+    )
     Component = "weather-ingestion"
   })
 }
 
 resource "aws_cloudwatch_event_target" "metar_poller" {
-  rule      = aws_cloudwatch_event_rule.metar_poller_schedule.name
+  rule = (
+    aws_cloudwatch_event_rule
+    .metar_poller_schedule
+    .name
+  )
+
   target_id = "MetarPollerLambda"
-  arn       = aws_lambda_function.metar_poller.arn
+
+  arn = (
+    aws_lambda_function
+    .metar_poller
+    .arn
+  )
 }
 
 resource "aws_lambda_permission" "allow_eventbridge_metar_poller" {
-  statement_id  = "AllowExecutionFromEventBridgeMetarPoller"
+  statement_id = (
+    "AllowExecutionFromEventBridgeMetarPoller"
+  )
+
   action        = "lambda:InvokeFunction"
   function_name = aws_lambda_function.metar_poller.function_name
   principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.metar_poller_schedule.arn
+
+  source_arn = (
+    aws_cloudwatch_event_rule
+    .metar_poller_schedule
+    .arn
+  )
 }

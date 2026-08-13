@@ -103,9 +103,37 @@ module "metar" {
     "${path.root}/../../functions/weather/metar/processor/dist/metar_processor.zip"
   )
 
-  enable_metar_poller_schedule     = false
-  metar_poller_schedule_expression = "rate(3 minutes)"
-  metar_api_url                    = "https://aviationweather.gov/api/data/metar?ids=KSFO,KOAK,KSJC&format=geojson"
+  hazard_station_candidates_table_name = (
+    module.sigmet.hazard_station_candidates_table_name
+  )
+
+  hazard_station_candidates_table_arn = (
+    module.sigmet.hazard_station_candidates_table_arn
+  )
+
+  event_bus_name = local.default_event_bus_name
+
+  # Keep disabled for the first deployment.
+  # We will first prove the event-driven HSC path works.
+  enable_metar_poller_schedule = false
+
+  metar_poller_schedule_expression = (
+    "rate(3 minutes)"
+  )
+
+  # Base endpoint only.
+  # station IDs are added dynamically by the Lambda.
+  metar_api_url = (
+    "https://aviationweather.gov/api/data/metar?format=geojson"
+  )
+
+  metar_station_chunk_size = 100
+
+  metar_fresh_seconds = 600
+
+  metar_acceptable_seconds = 1800
+
+  metar_ttl_seconds = 86400
 
   tags = local.common_tags
 }

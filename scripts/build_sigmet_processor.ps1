@@ -2,6 +2,7 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $FunctionDir = Join-Path $RepoRoot "functions\weather\sigmet\processor"
+$SharedWeatherDir = Join-Path $RepoRoot "functions\shared\wilvor_weather"
 $DistDir = Join-Path $FunctionDir "dist"
 $ZipPath = Join-Path $DistDir "sigmet_processor.zip"
 
@@ -10,6 +11,10 @@ $PackageDir = Join-Path $TempRoot "package"
 
 if (-not (Test-Path $FunctionDir)) {
     throw "SIGMET processor directory not found: $FunctionDir"
+}
+
+if (-not (Test-Path $SharedWeatherDir)) {
+    throw "Shared weather package not found: $SharedWeatherDir"
 }
 
 try {
@@ -26,8 +31,12 @@ try {
         try {
             python -m pip install `
                 --upgrade `
-                -r requirements.txt `
-                -t $PackageDir
+                --platform manylinux2014_x86_64 `
+                --implementation cp `
+                --python-version 3.12 `
+                --only-binary=:all: `
+                --target $PackageDir `
+                -r $RequirementsPath
 
             if ($LASTEXITCODE -ne 0) {
                 throw "pip install failed for SIGMET processor."
@@ -41,6 +50,19 @@ try {
     Get-ChildItem -Path $FunctionDir -File -Filter "*.py" | ForEach-Object {
         Copy-Item $_.FullName -Destination $PackageDir -Force
     }
+
+    $SharedTargetDir = Join-Path $PackageDir "wilvor_weather"
+
+    New-Item `
+        -ItemType Directory `
+        -Force `
+        $SharedTargetDir | Out-Null
+
+    Copy-Item `
+        -Path "$SharedWeatherDir\*" `
+        -Destination $SharedTargetDir `
+        -Recurse `
+        -Force
 
     Compress-Archive `
         -Path (Join-Path $PackageDir "*") `
