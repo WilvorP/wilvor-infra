@@ -45,6 +45,21 @@ data "aws_iam_policy_document" "taf_poller_policy" {
   }
 
   statement {
+    sid    = "ReadHazardStationCandidates"
+    effect = "Allow"
+
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:Query",
+    ]
+
+    resources = [
+      var.hazard_station_candidates_table_arn,
+      "${var.hazard_station_candidates_table_arn}/index/*",
+    ]
+  }
+
+  statement {
     sid    = "WriteLambdaLogs"
     effect = "Allow"
 
@@ -85,13 +100,14 @@ resource "aws_lambda_function" "taf_poller" {
 
   environment {
     variables = {
-      ENVIRONMENT            = replace(var.name_prefix, "wilvor-", "")
-      TAF_RAW_STREAM_NAME    = aws_kinesis_stream.taf_raw.name
-      ARCHIVE_BUCKET_NAME    = aws_s3_bucket.taf_archive.bucket
-      NOAA_TAF_URL           = var.taf_api_url
-      TAF_STATION_IDS        = var.taf_station_ids
-      TAF_STATION_CHUNK_SIZE = tostring(var.taf_station_chunk_size)
-      RAW_PREFIX             = "raw/source=taf"
+      ENVIRONMENT                          = replace(var.name_prefix, "wilvor-", "")
+      TAF_RAW_STREAM_NAME                  = aws_kinesis_stream.taf_raw.name
+      ARCHIVE_BUCKET_NAME                  = aws_s3_bucket.taf_archive.bucket
+      NOAA_TAF_URL                         = var.taf_api_url
+      TAF_STATION_IDS                      = var.taf_station_ids
+      TAF_STATION_CHUNK_SIZE               = tostring(var.taf_station_chunk_size)
+      RAW_PREFIX                           = "raw/source=taf"
+      HAZARD_STATION_CANDIDATES_TABLE_NAME = var.hazard_station_candidates_table_name
     }
   }
 
@@ -130,4 +146,39 @@ resource "aws_lambda_permission" "allow_eventbridge_taf_poller" {
   function_name = aws_lambda_function.taf_poller.function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.taf_poller_schedule.arn
+}
+
+resource "aws_cloudwatch_event_rule" "taf_poller_hazard_stations_ready" {
+  name           = "${var.name_prefix}-taf-poller-hazard-stations-ready"
+  description    = "Invoke TAF poller when HazardStationCandidates are ready"
+  event_bus_name = var.event_bus_name
+
+  event_pattern = jsonencode({
+    source = [
+      "wilvor.weather",
+    ]
+    "detail-type" = [
+      "hazard.stations.ready",
+    ]
+  })
+
+  tags = merge(var.tags, {
+    Name      = "${var.name_prefix}-taf-poller-hazard-stations-ready"
+    Component = "weather-ingestion"
+  })
+}
+
+resource "aws_cloudwatch_event_target" "taf_poller_hazard_stations_ready" {
+  rule           = aws_cloudwatch_event_rule.taf_poller_hazard_stations_ready.name
+  event_bus_name = var.event_bus_name
+  target_id      = "TafPollerFromHazardStationsReady"
+  arn            = aws_lambda_function.taf_poller.arn
+}
+
+resource "aws_lambda_permission" "allow_eventbridge_taf_poller_hazard_stations_ready" {
+  statement_id  = "AllowExecutionFromEventBridgeTafPollerHazardStationsReady"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.taf_poller.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.taf_poller_hazard_stations_ready.arn
 }

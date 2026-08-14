@@ -23,6 +23,14 @@ variable "taf_processor_zip_path" {
   type = string
 }
 
+variable "hazard_station_candidates_table_name" {
+  type = string
+}
+
+variable "hazard_station_candidates_table_arn" {
+  type = string
+}
+
 variable "enable_taf_poller_schedule" {
   type    = bool
   default = false
@@ -39,8 +47,9 @@ variable "taf_api_url" {
 }
 
 variable "taf_station_ids" {
-  type    = string
-  default = "KSFO,KOAK,KSJC"
+  description = "Manual/local fallback only. Production TAF station scope comes from HazardStationCandidates."
+  type        = string
+  default     = ""
 }
 
 variable "taf_station_chunk_size" {

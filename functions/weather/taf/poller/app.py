@@ -7,8 +7,10 @@ import urllib.request
 import uuid
 from datetime import datetime, timezone
 from typing import Any
-
+from boto3.dynamodb.conditions import Key
 import boto3
+
+dynamodb = boto3.resource("dynamodb")
 
 from wilvor_weather.monitoring import emit_metric
 
@@ -21,9 +23,27 @@ def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def get_station_ids() -> list[str]:
-    raw_station_ids = os.environ.get("TAF_STATION_IDS", "")
+def extract_detail(event: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(event, dict):
+        return {}
 
+    detail = event.get("detail")
+    if isinstance(detail, dict):
+        return detail
+
+    return event
+
+
+def get_hazard_station_candidates_table():
+    table_name = os.environ.get("HAZARD_STATION_CANDIDATES_TABLE_NAME", "").strip()
+    if not table_name:
+        raise RuntimeError("HAZARD_STATION_CANDIDATES_TABLE_NAME is not configured")
+
+    return dynamodb.Table(table_name)
+
+
+def get_station_ids_from_env() -> list[str]:
+    raw_station_ids = os.environ.get("TAF_STATION_IDS", "")
     station_ids = sorted(
         {
             station_id.strip().upper()
@@ -38,22 +58,80 @@ def get_station_ids() -> list[str]:
     return station_ids
 
 
+def query_candidate_stations_for_hazard(
+    hazard_version_key: str,
+) -> list[dict[str, Any]]:
+    table = get_hazard_station_candidates_table()
+    items: list[dict[str, Any]] = []
+    exclusive_start_key = None
+
+    while True:
+        kwargs: dict[str, Any] = {
+            "KeyConditionExpression": Key("hazard_version_key").eq(hazard_version_key),
+        }
+
+        if exclusive_start_key:
+            kwargs["ExclusiveStartKey"] = exclusive_start_key
+
+        response = table.query(**kwargs)
+        items.extend(response.get("Items", []))
+
+        exclusive_start_key = response.get("LastEvaluatedKey")
+        if not exclusive_start_key:
+            break
+
+    return items
+
+
+def get_station_ids(
+    event: dict[str, Any] | None = None,
+) -> list[str]:
+    detail = extract_detail(event)
+    hazard_version_key = str(detail.get("hazard_version_key") or "").strip()
+
+    # Production path: hazard.stations.ready -> HazardStationCandidates -> station IDs.
+    if hazard_version_key:
+        candidate_items = query_candidate_stations_for_hazard(hazard_version_key)
+        return sorted(
+            {
+                str(item["station_id"]).strip().upper()
+                for item in candidate_items
+                if str(item.get("station_id") or "").strip()
+            }
+        )
+
+    # Manual/local fallback only.
+    return get_station_ids_from_env()
+
+
 def chunked(items: list[Any], size: int) -> list[list[Any]]:
     return [items[index : index + size] for index in range(0, len(items), size)]
 
 
-def fetch_taf_records() -> list[dict[str, Any]]:
+def fetch_taf_records(
+    station_ids: list[str] | None = None,
+) -> list[dict[str, Any]]:
     base_url = os.environ.get(
         "NOAA_TAF_URL",
         "https://aviationweather.gov/api/data/taf",
     )
 
-    station_ids = get_station_ids()
+    resolved_station_ids = station_ids if station_ids is not None else get_station_ids()
+    resolved_station_ids = sorted(
+        {
+            station_id.strip().upper()
+            for station_id in resolved_station_ids
+            if station_id.strip()
+        }
+    )
+
+    if not resolved_station_ids:
+        return []
+
     chunk_size = int(os.environ.get("TAF_STATION_CHUNK_SIZE", "100"))
 
     all_records: list[dict[str, Any]] = []
-
-    for station_chunk in chunked(station_ids, chunk_size):
+    for station_chunk in chunked(resolved_station_ids, chunk_size):
         query_string = urllib.parse.urlencode(
             {
                 "ids": ",".join(station_chunk),
@@ -67,11 +145,10 @@ def fetch_taf_records() -> list[dict[str, Any]]:
             url,
             method="GET",
             headers={
-                "User-Agent": "Wilvor-TAF-Poller/0.1",
+                "User-Agent": "Wilvor-TAF-Poller/0.2",
                 "Accept": "application/json",
             },
         )
-
         try:
             with urllib.request.urlopen(request, timeout=60) as response:
                 status = response.status
@@ -88,7 +165,6 @@ def fetch_taf_records() -> list[dict[str, Any]]:
             raise RuntimeError(
                 f"NOAA TAF API returned HTTP {exc.code}: {exc.reason}"
             ) from exc
-
         except urllib.error.URLError as exc:
             raise RuntimeError(
                 f"NOAA TAF API request failed: {exc.reason}"
@@ -98,7 +174,6 @@ def fetch_taf_records() -> list[dict[str, Any]]:
             raise RuntimeError(
                 f"NOAA TAF API returned unexpected status {status}"
             )
-
         try:
             response_data = json.loads(body)
         except json.JSONDecodeError as exc:
@@ -113,7 +188,6 @@ def fetch_taf_records() -> list[dict[str, Any]]:
 
         elif isinstance(response_data, dict):
             all_records.append(response_data)
-
         else:
             raise RuntimeError(
                 "NOAA TAF API response was not a JSON list or object"
@@ -189,11 +263,12 @@ def publish_raw_records(
     raw_s3_bucket: str,
     raw_s3_key: str,
     records: list[dict[str, Any]],
+    trigger_detail: dict[str, Any] | None = None,
 ) -> tuple[int, int]:
     stream_name = os.environ["TAF_RAW_STREAM_NAME"]
+    trigger_detail = trigger_detail or {}
 
     kinesis_records = []
-
     for record_index, taf_record in enumerate(records):
         raw_event = {
             "schema_version": "raw.noaa.taf.v1",
@@ -205,9 +280,15 @@ def publish_raw_records(
             "raw_s3_bucket": raw_s3_bucket,
             "raw_s3_key": raw_s3_key,
             "record_index": record_index,
+            "trigger": {
+                "event_type": trigger_detail.get("event_type"),
+                "hazard_version_key": trigger_detail.get("hazard_version_key"),
+                "hazard_id": trigger_detail.get("hazard_id"),
+                "hazard_source_version": trigger_detail.get("hazard_source_version"),
+                "correlation_id": trigger_detail.get("correlation_id"),
+            },
             "taf": taf_record,
         }
-
         kinesis_records.append(
             {
                 "PartitionKey": derive_partition_key(
@@ -226,7 +307,6 @@ def publish_raw_records(
             StreamName=stream_name,
             Records=batch,
         )
-
         batch_failed_count = int(
             response.get("FailedRecordCount", 0)
         )
@@ -249,7 +329,9 @@ def lambda_handler(event, context):
     raw_archive_success = 0
 
     try:
-        records = fetch_taf_records()
+        trigger_detail = extract_detail(event)
+        station_ids = get_station_ids(event)
+        records = fetch_taf_records(station_ids)
         record_count = len(records)
 
         raw_s3_key = archive_raw_response(
@@ -268,6 +350,7 @@ def lambda_handler(event, context):
             raw_s3_bucket=archive_bucket_name,
             raw_s3_key=raw_s3_key,
             records=records,
+            trigger_detail=trigger_detail,
         )
 
         if failed_count > 0:
@@ -291,6 +374,8 @@ def lambda_handler(event, context):
             properties={
                 "PollId": poll_id,
                 "RawS3Key": raw_s3_key,
+                "HazardVersionKey": trigger_detail.get("hazard_version_key", ""),
+                "RequestedStationCount": len(station_ids),
             },
         )
 
@@ -304,6 +389,9 @@ def lambda_handler(event, context):
                     "record_count": record_count,
                     "published_count": published_count,
                     "failed_kinesis_records": failed_count,
+                    "hazard_version_key": trigger_detail.get("hazard_version_key"),
+                    "requested_station_count": len(station_ids),
+                    "requested_station_ids": station_ids,
                 }
             )
         )
@@ -316,6 +404,9 @@ def lambda_handler(event, context):
             "record_count": record_count,
             "published_count": published_count,
             "failed_kinesis_records": failed_count,
+            "hazard_version_key": trigger_detail.get("hazard_version_key"),
+            "requested_station_count": len(station_ids),
+            "requested_station_ids": station_ids,
         }
 
     except Exception as exc:
