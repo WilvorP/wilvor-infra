@@ -243,6 +243,40 @@ resource "aws_cloudwatch_metric_alarm" "taf_latest_read_throttles" {
   }
 }
 
+resource "aws_cloudwatch_metric_alarm" "taf_forecast_periods_write_throttles" {
+  alarm_name          = "${local.taf_monitoring_prefix}-taf-forecast-periods-write-throttles"
+  alarm_description   = "TafForecastPeriods had DynamoDB write throttle events."
+  namespace           = "AWS/DynamoDB"
+  metric_name         = "WriteThrottleEvents"
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 0
+  evaluation_periods  = 1
+  period              = 60
+  statistic           = "Sum"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    TableName = aws_dynamodb_table.taf_forecast_periods.name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "taf_forecast_periods_read_throttles" {
+  alarm_name          = "${local.taf_monitoring_prefix}-taf-forecast-periods-read-throttles"
+  alarm_description   = "TafForecastPeriods had DynamoDB read throttle events."
+  namespace           = "AWS/DynamoDB"
+  metric_name         = "ReadThrottleEvents"
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 0
+  evaluation_periods  = 1
+  period              = 60
+  statistic           = "Sum"
+  treat_missing_data  = "notBreaching"
+
+  dimensions = {
+    TableName = aws_dynamodb_table.taf_forecast_periods.name
+  }
+}
+
 # ============================================================
 # CLOUDWATCH DASHBOARD
 # ============================================================
@@ -369,7 +403,6 @@ resource "aws_cloudwatch_dashboard" "taf_pipeline" {
         y      = 14
         width  = 24
         height = 6
-
         properties = {
           title   = "TafLatest DynamoDB"
           region  = var.aws_region
@@ -377,12 +410,32 @@ resource "aws_cloudwatch_dashboard" "taf_pipeline" {
           period  = 60
           view    = "timeSeries"
           stacked = false
-
           metrics = [
             ["AWS/DynamoDB", "ConsumedWriteCapacityUnits", "TableName", aws_dynamodb_table.taf_latest.name],
             ["AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", aws_dynamodb_table.taf_latest.name],
             ["AWS/DynamoDB", "WriteThrottleEvents", "TableName", aws_dynamodb_table.taf_latest.name],
             ["AWS/DynamoDB", "ReadThrottleEvents", "TableName", aws_dynamodb_table.taf_latest.name]
+          ]
+        }
+      },
+      {
+        type   = "metric"
+        x      = 0
+        y      = 20
+        width  = 24
+        height = 6
+        properties = {
+          title   = "TafForecastPeriods DynamoDB"
+          region  = var.aws_region
+          stat    = "Sum"
+          period  = 60
+          view    = "timeSeries"
+          stacked = false
+          metrics = [
+            ["AWS/DynamoDB", "ConsumedWriteCapacityUnits", "TableName", aws_dynamodb_table.taf_forecast_periods.name],
+            ["AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", aws_dynamodb_table.taf_forecast_periods.name],
+            ["AWS/DynamoDB", "WriteThrottleEvents", "TableName", aws_dynamodb_table.taf_forecast_periods.name],
+            ["AWS/DynamoDB", "ReadThrottleEvents", "TableName", aws_dynamodb_table.taf_forecast_periods.name]
           ]
         }
       }

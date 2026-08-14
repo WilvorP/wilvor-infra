@@ -50,7 +50,6 @@ data "aws_iam_policy_document" "taf_processor_policy" {
   statement {
     sid    = "ReadWriteTafLatest"
     effect = "Allow"
-
     actions = [
       "dynamodb:GetItem",
       "dynamodb:PutItem",
@@ -61,7 +60,22 @@ data "aws_iam_policy_document" "taf_processor_policy" {
   }
 
   statement {
-    sid     = "PublishWeatherChangedEvents"
+    sid    = "WriteTafForecastPeriods"
+    effect = "Allow"
+    actions = [
+      "dynamodb:BatchWriteItem",
+      "dynamodb:PutItem",
+      "dynamodb:Query",
+    ]
+
+    resources = [
+      aws_dynamodb_table.taf_forecast_periods.arn,
+      "${aws_dynamodb_table.taf_forecast_periods.arn}/index/*",
+    ]
+  }
+
+  statement {
+    sid     = "PublishTafMaterializedEvents"
     effect  = "Allow"
     actions = ["events:PutEvents"]
 
@@ -109,12 +123,13 @@ resource "aws_lambda_function" "taf_processor" {
 
   environment {
     variables = {
-      ENVIRONMENT             = replace(var.name_prefix, "wilvor-", "")
-      TAF_LATEST_TABLE_NAME   = aws_dynamodb_table.taf_latest.name
-      SCHEMA_VERSION          = "internal.taf.v1"
-      EVENT_BUS_NAME          = var.event_bus_name
-      BAD_RECORDS_BUCKET_NAME = aws_s3_bucket.taf_archive.bucket
-      BAD_RECORDS_PREFIX      = "bad-records/source=taf_processor"
+      ENVIRONMENT                     = replace(var.name_prefix, "wilvor-", "")
+      TAF_LATEST_TABLE_NAME           = aws_dynamodb_table.taf_latest.name
+      TAF_FORECAST_PERIODS_TABLE_NAME = aws_dynamodb_table.taf_forecast_periods.name
+      SCHEMA_VERSION                  = "internal.taf.v1"
+      EVENT_BUS_NAME                  = var.event_bus_name
+      BAD_RECORDS_BUCKET_NAME         = aws_s3_bucket.taf_archive.bucket
+      BAD_RECORDS_PREFIX              = "bad-records/source=taf_processor"
     }
   }
 

@@ -113,6 +113,11 @@ BAD_RECORDS_PREFIX = os.environ.get(
     "bad-records/source=sigmet_processor",
 )
 
+EVENT_BUS_NAME = os.environ.get(
+    "EVENT_BUS_NAME",
+    "default",
+)
+
 
 # ---------------------------------------------------------------------------
 # AWS clients/resources
@@ -120,6 +125,7 @@ BAD_RECORDS_PREFIX = os.environ.get(
 
 dynamodb = boto3.resource("dynamodb")
 s3 = boto3.client("s3")
+events_client = boto3.client("events")
 
 
 active_hazards_table = dynamodb.Table(
@@ -643,6 +649,9 @@ def build_source_version(
     )
 
     content_fingerprint = {
+        "materialization_contract": (
+            "hazard_coordinates_metadata_v2"
+        ),
         "rawAirSigmet": properties.get(
             "rawAirSigmet"
         ),
@@ -696,10 +705,21 @@ def build_source_version(
                 )
             )
         ),
-        "creationTime": (
+        "sourceEventTime": (
             canonical_time_or_string(
-                properties.get(
-                    "creationTime"
+                get_first_property(
+                    properties,
+                    [
+                        "creationTime",
+                        "createdTime",
+                        "createTime",
+                        "issueTime",
+                        "issuedTime",
+                        "issued_at",
+                        "issuedAt",
+                        "issuanceTime",
+                        "validTimeFrom",
+                    ],
                 )
             )
         ),
@@ -748,19 +768,49 @@ def get_valid_to(
 
 def get_issued_at(
     properties: dict[str, Any],
+    raw_event: dict[str, Any] | None = None,
 ) -> datetime | None:
-    return parse_time(
+    """
+    Source issuance/creation timestamp.
+
+    NOAA Aviation Weather AirSIGMET GeoJSON does not always
+    provide a separate creationTime / issueTime field. In that
+    case, use validTimeFrom as the best source-event timestamp,
+    then fall back to the ingestion envelope received_at.
+
+    Validity itself is still handled separately by get_valid_from()
+    and get_valid_to().
+    """
+
+    issued_at = parse_time(
         get_first_property(
             properties,
             [
                 "creationTime",
+                "createdTime",
+                "createTime",
                 "issueTime",
+                "issuedTime",
                 "issued_at",
                 "issuedAt",
                 "issuanceTime",
+                "validTimeFrom",
+                "valid_from",
+                "validFrom",
+                "valid_from_time",
             ],
         )
     )
+
+    if issued_at is not None:
+        return issued_at
+
+    if raw_event is not None:
+        return parse_time(
+            raw_event.get("received_at")
+        )
+
+    return None
 
 
 def normalize_hazard_type(
@@ -1935,7 +1985,8 @@ def build_active_hazard_item(
         )
 
     created_at = get_issued_at(
-        properties
+        properties,
+        raw_event,
     )
 
     valid_from = get_valid_from(
@@ -2445,50 +2496,101 @@ def build_coordinate_items(
             sequence_number=sequence_number,
         )
 
-        items.append(
-            {
-                "hazard_version_key": hazard_version_key,
-                "coordinate_key": coordinate_key,
+        item: dict[str, Any] = {
+            "hazard_version_key": hazard_version_key,
+            "coordinate_key": coordinate_key,
 
-                "hazard_id": hazard_id,
-                "source_version": source_version,
+            "hazard_id": hazard_id,
+            "source_version": source_version,
 
-                "geometry_type": point[
-                    "geometry_type"
-                ],
-                "polygon_index": polygon_index,
-                "ring_index": ring_index,
-                "sequence_number": sequence_number,
+            "source_system": active_hazard.get(
+                "source_system",
+                SOURCE_SYSTEM
+            ),
 
-                "latitude": Decimal(
-                    str(point["latitude"])
-                ),
-                "longitude": Decimal(
-                    str(point["longitude"])
-                ),
+            "product_type": active_hazard.get(
+                "product_type",
+                "SIGMET",
+            ),
+            "hazard_type": active_hazard[
+                "hazard_type"
+            ],
+            "status": active_hazard.get(
+                "status",
+                "ACTIVE",
+            ),
+            "materialization_status": active_hazard.get(
+                "materialization_status",
+                "BUILDING",
+            ),
 
-                "materialization_id": active_hazard[
-                    "materialization_id"
-                ],
-                "geometry_hash": active_hazard[
-                    "geometry_hash"
-                ],
+            "valid_from_utc": active_hazard[
+                "valid_from_utc"
+            ],
+            "valid_to_utc": active_hazard[
+                "valid_to_utc"
+            ],
 
-                "created_at_utc": materialized_at_utc,
+            "geometry_type": point[
+                "geometry_type"
+            ],
+            "polygon_index": polygon_index,
+            "ring_index": ring_index,
+            "sequence_number": sequence_number,
 
-                "correlation_id": active_hazard[
-                    "correlation_id"
-                ],
+            "latitude": Decimal(
+                str(point["latitude"])
+            ),
+            "longitude": Decimal(
+                str(point["longitude"])
+            ),
 
-                "schema_version": (
-                    HAZARD_COORDINATES_SCHEMA_VERSION
-                ),
+            "materialization_id": active_hazard[
+                "materialization_id"
+            ],
+            "geometry_hash": active_hazard[
+                "geometry_hash"
+            ],
 
-                "expires_at_epoch": active_hazard[
-                    "expires_at_epoch"
-                ],
-            }
-        )
+            "created_at_utc": materialized_at_utc,
+
+            "correlation_id": active_hazard[
+                "correlation_id"
+            ],
+
+            "schema_version": (
+                HAZARD_COORDINATES_SCHEMA_VERSION
+            ),
+
+            "expires_at_epoch": active_hazard[
+                "expires_at_epoch"
+            ],
+        }
+
+        optional_fields = [
+            "source_event_time_utc",
+            "processed_at_utc",
+            "raw_s3_uri",
+            "valid_from_epoch",
+            "valid_to_epoch",
+            "source_icao_id",
+            "series_id",
+            "alpha_char",
+            "amendment_type",
+            "severity",
+            "minimum_lower_altitude_ft",
+            "maximum_upper_altitude_ft",
+            "movement_direction_deg",
+            "movement_speed_kt",
+        ]
+
+        for field_name in optional_fields:
+            if field_name in active_hazard:
+                item[field_name] = active_hazard[
+                    field_name
+                ]
+
+        items.append(item)
 
     if not items:
         raise PermanentRecordError(
@@ -2496,7 +2598,6 @@ def build_coordinate_items(
         )
 
     return items
-
 
 def build_hazard_cell_items(
     active_hazard: dict[str, Any],
@@ -2850,6 +2951,155 @@ def materialize_dependent_rows(
         ),
     }
 
+# ---------------------------------------------------------------------------
+# EventBridge publication
+# ---------------------------------------------------------------------------
+
+def publish_hazard_coordinates_materialized(
+    *,
+    active_hazard: dict[str, Any],
+    dependent_counts: dict[str, int],
+) -> int:
+    hazard_id = active_hazard[
+        "hazard_id"
+    ]
+
+    source_version = active_hazard[
+        "source_version"
+    ]
+
+    hazard_version_key = build_hazard_version_key(
+        hazard_id,
+        source_version,
+    )
+
+    detail = {
+        "detail-type": (
+            "HazardCoordinates.materialized"
+        ),
+        "event_type": (
+            "HazardCoordinates.materialized"
+        ),
+        "hazard_version_key": (
+            hazard_version_key
+        ),
+        "hazard_id": (
+            hazard_id
+        ),
+        "source_version": (
+            source_version
+        ),
+        "hazard_source_version": (
+            source_version
+        ),
+        "materialization_id": (
+            active_hazard[
+                "materialization_id"
+            ]
+        ),
+        "correlation_id": (
+            active_hazard[
+                "correlation_id"
+            ]
+        ),
+        "source_system": (
+            active_hazard.get(
+                "source_system",
+                SOURCE_SYSTEM,
+            )
+        ),
+        "product_type": (
+            active_hazard.get(
+                "product_type",
+                "SIGMET",
+            )
+        ),
+        "hazard_type": (
+            active_hazard.get(
+                "hazard_type"
+            )
+        ),
+        "severity": (
+            active_hazard.get(
+                "severity"
+            )
+        ),
+        "valid_from_utc": (
+            active_hazard.get(
+                "valid_from_utc"
+            )
+        ),
+        "valid_to_utc": (
+            active_hazard.get(
+                "valid_to_utc"
+            )
+        ),
+        "hazard_coordinates_written": (
+            dependent_counts.get(
+                "hazard_coordinates_written",
+                0,
+            )
+        ),
+        "hazard_cells_written": (
+            dependent_counts.get(
+                "hazard_cells_written",
+                0,
+            )
+        ),
+        "impact_cells_written": (
+            dependent_counts.get(
+                "impact_cells_written",
+                0,
+            )
+        ),
+        "published_at_utc": (
+            now_utc_iso()
+        ),
+    }
+
+    response = events_client.put_events(
+        Entries=[
+            {
+                "Source": (
+                    "wilvor.weather"
+                ),
+                "DetailType": (
+                    "HazardCoordinates.materialized"
+                ),
+                "Detail": json.dumps(
+                    detail,
+                    default=json_default,
+                    separators=(",", ":"),
+                ),
+                "EventBusName": (
+                    EVENT_BUS_NAME
+                ),
+            }
+        ]
+    )
+
+    failed_count = int(
+        response.get(
+            "FailedEntryCount",
+            0,
+        )
+        or 0
+    )
+
+    if failed_count:
+        raise RuntimeError(
+            "Failed to publish "
+            "HazardCoordinates.materialized "
+            f"event: {response}"
+        )
+
+    return len(
+        response.get(
+            "Entries",
+            [],
+        )
+    )
+
 
 # ---------------------------------------------------------------------------
 # Record processor
@@ -2968,11 +3218,13 @@ def process_decoded_record(
             dependent_counts
         )
 
-        # Parent intentionally written last.
-        #
-        # It remains BUILDING until the three
-        # child tables have been individually
-        # migrated to the complete v4 contract.
+        result[
+            "eventbridge_events_published"
+        ] = publish_hazard_coordinates_materialized(
+            active_hazard=item,
+            dependent_counts=dependent_counts,
+        )
+
         active_hazards_table.put_item(
             Item=item
         )

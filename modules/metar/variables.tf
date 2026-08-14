@@ -64,3 +64,43 @@ variable "metar_processor_zip_path" {
   description = "Path to the packaged METAR processor Lambda ZIP file."
   type        = string
 }
+
+variable "hazard_station_candidates_table_name" {
+  description = "HazardStationCandidates table name used to scope METAR requests"
+  type        = string
+}
+
+variable "hazard_station_candidates_table_arn" {
+  description = "HazardStationCandidates table ARN used by the METAR poller"
+  type        = string
+}
+
+variable "event_bus_name" {
+  description = "EventBridge bus used for Wilvor domain events"
+  type        = string
+  default     = "default"
+}
+
+variable "metar_station_chunk_size" {
+  description = "Maximum station IDs per Aviation Weather METAR request"
+  type        = number
+  default     = 100
+}
+
+variable "metar_fresh_seconds" {
+  description = "Maximum observation age classified as FRESH"
+  type        = number
+  default     = 600
+}
+
+variable "metar_acceptable_seconds" {
+  description = "Maximum observation age classified as ACCEPTABLE"
+  type        = number
+  default     = 1800
+}
+
+variable "metar_ttl_seconds" {
+  description = "Operational cleanup TTL from materialization time; freshness is checked separately"
+  type        = number
+  default     = 86400
+}

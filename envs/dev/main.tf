@@ -103,9 +103,37 @@ module "metar" {
     "${path.root}/../../functions/weather/metar/processor/dist/metar_processor.zip"
   )
 
-  enable_metar_poller_schedule     = false
-  metar_poller_schedule_expression = "rate(3 minutes)"
-  metar_api_url                    = "https://aviationweather.gov/api/data/metar?ids=KSFO,KOAK,KSJC&format=geojson"
+  hazard_station_candidates_table_name = (
+    module.sigmet.hazard_station_candidates_table_name
+  )
+
+  hazard_station_candidates_table_arn = (
+    module.sigmet.hazard_station_candidates_table_arn
+  )
+
+  event_bus_name = local.default_event_bus_name
+
+  # Keep disabled for the first deployment.
+  # We will first prove the event-driven HSC path works.
+  enable_metar_poller_schedule = false
+
+  metar_poller_schedule_expression = (
+    "rate(3 minutes)"
+  )
+
+  # Base endpoint only.
+  # station IDs are added dynamically by the Lambda.
+  metar_api_url = (
+    "https://aviationweather.gov/api/data/metar?format=geojson"
+  )
+
+  metar_station_chunk_size = 100
+
+  metar_fresh_seconds = 600
+
+  metar_acceptable_seconds = 1800
+
+  metar_ttl_seconds = 86400
 
   tags = local.common_tags
 }
@@ -113,9 +141,11 @@ module "metar" {
 module "taf" {
   source = "../../modules/taf"
 
-  name_prefix = local.name_prefix
-  aws_region  = var.aws_region
-  account_id  = data.aws_caller_identity.current.account_id
+  name_prefix                          = local.name_prefix
+  aws_region                           = var.aws_region
+  account_id                           = data.aws_caller_identity.current.account_id
+  hazard_station_candidates_table_name = module.sigmet.hazard_station_candidates_table_name
+  hazard_station_candidates_table_arn  = module.sigmet.hazard_station_candidates_table_arn
 
   taf_poller_zip_path = (
     "${path.root}/../../functions/weather/taf/poller/dist/taf_poller.zip"
@@ -130,7 +160,7 @@ module "taf" {
   taf_poller_schedule_expression = "rate(10 minutes)"
 
   taf_api_url            = "https://aviationweather.gov/api/data/taf"
-  taf_station_ids        = "KSFO,KOAK,KSJC"
+  taf_station_ids        = ""
   taf_station_chunk_size = 100
 
   # The processor can publish Weather.changed to the existing AWS default bus.

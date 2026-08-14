@@ -759,6 +759,28 @@ def test_process_decoded_record_new_hazard(
         fake_materialize,
     )
 
+    def fake_publish_hazard_coordinates_materialized(
+        *,
+        active_hazard,
+        dependent_counts,
+    ):
+        order.append("event")
+        assert active_hazard["hazard_id"] == "hazard-1"
+        assert active_hazard["source_version"] == "v1"
+        assert dependent_counts == {
+            "hazard_coordinates_written": 1,
+            "hazard_cells_written": 2,
+            "impact_cells_written": 3,
+        }
+        return 1
+
+
+    monkeypatch.setattr(
+        sigmet_processor,
+        "publish_hazard_coordinates_materialized",
+        fake_publish_hazard_coordinates_materialized,
+    )
+
     result = (
         sigmet_processor.process_decoded_record(
             sigmet_raw_event
@@ -770,7 +792,7 @@ def test_process_decoded_record_new_hazard(
         "hazard_coordinates_written": 1,
         "hazard_cells_written": 2,
         "impact_cells_written": 3,
-        "eventbridge_events_published": 0,
+        "eventbridge_events_published": 1,
         "new_records": 1,
         "updated_records": 0,
         "unchanged_records": 0,
@@ -779,6 +801,7 @@ def test_process_decoded_record_new_hazard(
 
     assert order == [
         "children",
+        "event",
         "parent",
     ]
 

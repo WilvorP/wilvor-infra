@@ -286,7 +286,8 @@ def test_normalize_taf_builds_latest_state(
     assert item["schema_version"] == "internal.taf.v1"
     assert item["raw_s3_uri"].startswith("s3://test-weather-archive/")
     assert len(item["source_version"]) == 32
-    assert item["expires_at"] == int(
+    assert "expires_at" not in item
+    assert item["expires_at_epoch"] == int(
         datetime(2026, 7, 20, 6, 0, tzinfo=timezone.utc).timestamp()
     )
 
@@ -428,7 +429,7 @@ def test_put_latest_returns_false_on_condition_failure(
     ) is False
 
 
-def test_publish_weather_changed(
+def test_publish_taf_materialized(
     taf_processor,
     monkeypatch,
 ):
@@ -454,13 +455,25 @@ def test_publish_weather_changed(
         "has_undecoded_content": False,
     }
 
-    taf_processor.publish_weather_changed(item, "NEW")
+    item.update(
+        {
+            "taf_version": "v1",
+            "taf_version_key": "KJFK#v1",
+            "period_materialization_status": "READY",
+            "forecast_period_count": 2,
+            "freshness_status": "FRESH",
+            "source_system": "NOAA_AVIATIONWEATHER_TAF",
+            "correlation_id": "corr-1",
+        }
+    )
+    taf_processor.publish_taf_materialized(item, "NEW")
 
     entry = captured["Entries"][0]
     detail = json.loads(entry["Detail"])
 
     assert entry["EventBusName"] == "test-weather-events"
-    assert entry["DetailType"] == "Weather.changed"
+    assert entry["DetailType"] == "taf.materialized"
+    assert detail["event_type"] == "taf.materialized"
     assert detail["product_type"] == "TAF"
     assert detail["station_id"] == "KJFK"
     assert detail["change_type"] == "NEW"
@@ -483,12 +496,19 @@ def test_publish_weather_changed_raises_on_failed_entry(
         taf_processor.publish_weather_changed(
             {
                 "station_id": "KJFK",
+                "airport_id": "KJFK",
                 "issued_at_utc": "issued",
                 "valid_from_utc": "from",
                 "valid_to_utc": "to",
                 "source": "NOAA",
+                "source_system": "NOAA_AVIATIONWEATHER_TAF",
                 "schema_version": "v1",
                 "source_version": "source-v1",
+                "taf_version": "source-v1",
+                "taf_version_key": "KJFK#source-v1",
+                "period_materialization_status": "READY",
+                "forecast_period_count": 1,
+                "freshness_status": "FRESH",
                 "updated_at_utc": "updated",
                 "period_count": 1,
                 "has_undecoded_content": False,
@@ -558,12 +578,12 @@ def test_process_record_new_writes_and_publishes(
     )
     monkeypatch.setattr(
         taf_processor,
-        "put_latest",
-        lambda item: True,
+        "materialize_taf_version",
+        lambda item, change_type: True,
     )
     monkeypatch.setattr(
         taf_processor,
-        "publish_weather_changed",
+        "publish_taf_materialized",
         lambda item, change_type: calls.append(("publish", change_type)),
     )
     monkeypatch.setattr(

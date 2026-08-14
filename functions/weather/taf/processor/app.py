@@ -23,6 +23,7 @@ events = boto3.client("events")
 s3 = boto3.client("s3")
 
 TAF_LATEST_TABLE_NAME = os.environ["TAF_LATEST_TABLE_NAME"]
+TAF_FORECAST_PERIODS_TABLE_NAME = os.environ["TAF_FORECAST_PERIODS_TABLE_NAME"]
 EVENT_BUS_NAME = os.environ.get("EVENT_BUS_NAME", "default")
 BAD_RECORDS_BUCKET_NAME = os.environ["BAD_RECORDS_BUCKET_NAME"]
 BAD_RECORDS_PREFIX = os.environ.get(
@@ -32,6 +33,7 @@ BAD_RECORDS_PREFIX = os.environ.get(
 SCHEMA_VERSION = os.environ.get("SCHEMA_VERSION", "internal.taf.v1")
 
 taf_latest_table = dynamodb.Table(TAF_LATEST_TABLE_NAME)
+taf_forecast_periods_table = dynamodb.Table(TAF_FORECAST_PERIODS_TABLE_NAME)
 
 
 class PermanentRecordError(Exception):
@@ -205,6 +207,71 @@ def normalize_clouds(value: Any) -> tuple[list[dict[str, Any]], int | float | No
 
     return clouds, ceiling_ft
 
+def classify_forecast_flight_category(
+    *,
+    visibility_sm: int | float | None,
+    ceiling_ft: int | float | None,
+) -> str | None:
+    if visibility_sm is None and ceiling_ft is None:
+        return None
+
+    if (
+        visibility_sm is not None
+        and visibility_sm < 1
+    ) or (
+        ceiling_ft is not None
+        and ceiling_ft < 500
+    ):
+        return "LIFR"
+
+    if (
+        visibility_sm is not None
+        and visibility_sm < 3
+    ) or (
+        ceiling_ft is not None
+        and ceiling_ft < 1000
+    ):
+        return "IFR"
+
+    if (
+        visibility_sm is not None
+        and visibility_sm <= 5
+    ) or (
+        ceiling_ft is not None
+        and ceiling_ft <= 3000
+    ):
+        return "MVFR"
+
+    return "VFR"
+
+
+def classify_freshness(
+    *,
+    now: datetime,
+    issued_at: datetime,
+    valid_to: datetime,
+) -> str:
+    if now > valid_to:
+        return "STALE"
+
+    issue_age_seconds = (now - issued_at).total_seconds()
+    if issue_age_seconds <= 6 * 3600:
+        return "FRESH"
+
+    if issue_age_seconds <= 24 * 3600:
+        return "ACCEPTABLE"
+
+    return "STALE"
+
+
+def detect_taf_amendment(raw_text: str) -> bool:
+    tokens = raw_text.upper().split()
+    return "AMD" in tokens or "TAFAMD" in tokens
+
+
+def detect_taf_correction(raw_text: str) -> bool:
+    tokens = raw_text.upper().split()
+    return "COR" in tokens or "CORRECTED" in tokens
 
 def decode_kinesis_record(record: dict[str, Any]) -> dict[str, Any]:
     try:
@@ -267,12 +334,17 @@ def normalize_period(forecast: dict[str, Any], sequence_number: int) -> dict[str
             transition_complete.isoformat() if transition_complete else None
         ),
         "change_type": change_type,
+        "probability": probability,
         "probability_pct": probability,
         "wind_direction_deg": wind_direction_deg,
         "wind_direction_variable": wind_direction_variable,
         "wind_speed_kt": normalize_number(forecast.get("wspd")),
         "wind_gust_kt": normalize_number(forecast.get("wgst")),
         **visibility,
+        "forecast_flight_category": classify_forecast_flight_category(
+            visibility_sm=visibility["visibility_sm"],
+            ceiling_ft=ceiling_ft,
+        ),
         "weather_string": weather_string,
         "weather_codes": weather_codes,
         "clouds": clouds,
@@ -311,7 +383,6 @@ def normalize_taf(raw_event: dict[str, Any], taf: dict[str, Any]) -> dict[str, A
     issued_at = require_time(taf.get("issueTime"), "issueTime")
     valid_from = require_time(taf.get("validTimeFrom"), "validTimeFrom")
     valid_to = require_time(taf.get("validTimeTo"), "validTimeTo")
-
     if valid_from >= valid_to:
         raise PermanentRecordError("TAF validTimeFrom must be before validTimeTo")
 
@@ -338,7 +409,10 @@ def normalize_taf(raw_event: dict[str, Any], taf: dict[str, Any]) -> dict[str, A
         "periods": periods,
         "remarks": clean_string(taf.get("remarks")),
     }
-    source_version = stable_hash(content_for_hash)[:32]
+
+    taf_version = stable_hash(content_for_hash)[:32]
+    taf_version_key = f"{station_id}#{taf_version}"
+    materialization_id = str(uuid.uuid4())
 
     raw_bucket = clean_string(raw_event.get("raw_s3_bucket"))
     raw_key = clean_string(raw_event.get("raw_s3_key"))
@@ -346,10 +420,20 @@ def normalize_taf(raw_event: dict[str, Any], taf: dict[str, Any]) -> dict[str, A
 
     bulletin_time = parse_time(taf.get("bulletinTime"))
     received_at = parse_time(raw_event.get("received_at")) or now_utc()
+    processed_at = now_utc()
+
+    trigger = raw_event.get("trigger")
+    trigger = trigger if isinstance(trigger, dict) else {}
+
+    airport_id = clean_string(taf.get("airport_id")) or clean_string(trigger.get("airport_id"))
 
     return {
         "station_id": station_id,
+        "airport_id": airport_id,
         "station_name": clean_string(taf.get("name")),
+        "taf_version": taf_version,
+        "taf_version_key": taf_version_key,
+        "source_version": taf_version,
         "issued_at_utc": issued_at.isoformat(),
         "issued_at_epoch": int(issued_at.timestamp()),
         "bulletin_time_utc": bulletin_time.isoformat() if bulletin_time else None,
@@ -358,23 +442,42 @@ def normalize_taf(raw_event: dict[str, Any], taf: dict[str, Any]) -> dict[str, A
         "valid_to_utc": valid_to.isoformat(),
         "valid_to_epoch": int(valid_to.timestamp()),
         "most_recent": normalize_bool(taf.get("mostRecent")),
+        "is_amendment": detect_taf_amendment(raw_text),
+        "is_correction": detect_taf_correction(raw_text),
         "remarks": clean_string(taf.get("remarks")),
         "latitude": normalize_number(taf.get("lat")),
         "longitude": normalize_number(taf.get("lon")),
         "elevation_m": normalize_number(taf.get("elev")),
         "raw_text": raw_text,
         "forecast_periods": periods,
+        "forecast_period_count": len(periods),
         "period_count": len(periods),
+        "period_materialization_status": "BUILDING",
+        "materialization_id": materialization_id,
         "has_undecoded_content": any(period.get("not_decoded") for period in periods),
+        "freshness_status": classify_freshness(
+            now=processed_at,
+            issued_at=issued_at,
+            valid_to=valid_to,
+        ),
         "source": "NOAA_AVIATION_WEATHER",
-        "source_system": "NOAA_AviationWeather_TAF",
-        "source_version": source_version,
+        "source_system": "NOAA_AVIATIONWEATHER_TAF",
+        "source_event_time_utc": issued_at.isoformat(),
         "schema_version": SCHEMA_VERSION,
         "raw_s3_uri": raw_s3_uri,
         "poll_id": clean_string(raw_event.get("poll_id")),
         "received_at_utc": received_at.isoformat(),
-        "updated_at_utc": now_utc().isoformat(),
-        "expires_at": int((valid_to + timedelta(hours=12)).timestamp()),
+        "processed_at_utc": processed_at.isoformat(),
+        "updated_at_utc": processed_at.isoformat(),
+        "correlation_id": (
+            clean_string(trigger.get("correlation_id"))
+            or clean_string(raw_event.get("poll_id"))
+            or str(uuid.uuid4())
+        ),
+        "trigger_hazard_version_key": clean_string(trigger.get("hazard_version_key")),
+        "trigger_hazard_id": clean_string(trigger.get("hazard_id")),
+        "trigger_hazard_source_version": clean_string(trigger.get("hazard_source_version")),
+        "expires_at_epoch": int((valid_to + timedelta(hours=12)).timestamp()),
     }
 
 
@@ -410,11 +513,12 @@ def classify_change(existing: dict[str, Any] | None, incoming: dict[str, Any]) -
         return "CORRECTED"
     return "STALE"
 
-
 def put_latest(item: dict[str, Any]) -> bool:
+    parent = latest_item_for_write(item)
+
     try:
         taf_latest_table.put_item(
-            Item=to_dynamodb(item),
+            Item=to_dynamodb(parent),
             ConditionExpression=(
                 "attribute_not_exists(station_id) OR "
                 "attribute_not_exists(issued_at_epoch) OR "
@@ -432,24 +536,174 @@ def put_latest(item: dict[str, Any]) -> bool:
             return False
         raise
 
+def latest_item_for_write(item: dict[str, Any]) -> dict[str, Any]:
+    parent = dict(item)
+    parent.pop("forecast_periods", None)
+    return parent
 
-def publish_weather_changed(item: dict[str, Any], change_type: str) -> None:
+
+def build_period_key(period: dict[str, Any]) -> str:
+    change_type = clean_string(period.get("change_type")) or "BASE"
+    return (
+        f"{int(period['period_from_epoch']):010d}#"
+        f"{int(period['sequence_number']):04d}#"
+        f"{change_type}"
+    )
+
+
+def build_period_item(
+    *,
+    parent: dict[str, Any],
+    period: dict[str, Any],
+) -> dict[str, Any]:
+    period_key = build_period_key(period)
+    period_id = stable_hash(
+        {
+            "taf_version_key": parent["taf_version_key"],
+            "period_key": period_key,
+        }
+    )[:32]
+
+    return {
+        "taf_version_key": parent["taf_version_key"],
+        "period_key": period_key,
+        "period_id": period_id,
+        "station_id": parent["station_id"],
+        "airport_id": parent.get("airport_id"),
+        "taf_version": parent["taf_version"],
+        "issued_at_utc": parent["issued_at_utc"],
+        "period_from_epoch": period["period_from_epoch"],
+        "period_from_utc": period["period_from_utc"],
+        "period_to_epoch": period["period_to_epoch"],
+        "period_to_utc": period["period_to_utc"],
+        "change_type": period["change_type"],
+        "probability": period.get("probability"),
+        "wind_direction_deg": period.get("wind_direction_deg"),
+        "wind_direction_variable": period.get("wind_direction_variable"),
+        "wind_speed_kt": period.get("wind_speed_kt"),
+        "wind_gust_kt": period.get("wind_gust_kt"),
+        "visibility_sm": period.get("visibility_sm"),
+        "visibility_qualifier": period.get("visibility_qualifier"),
+        "ceiling_ft": period.get("ceiling_ft"),
+        "forecast_flight_category": period.get("forecast_flight_category"),
+        "weather_string": period.get("weather_string"),
+        "weather_codes": period.get("weather_codes", []),
+        "clouds": period.get("clouds", []),
+        "sequence_number": period["sequence_number"],
+        "transition_complete_utc": period.get("transition_complete_utc"),
+        "vertical_visibility_ft": period.get("vertical_visibility_ft"),
+        "altimeter_in_hg": period.get("altimeter_in_hg"),
+        "low_level_wind_shear": period.get("low_level_wind_shear"),
+        "icing_turbulence_layers": period.get("icing_turbulence_layers", []),
+        "temperature_forecasts": period.get("temperature_forecasts", []),
+        "not_decoded": period.get("not_decoded"),
+        "materialization_id": parent["materialization_id"],
+        "created_at_utc": parent["processed_at_utc"],
+        "correlation_id": parent["correlation_id"],
+        "schema_version": "internal.taf_forecast_period.v1",
+        "expires_at_epoch": parent["expires_at_epoch"],
+    }
+
+
+def write_forecast_periods(parent: dict[str, Any]) -> int:
+    periods = parent.get("forecast_periods")
+    if not isinstance(periods, list) or not periods:
+        raise PermanentRecordError("Normalized TAF does not contain forecast periods")
+
+    with taf_forecast_periods_table.batch_writer(
+        overwrite_by_pkeys=["taf_version_key", "period_key"]
+    ) as batch:
+        for period in periods:
+            batch.put_item(
+                Item=to_dynamodb(
+                    build_period_item(parent=parent, period=period)
+                )
+            )
+
+    return len(periods)
+
+
+def update_latest_ready(item: dict[str, Any]) -> None:
+    materialized_at = now_utc().isoformat()
+
+    taf_latest_table.update_item(
+        Key={"station_id": item["station_id"]},
+        UpdateExpression=(
+            "SET period_materialization_status = :ready, "
+            "materialized_at_utc = :materialized_at, "
+            "processed_at_utc = :processed_at"
+        ),
+        ConditionExpression=(
+            "taf_version = :taf_version AND "
+            "materialization_id = :materialization_id"
+        ),
+        ExpressionAttributeValues={
+            ":ready": "READY",
+            ":materialized_at": materialized_at,
+            ":processed_at": materialized_at,
+            ":taf_version": item["taf_version"],
+            ":materialization_id": item["materialization_id"],
+        },
+    )
+
+    item["period_materialization_status"] = "READY"
+    item["materialized_at_utc"] = materialized_at
+    item["processed_at_utc"] = materialized_at
+
+
+def materialize_taf_version(
+    *,
+    item: dict[str, Any],
+    change_type: str,
+) -> bool:
+    item["change_type"] = change_type
+    item["period_materialization_status"] = "BUILDING"
+
+    written = put_latest(item)
+    if not written:
+        current = get_existing(item["station_id"])
+        if current and current.get("source_version") == item["source_version"]:
+            return False
+        return False
+
+    period_count = write_forecast_periods(item)
+    if period_count != int(item["forecast_period_count"]):
+        raise RuntimeError(
+            "TafForecastPeriods write count does not match forecast_period_count"
+        )
+
+    update_latest_ready(item)
+    return True
+
+def publish_taf_materialized(item: dict[str, Any], change_type: str) -> None:
+    event_time = now_utc().isoformat()
     detail = {
-        "event_type": "weather.changed",
+        "event_id": str(uuid.uuid4()),
+        "event_type": "taf.materialized",
+        "event_time_utc": event_time,
         "product_type": "TAF",
         "station_id": item["station_id"],
+        "airport_id": item.get("airport_id"),
+        "entity_id": item["station_id"],
+        "entity_version": item["taf_version"],
+        "taf_version": item["taf_version"],
+        "taf_version_key": item["taf_version_key"],
+        "materialization_status": item["period_materialization_status"],
         "change_type": change_type,
-        "issued_at": item["issued_at_utc"],
-        "valid_from": item["valid_from_utc"],
-        "valid_to": item["valid_to_utc"],
-        "source": item["source"],
+        "reason": change_type,
+        "issued_at_utc": item["issued_at_utc"],
+        "valid_from_utc": item["valid_from_utc"],
+        "valid_to_utc": item["valid_to_utc"],
+        "forecast_period_count": item["forecast_period_count"],
+        "freshness_status": item["freshness_status"],
+        "source_system": item["source_system"],
+        "source_table": TAF_LATEST_TABLE_NAME,
+        "child_table": TAF_FORECAST_PERIODS_TABLE_NAME,
         "schema_version": item["schema_version"],
         "source_version": item["source_version"],
-        "updated_at": item["updated_at_utc"],
-        "period_count": item["period_count"],
-        "has_undecoded_content": item["has_undecoded_content"],
         "raw_s3_uri": item.get("raw_s3_uri"),
-        "correlation_id": item.get("poll_id"),
+        "correlation_id": item.get("correlation_id"),
+        "trigger_hazard_version_key": item.get("trigger_hazard_version_key"),
     }
 
     response = events.put_events(
@@ -457,7 +711,7 @@ def publish_weather_changed(item: dict[str, Any], change_type: str) -> None:
             {
                 "EventBusName": EVENT_BUS_NAME,
                 "Source": "wilvor.weather",
-                "DetailType": "Weather.changed",
+                "DetailType": "taf.materialized",
                 "Detail": json.dumps(detail, default=json_default),
             }
         ]
@@ -467,6 +721,11 @@ def publish_weather_changed(item: dict[str, Any], change_type: str) -> None:
         raise RuntimeError(f"EventBridge PutEvents failed: {response.get('Entries')}")
 
 
+# Keep the old function name as a compatibility wrapper for existing callers/tests.
+def publish_weather_changed(item: dict[str, Any], change_type: str) -> None:
+    publish_taf_materialized(item, change_type)
+
+
 def mark_event_published(station_id: str, source_version: str) -> None:
     taf_latest_table.update_item(
         Key={"station_id": station_id},
@@ -474,10 +733,14 @@ def mark_event_published(station_id: str, source_version: str) -> None:
             "SET last_published_source_version = :version, "
             "last_published_at = :published_at"
         ),
-        ConditionExpression="source_version = :version",
+        ConditionExpression=(
+            "source_version = :version AND "
+            "period_materialization_status = :ready"
+        ),
         ExpressionAttributeValues={
             ":version": source_version,
             ":published_at": now_utc().isoformat(),
+            ":ready": "READY",
         },
     )
 
@@ -505,24 +768,27 @@ def process_record(record: dict[str, Any]) -> str:
     change_type = classify_change(existing, item)
 
     if change_type == "UNCHANGED":
-        if existing:
+        if existing and existing.get("last_published_source_version") != item["source_version"]:
             publish_if_needed(existing)
         return "UNCHANGED"
 
     if change_type == "STALE":
         return "STALE"
 
-    item["change_type"] = change_type
-    written = put_latest(item)
+    materialized = materialize_taf_version(
+        item=item,
+        change_type=change_type,
+    )
 
-    if not written:
+    if not materialized:
         current = get_existing(item["station_id"])
         if current and current.get("source_version") == item["source_version"]:
-            publish_if_needed(current, change_type)
-            return "UNCHANGED"
+            if current.get("period_materialization_status") == "READY":
+                publish_if_needed(current, change_type)
+                return "UNCHANGED"
         return "STALE"
 
-    publish_weather_changed(item, change_type)
+    publish_taf_materialized(item, change_type)
     mark_event_published(item["station_id"], item["source_version"])
     return change_type
 
