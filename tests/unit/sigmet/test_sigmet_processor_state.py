@@ -516,77 +516,69 @@ def test_build_impact_cell_items(
             "2026-07-18T12:30:00+00:00",
         )
     )
-
+    
     assert len(items) == 2
-
-    assert items[0]["impact_cell"] == "cell-a"
+    
+    first = items[0]
+    
+    assert first["h3_cell"] == "cell-a"
+    
     assert (
-        items[0]["minimum_grid_distance"]
+        first["hazard_version_key"]
+        == "hazard-1#v1"
+    )
+    
+    assert (
+        first["hazard_id"]
+        == "hazard-1"
+    )
+    
+    assert (
+        first["hazard_source_version"]
+        == "v1"
+    )
+    
+    assert (
+        first["h3_resolution"]
+        == sigmet_processor.H3_RESOLUTION
+    )
+    
+    assert (
+        first["minimum_grid_distance"]
         == 0
     )
-
+    
     assert (
-        items[1]["minimum_grid_distance"]
-        == 1
+        first[
+            "maximum_expansion_grid_distance"
+        ]
+        == sigmet_processor.IMPACT_GRID_DISTANCE
     )
-
-    assert all(
-        item["hazard_version_key"]
-        == "hazard-1#v1"
-        for item in items
+    
+    assert (
+        first["impact_radius_nm"]
+        == sigmet_processor.IMPACT_RADIUS_NM
     )
-
-
-def test_batch_put_items(
-    sigmet_processor,
-):
-    written = []
-
-    class FakeBatch:
-        def __enter__(self):
-            return self
-
-        def __exit__(
-            self,
-            exc_type,
-            exc,
-            traceback,
-        ):
-            return False
-
-        def put_item(self, **kwargs):
-            written.append(
-                kwargs["Item"]
-            )
-
-    class FakeTable:
-        def batch_writer(self, **kwargs):
-            assert (
-                kwargs["overwrite_by_pkeys"]
-                == ["pk", "sk"]
-            )
-            return FakeBatch()
-
-    count = sigmet_processor.batch_put_items(
-        FakeTable(),
-        overwrite_by_pkeys=[
-            "pk",
-            "sk",
-        ],
-        items=[
-            {
-                "pk": "a",
-                "sk": "1",
-            },
-            {
-                "pk": "b",
-                "sk": "2",
-            },
-        ],
+    
+    assert (
+        first["impact_scope"]
+        == "PROJECTION_TRIGGER_AREA"
     )
-
-    assert count == 2
-    assert len(written) == 2
+    
+    assert (
+        first["expansion_config_version"]
+        == "wilvor.impact_expansion.v1"
+    )
+    
+    assert (
+        first["materialization_id"]
+        == "hazard-materialization-123"
+    )
+    
+    assert (
+        first["schema_version"]
+        == "wilvor.impact_cells.v4.0"
+    )
 
 
 def test_materialize_dependent_rows(
@@ -660,7 +652,7 @@ def test_materialize_dependent_rows(
     ]
 
     assert calls[2][1] == [
-        "impact_cell",
+        "h3_cell",
         "hazard_version_key",
     ]
 

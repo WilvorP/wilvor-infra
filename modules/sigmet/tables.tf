@@ -88,6 +88,16 @@ resource "aws_dynamodb_table" "hazard_cells" {
     type = "S"
   }
 
+  global_secondary_index {
+    name            = "hazard_version_key-h3_cell-index"
+    hash_key        = "hazard_version_key"
+    range_key       = "h3_cell"
+    projection_type = "ALL"
+
+    read_capacity  = 5
+    write_capacity = 25
+  }
+
   ttl {
     attribute_name = "expires_at_epoch"
     enabled        = true
@@ -111,17 +121,27 @@ resource "aws_dynamodb_table" "impact_cells" {
   read_capacity  = 5
   write_capacity = 50
 
-  hash_key  = "impact_cell"
+  hash_key  = "h3_cell"
   range_key = "hazard_version_key"
 
   attribute {
-    name = "impact_cell"
+    name = "h3_cell"
     type = "S"
   }
 
   attribute {
     name = "hazard_version_key"
     type = "S"
+  }
+
+  global_secondary_index {
+    name            = "hazard_version_key-h3_cell-index"
+    hash_key        = "hazard_version_key"
+    range_key       = "h3_cell"
+    projection_type = "ALL"
+
+    read_capacity  = 5
+    write_capacity = 50
   }
 
   ttl {

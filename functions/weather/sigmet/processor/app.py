@@ -72,6 +72,21 @@ HAZARD_COORDINATES_SCHEMA_VERSION = os.environ.get(
     "wilvor.hazard_coordinates.v4.0",
 )
 
+HAZARD_CELLS_SCHEMA_VERSION = os.environ.get(
+    "HAZARD_CELLS_SCHEMA_VERSION",
+    "wilvor.hazard_cells.v4.0",
+)
+
+IMPACT_CELLS_SCHEMA_VERSION = os.environ.get(
+    "IMPACT_CELLS_SCHEMA_VERSION",
+    "wilvor.impact_cells.v4.0",
+)
+
+IMPACT_EXPANSION_CONFIG_VERSION = os.environ.get(
+    "IMPACT_EXPANSION_CONFIG_VERSION",
+    "wilvor.impact_expansion.v1",
+)
+
 RETENTION_AFTER_VALID_TO_HOURS = int(
     os.environ.get(
         "RETENTION_AFTER_VALID_TO_HOURS",
@@ -2492,11 +2507,9 @@ def build_hazard_cell_items(
         "hazard_id"
     ]
 
-    source_version = (
-        active_hazard[
-            "source_version"
-        ]
-    )
+    source_version = active_hazard[
+        "source_version"
+    ]
 
     hazard_version_key = (
         build_hazard_version_key(
@@ -2505,86 +2518,100 @@ def build_hazard_cell_items(
         )
     )
 
-    return [
+    unique_cells = sorted(
         {
+            str(cell).strip()
+            for cell in h3_cells
+            if str(cell).strip()
+        }
+    )
+
+    if not unique_cells:
+        raise PermanentRecordError(
+            "Geometry produced zero HazardCells rows"
+        )
+
+    items: list[dict[str, Any]] = []
+
+    for h3_cell in unique_cells:
+        item = {
             "h3_cell": h3_cell,
+
             "hazard_version_key": (
                 hazard_version_key
             ),
-            "hazard_id": (
-                hazard_id
-            ),
+
+            "hazard_id": hazard_id,
+
             "hazard_source_version": (
                 source_version
             ),
+
             "h3_resolution": (
                 H3_RESOLUTION
             ),
-            "hazard_type": (
-                active_hazard[
-                    "hazard_type"
-                ]
-            ),
-            "severity": (
-                active_hazard.get(
-                    "severity"
-                )
-            ),
-            "valid_from_utc": (
-                active_hazard.get(
-                    "valid_from_utc"
-                )
-            ),
-            "valid_to_utc": (
-                active_hazard.get(
-                    "valid_to_utc"
-                )
-            ),
-            "materialization_id": (
-                active_hazard[
-                    "materialization_id"
-                ]
-            ),
-            "correlation_id": (
-                active_hazard[
-                    "correlation_id"
-                ]
-            ),
-            "schema_version": (
-                SCHEMA_VERSION
-            ),
+
+            "hazard_type": active_hazard[
+                "hazard_type"
+            ],
+
+            "valid_from_utc": active_hazard[
+                "valid_from_utc"
+            ],
+
+            "valid_to_utc": active_hazard[
+                "valid_to_utc"
+            ],
+
+            "geometry_hash": active_hazard[
+                "geometry_hash"
+            ],
+
+            "materialization_id": active_hazard[
+                "materialization_id"
+            ],
+
             "created_at_utc": (
                 materialized_at_utc
             ),
-            "expires_at_epoch": (
-                active_hazard[
-                    "expires_at_epoch"
-                ]
+
+            "correlation_id": active_hazard[
+                "correlation_id"
+            ],
+
+            "schema_version": (
+                HAZARD_CELLS_SCHEMA_VERSION
             ),
+
+            "expires_at_epoch": active_hazard[
+                "expires_at_epoch"
+            ],
         }
-        for h3_cell in sorted(
-            set(h3_cells)
+
+        severity = active_hazard.get(
+            "severity"
         )
-    ]
+
+        if severity is not None:
+            item["severity"] = severity
+
+        items.append(item)
+
+    return items
 
 
 def build_impact_cell_items(
     active_hazard: dict[str, Any],
-    impact_cells: dict[
-        str,
-        int,
-    ],
+    impact_cells: dict[str, int],
     materialized_at_utc: str,
 ) -> list[dict[str, Any]]:
     hazard_id = active_hazard[
         "hazard_id"
     ]
 
-    source_version = (
-        active_hazard[
-            "source_version"
-        ]
-    )
+    source_version = active_hazard[
+        "source_version"
+    ]
 
     hazard_version_key = (
         build_hazard_version_key(
@@ -2593,71 +2620,121 @@ def build_impact_cell_items(
         )
     )
 
-    return [
-        {
-            "impact_cell": (
-                impact_cell
+    if not impact_cells:
+        raise PermanentRecordError(
+            "Impact expansion produced zero "
+            "ImpactCells rows"
+        )
+
+    items: list[dict[str, Any]] = []
+
+    for (
+        h3_cell,
+        minimum_distance,
+    ) in sorted(
+        impact_cells.items()
+    ):
+        normalized_cell = str(
+            h3_cell
+        ).strip()
+
+        if not normalized_cell:
+            raise PermanentRecordError(
+                "ImpactCells contains an empty "
+                "H3 cell"
+            )
+
+        if minimum_distance < 0:
+            raise PermanentRecordError(
+                "ImpactCells minimum grid "
+                "distance cannot be negative"
+            )
+
+        item = {
+            "h3_cell": (
+                normalized_cell
             ),
+
             "hazard_version_key": (
                 hazard_version_key
             ),
+
             "hazard_id": (
                 hazard_id
             ),
+
             "hazard_source_version": (
                 source_version
             ),
+
             "h3_resolution": (
                 H3_RESOLUTION
             ),
+
             "minimum_grid_distance": (
                 minimum_distance
             ),
+
+            "maximum_expansion_grid_distance": (
+                IMPACT_GRID_DISTANCE
+            ),
+
             "impact_radius_nm": (
                 IMPACT_RADIUS_NM
             ),
+
             "impact_scope": (
                 "PROJECTION_TRIGGER_AREA"
             ),
+
+            "expansion_config_version": (
+                IMPACT_EXPANSION_CONFIG_VERSION
+            ),
+
             "valid_from_utc": (
-                active_hazard.get(
+                active_hazard[
                     "valid_from_utc"
-                )
+                ]
             ),
+
             "valid_to_utc": (
-                active_hazard.get(
+                active_hazard[
                     "valid_to_utc"
-                )
+                ]
             ),
+
             "materialization_id": (
                 active_hazard[
                     "materialization_id"
                 ]
             ),
+
+            "created_at_utc": (
+                materialized_at_utc
+            ),
+
             "correlation_id": (
                 active_hazard[
                     "correlation_id"
                 ]
             ),
-            "created_at_utc": (
-                materialized_at_utc
-            ),
+
             "schema_version": (
-                SCHEMA_VERSION
+                IMPACT_CELLS_SCHEMA_VERSION
             ),
+
             "expires_at_epoch": (
                 active_hazard[
                     "expires_at_epoch"
                 ]
             ),
         }
-        for (
-            impact_cell,
-            minimum_distance,
-        ) in sorted(
-            impact_cells.items()
+
+        items.append(
+            item
         )
-    ]
+
+    return items
 
 
 # ---------------------------------------------------------------------------
@@ -2752,7 +2829,7 @@ def materialize_dependent_rows(
         batch_put_items(
             impact_cells_table,
             overwrite_by_pkeys=[
-                "impact_cell",
+                "h3_cell",
                 "hazard_version_key",
             ],
             items=(

@@ -139,6 +139,9 @@ resource "aws_lambda_function" "sigmet_processor" {
       IMPACT_GRID_DISTANCE              = "2"
       SCHEMA_VERSION                    = "wilvor.active_hazards.v4.0"
       HAZARD_COORDINATES_SCHEMA_VERSION = "wilvor.hazard_coordinates.v4.0"
+      HAZARD_CELLS_SCHEMA_VERSION       = "wilvor.hazard_cells.v4.0"
+      IMPACT_CELLS_SCHEMA_VERSION       = "wilvor.impact_cells.v4.0"
+      IMPACT_EXPANSION_CONFIG_VERSION   = "wilvor.impact_expansion.v1"
       EVENT_BUS_NAME                    = var.event_bus_name
       BAD_RECORDS_BUCKET_NAME           = aws_s3_bucket.sigmet_archive.bucket
       BAD_RECORDS_PREFIX                = "bad-records/source=sigmet_processor"

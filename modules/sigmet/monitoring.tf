@@ -332,6 +332,143 @@ resource "aws_cloudwatch_metric_alarm" "hazard_cells_read_throttles" {
   }
 }
 
+resource "aws_cloudwatch_metric_alarm" "hazard_cells_gsi_write_throttles" {
+  alarm_name = "${local.sigmet_monitoring_prefix}-hazard-cells-gsi-write-throttles"
+
+  alarm_description = (
+    "HazardCells hazard-version GSI had DynamoDB write throttle events."
+  )
+
+  namespace   = "AWS/DynamoDB"
+  metric_name = "WriteThrottleEvents"
+
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 0
+  evaluation_periods  = 1
+  period              = 60
+  statistic           = "Sum"
+
+  treat_missing_data = "notBreaching"
+
+  dimensions = {
+    TableName = aws_dynamodb_table.hazard_cells.name
+
+    GlobalSecondaryIndexName = (
+      "hazard_version_key-h3_cell-index"
+    )
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "hazard_cells_gsi_read_throttles" {
+  alarm_name = "${local.sigmet_monitoring_prefix}-hazard-cells-gsi-read-throttles"
+
+  alarm_description = (
+    "HazardCells hazard-version GSI had DynamoDB read throttle events."
+  )
+
+  namespace   = "AWS/DynamoDB"
+  metric_name = "ReadThrottleEvents"
+
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 0
+  evaluation_periods  = 1
+  period              = 60
+  statistic           = "Sum"
+
+  treat_missing_data = "notBreaching"
+
+  dimensions = {
+    TableName = aws_dynamodb_table.hazard_cells.name
+
+    GlobalSecondaryIndexName = (
+      "hazard_version_key-h3_cell-index"
+    )
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "impact_cells_write_throttles" {
+  alarm_name        = "${local.sigmet_monitoring_prefix}-impact-cells-write-throttles"
+  alarm_description = "ImpactCells had DynamoDB write throttle events."
+
+  namespace   = "AWS/DynamoDB"
+  metric_name = "WriteThrottleEvents"
+
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 0
+  evaluation_periods  = 1
+  period              = 60
+  statistic           = "Sum"
+
+  treat_missing_data = "notBreaching"
+
+  dimensions = {
+    TableName = aws_dynamodb_table.impact_cells.name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "impact_cells_read_throttles" {
+  alarm_name        = "${local.sigmet_monitoring_prefix}-impact-cells-read-throttles"
+  alarm_description = "ImpactCells had DynamoDB read throttle events."
+
+  namespace   = "AWS/DynamoDB"
+  metric_name = "ReadThrottleEvents"
+
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 0
+  evaluation_periods  = 1
+  period              = 60
+  statistic           = "Sum"
+
+  treat_missing_data = "notBreaching"
+
+  dimensions = {
+    TableName = aws_dynamodb_table.impact_cells.name
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "impact_cells_gsi_write_throttles" {
+  alarm_name        = "${local.sigmet_monitoring_prefix}-impact-cells-gsi-write-throttles"
+  alarm_description = "ImpactCells hazard-version GSI had DynamoDB write throttle events."
+
+  namespace   = "AWS/DynamoDB"
+  metric_name = "WriteThrottleEvents"
+
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 0
+  evaluation_periods  = 1
+  period              = 60
+  statistic           = "Sum"
+
+  treat_missing_data = "notBreaching"
+
+  dimensions = {
+    TableName                = aws_dynamodb_table.impact_cells.name
+    GlobalSecondaryIndexName = "hazard_version_key-h3_cell-index"
+  }
+}
+
+resource "aws_cloudwatch_metric_alarm" "impact_cells_gsi_read_throttles" {
+  alarm_name        = "${local.sigmet_monitoring_prefix}-impact-cells-gsi-read-throttles"
+  alarm_description = "ImpactCells hazard-version GSI had DynamoDB read throttle events."
+
+  namespace   = "AWS/DynamoDB"
+  metric_name = "ReadThrottleEvents"
+
+  comparison_operator = "GreaterThanThreshold"
+  threshold           = 0
+  evaluation_periods  = 1
+  period              = 60
+  statistic           = "Sum"
+
+  treat_missing_data = "notBreaching"
+
+  dimensions = {
+    TableName                = aws_dynamodb_table.impact_cells.name
+    GlobalSecondaryIndexName = "hazard_version_key-h3_cell-index"
+  }
+}
+
+
 # ============================================================
 # DASHBOARD
 # ============================================================
@@ -497,10 +634,65 @@ resource "aws_cloudwatch_dashboard" "sigmet_pipeline" {
           stacked = false
 
           metrics = [
-            ["AWS/DynamoDB", "ConsumedWriteCapacityUnits", "TableName", aws_dynamodb_table.hazard_cells.name],
-            ["AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", aws_dynamodb_table.hazard_cells.name],
-            ["AWS/DynamoDB", "WriteThrottleEvents", "TableName", aws_dynamodb_table.hazard_cells.name],
-            ["AWS/DynamoDB", "ReadThrottleEvents", "TableName", aws_dynamodb_table.hazard_cells.name]
+            # Table
+            [
+              "AWS/DynamoDB",
+              "ConsumedWriteCapacityUnits",
+              "TableName",
+              aws_dynamodb_table.hazard_cells.name
+            ],
+            [
+              "AWS/DynamoDB",
+              "ConsumedReadCapacityUnits",
+              "TableName",
+              aws_dynamodb_table.hazard_cells.name
+            ],
+            [
+              "AWS/DynamoDB",
+              "WriteThrottleEvents",
+              "TableName",
+              aws_dynamodb_table.hazard_cells.name
+            ],
+            [
+              "AWS/DynamoDB",
+              "ReadThrottleEvents",
+              "TableName",
+              aws_dynamodb_table.hazard_cells.name
+            ],
+
+            # hazard_version_key-h3_cell-index
+            [
+              "AWS/DynamoDB",
+              "ConsumedWriteCapacityUnits",
+              "TableName",
+              aws_dynamodb_table.hazard_cells.name,
+              "GlobalSecondaryIndexName",
+              "hazard_version_key-h3_cell-index"
+            ],
+            [
+              "AWS/DynamoDB",
+              "ConsumedReadCapacityUnits",
+              "TableName",
+              aws_dynamodb_table.hazard_cells.name,
+              "GlobalSecondaryIndexName",
+              "hazard_version_key-h3_cell-index"
+            ],
+            [
+              "AWS/DynamoDB",
+              "WriteThrottleEvents",
+              "TableName",
+              aws_dynamodb_table.hazard_cells.name,
+              "GlobalSecondaryIndexName",
+              "hazard_version_key-h3_cell-index"
+            ],
+            [
+              "AWS/DynamoDB",
+              "ReadThrottleEvents",
+              "TableName",
+              aws_dynamodb_table.hazard_cells.name,
+              "GlobalSecondaryIndexName",
+              "hazard_version_key-h3_cell-index"
+            ]
           ]
         }
       },
@@ -524,6 +716,82 @@ resource "aws_cloudwatch_dashboard" "sigmet_pipeline" {
             ["AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", aws_dynamodb_table.hazard_coordinates.name],
             ["AWS/DynamoDB", "WriteThrottleEvents", "TableName", aws_dynamodb_table.hazard_coordinates.name],
             ["AWS/DynamoDB", "ReadThrottleEvents", "TableName", aws_dynamodb_table.hazard_coordinates.name]
+          ]
+        }
+      },
+      {
+        type   = "metric"
+        x      = 0
+        y      = 26
+        width  = 12
+        height = 6
+
+        properties = {
+          title   = "ImpactCells DynamoDB"
+          region  = var.aws_region
+          stat    = "Sum"
+          period  = 60
+          view    = "timeSeries"
+          stacked = false
+
+          metrics = [
+            [
+              "AWS/DynamoDB",
+              "ConsumedWriteCapacityUnits",
+              "TableName",
+              aws_dynamodb_table.impact_cells.name
+            ],
+            [
+              "AWS/DynamoDB",
+              "ConsumedReadCapacityUnits",
+              "TableName",
+              aws_dynamodb_table.impact_cells.name
+            ],
+            [
+              "AWS/DynamoDB",
+              "WriteThrottleEvents",
+              "TableName",
+              aws_dynamodb_table.impact_cells.name
+            ],
+            [
+              "AWS/DynamoDB",
+              "ReadThrottleEvents",
+              "TableName",
+              aws_dynamodb_table.impact_cells.name
+            ],
+
+            [
+              "AWS/DynamoDB",
+              "ConsumedWriteCapacityUnits",
+              "TableName",
+              aws_dynamodb_table.impact_cells.name,
+              "GlobalSecondaryIndexName",
+              "hazard_version_key-h3_cell-index"
+            ],
+            [
+              "AWS/DynamoDB",
+              "ConsumedReadCapacityUnits",
+              "TableName",
+              aws_dynamodb_table.impact_cells.name,
+              "GlobalSecondaryIndexName",
+              "hazard_version_key-h3_cell-index"
+            ],
+            [
+              "AWS/DynamoDB",
+              "WriteThrottleEvents",
+              "TableName",
+              aws_dynamodb_table.impact_cells.name,
+              "GlobalSecondaryIndexName",
+              "hazard_version_key-h3_cell-index"
+            ],
+            [
+              "AWS/DynamoDB",
+              "ReadThrottleEvents",
+              "TableName",
+              aws_dynamodb_table.impact_cells.name,
+              "GlobalSecondaryIndexName",
+              "hazard_version_key-h3_cell-index"
+            ]
           ]
         }
       }
