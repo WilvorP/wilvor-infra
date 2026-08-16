@@ -46,3 +46,7 @@ output "taf_forecast_periods_table_name" {
 output "taf_forecast_periods_table_arn" {
   value = aws_dynamodb_table.taf_forecast_periods.arn
 }
+
+output "taf_latest_table_arn" {
+  value = aws_dynamodb_table.taf_latest.arn
+}

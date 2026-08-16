@@ -264,3 +264,38 @@ module "station_reference" {
 
   tags = local.common_tags
 }
+
+module "airport_status" {
+  source = "../../modules/airport_status"
+
+  name_prefix = local.name_prefix
+  environment = var.environment
+  aws_region  = var.aws_region
+  account_id  = data.aws_caller_identity.current.account_id
+
+  airport_status_materializer_zip_path = (
+    "${path.root}/../../functions/airport_status/materializer/dist/airport_status_materializer.zip"
+  )
+
+  station_reference_table_name = module.station_reference.station_reference_table_name
+  station_reference_table_arn  = module.station_reference.station_reference_table_arn
+
+  metar_latest_table_name = module.metar.metar_latest_table_name
+  metar_latest_table_arn  = module.metar.metar_latest_table_arn
+
+  taf_latest_table_name = module.taf.taf_latest_table_name
+  taf_latest_table_arn  = module.taf.taf_latest_table_arn
+
+  event_bus_name = local.default_event_bus_name
+  event_bus_arn  = local.default_event_bus_arn
+
+  airport_status_ttl_seconds = 86400
+  metar_fresh_seconds        = 1800
+  taf_fresh_seconds          = 21600
+
+  enable_point_in_time_recovery = false
+  dynamodb_read_capacity        = 5
+  dynamodb_write_capacity       = 5
+
+  tags = local.common_tags
+}
