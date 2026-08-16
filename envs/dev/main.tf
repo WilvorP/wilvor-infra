@@ -299,3 +299,52 @@ module "airport_status" {
 
   tags = local.common_tags
 }
+
+module "projection" {
+  source = "../../modules/projection"
+
+  name_prefix = local.name_prefix
+  aws_region  = var.aws_region
+
+  aircraft_current_state_table_name = (
+    module.aircraft_foundation.aircraft_current_state_table_name
+  )
+
+  aircraft_current_state_table_arn = (
+    module.aircraft_foundation.aircraft_current_state_table_arn
+  )
+
+  impact_cells_table_name = (
+    module.sigmet.impact_cells_table_name
+  )
+
+  impact_cells_table_arn = (
+    module.sigmet.impact_cells_table_arn
+  )
+
+  active_hazards_table_name = (
+    module.sigmet.active_hazards_table_name
+  )
+
+  active_hazards_table_arn = (
+    module.sigmet.active_hazards_table_arn
+  )
+
+  projection_processor_zip_path = (
+    "../../functions/projection/processor/dist/projection_processor.zip"
+  )
+
+  event_bus_name = local.default_event_bus_name
+  event_bus_arn  = local.default_event_bus_arn
+
+  # Keep disabled until AircraftProjection parent
+  # materialization is implemented.
+  enable_projection_event_trigger = false
+
+  dynamodb_read_capacity  = 5
+  dynamodb_write_capacity = 25
+
+  enable_point_in_time_recovery = false
+
+  tags = local.common_tags
+}

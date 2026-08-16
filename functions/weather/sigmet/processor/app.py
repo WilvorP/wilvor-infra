@@ -2399,9 +2399,25 @@ def determine_change_type(
     )
 
     if (
-        existing_source_version
-        == incoming_source_version
+    existing_source_version
+    == incoming_source_version
     ):
+        #
+        # A previous attempt may have written the
+        # BUILDING parent but failed before READY.
+        # Re-run the same deterministic materialization.
+        #
+        if (
+            existing.get(
+                "materialization_status"
+            )
+            != "READY"
+        ):
+            return (
+                "UPDATED",
+                True,
+            )
+
         return (
             "UNCHANGED",
             False,
@@ -2951,6 +2967,137 @@ def materialize_dependent_rows(
         ),
     }
 
+
+def validate_dependent_counts(
+    *,
+    active_hazard: dict[str, Any],
+    dependent_counts: dict[str, int],
+) -> None:
+    expected_coordinates = int(
+        active_hazard[
+            "geometry_point_count"
+        ]
+    )
+
+    expected_hazard_cells = int(
+        active_hazard[
+            "hazard_cell_count"
+        ]
+    )
+
+    expected_impact_cells = int(
+        active_hazard[
+            "impact_cell_count"
+        ]
+    )
+
+    actual_coordinates = int(
+        dependent_counts.get(
+            "hazard_coordinates_written",
+            0,
+        )
+    )
+
+    actual_hazard_cells = int(
+        dependent_counts.get(
+            "hazard_cells_written",
+            0,
+        )
+    )
+
+    actual_impact_cells = int(
+        dependent_counts.get(
+            "impact_cells_written",
+            0,
+        )
+    )
+
+    if (
+        actual_coordinates
+        != expected_coordinates
+    ):
+        raise RuntimeError(
+            "HazardCoordinates count mismatch: "
+            f"expected={expected_coordinates}, "
+            f"actual={actual_coordinates}"
+        )
+
+    if (
+        actual_hazard_cells
+        != expected_hazard_cells
+    ):
+        raise RuntimeError(
+            "HazardCells count mismatch: "
+            f"expected={expected_hazard_cells}, "
+            f"actual={actual_hazard_cells}"
+        )
+
+    if (
+        actual_impact_cells
+        != expected_impact_cells
+    ):
+        raise RuntimeError(
+            "ImpactCells count mismatch: "
+            f"expected={expected_impact_cells}, "
+            f"actual={actual_impact_cells}"
+        )
+
+
+def mark_hazard_ready(
+    active_hazard: dict[str, Any],
+) -> dict[str, Any]:
+    materialized_at_utc = (
+        now_utc_iso()
+    )
+
+    response = (
+        active_hazards_table.update_item(
+            Key={
+                "hazard_id": (
+                    active_hazard[
+                        "hazard_id"
+                    ]
+                )
+            },
+
+            UpdateExpression=(
+                "SET materialization_status = :ready, "
+                "materialized_at_utc = :materialized_at"
+            ),
+
+            ConditionExpression=(
+                "source_version = :source_version "
+                "AND materialization_id = :materialization_id "
+                "AND materialization_status = :building"
+            ),
+
+            ExpressionAttributeValues={
+                ":ready": "READY",
+                ":building": "BUILDING",
+
+                ":source_version": (
+                    active_hazard[
+                        "source_version"
+                    ]
+                ),
+
+                ":materialization_id": (
+                    active_hazard[
+                        "materialization_id"
+                    ]
+                ),
+
+                ":materialized_at": (
+                    materialized_at_utc
+                ),
+            },
+
+            ReturnValues="ALL_NEW",
+        )
+    )
+
+    return response["Attributes"]
+
 # ---------------------------------------------------------------------------
 # EventBridge publication
 # ---------------------------------------------------------------------------
@@ -3100,6 +3247,123 @@ def publish_hazard_coordinates_materialized(
         )
     )
 
+def publish_hazard_materialized(
+    *,
+    active_hazard: dict[str, Any],
+    dependent_counts: dict[str, int],
+) -> int:
+    hazard_version_key = (
+        build_hazard_version_key(
+            active_hazard["hazard_id"],
+            active_hazard[
+                "source_version"
+            ],
+        )
+    )
+
+    detail = {
+        "hazard_id": (
+            active_hazard["hazard_id"]
+        ),
+
+        "hazard_version_key": (
+            hazard_version_key
+        ),
+
+        "source_version": (
+            active_hazard[
+                "source_version"
+            ]
+        ),
+
+        "materialization_id": (
+            active_hazard[
+                "materialization_id"
+            ]
+        ),
+
+        "materialization_status": (
+            "READY"
+        ),
+
+        "status": (
+            active_hazard["status"]
+        ),
+
+        "hazard_coordinates_written": (
+            dependent_counts[
+                "hazard_coordinates_written"
+            ]
+        ),
+
+        "hazard_cells_written": (
+            dependent_counts[
+                "hazard_cells_written"
+            ]
+        ),
+
+        "impact_cells_written": (
+            dependent_counts[
+                "impact_cells_written"
+            ]
+        ),
+
+        "correlation_id": (
+            active_hazard[
+                "correlation_id"
+            ]
+        ),
+
+        "schema_version": (
+            active_hazard[
+                "schema_version"
+            ]
+        ),
+
+        "published_at_utc": (
+            now_utc_iso()
+        ),
+    }
+
+    response = events_client.put_events(
+        Entries=[
+            {
+                "Source": (
+                    "wilvor.weather"
+                ),
+
+                "DetailType": (
+                    "hazard.materialized"
+                ),
+
+                "Detail": json.dumps(
+                    detail,
+                    default=json_default,
+                    separators=(",", ":"),
+                ),
+
+                "EventBusName": (
+                    EVENT_BUS_NAME
+                ),
+            }
+        ]
+    )
+
+    if int(
+        response.get(
+            "FailedEntryCount",
+            0,
+        )
+        or 0
+    ):
+        raise RuntimeError(
+            "Failed to publish "
+            f"hazard.materialized: {response}"
+        )
+
+    return 1
+
+
 
 # ---------------------------------------------------------------------------
 # Record processor
@@ -3199,41 +3463,88 @@ def process_decoded_record(
     }
 
     if should_write_state:
+        #
+        # Parent MUST exist as BUILDING
+        # before any children are written.
+        #
+        active_hazards_table.put_item(
+            Item=item
+        )
+    
+        result[
+            "active_hazards_written"
+        ] = 1
+    
+        #
+        # Write all version-addressed children.
+        #
         dependent_counts = (
             materialize_dependent_rows(
                 active_hazard=item,
                 geometry_points=(
                     geometry_points
                 ),
-                h3_cells=(
-                    h3_cells
-                ),
+                h3_cells=h3_cells,
                 impact_cells=(
                     impact_cells
                 ),
             )
         )
-
+    
         result.update(
             dependent_counts
         )
-
+    
+        #
+        # Do not expose READY unless every
+        # required child set completed.
+        #
+        validate_dependent_counts(
+            active_hazard=item,
+            dependent_counts=(
+                dependent_counts
+            ),
+        )
+    
+        #
+        # READY last.
+        #
+        ready_hazard = (
+            mark_hazard_ready(
+                item
+            )
+        )
+    
+        #
+        # Preserve the existing downstream
+        # HazardStationCandidates trigger.
+        #
+        events_published = (
+            publish_hazard_coordinates_materialized(
+                active_hazard=ready_hazard,
+                dependent_counts=(
+                    dependent_counts
+                ),
+            )
+        )
+    
+        #
+        # Canonical v4 readiness event.
+        #
+        events_published += (
+            publish_hazard_materialized(
+                active_hazard=ready_hazard,
+                dependent_counts=(
+                    dependent_counts
+                ),
+            )
+        )
+    
         result[
             "eventbridge_events_published"
-        ] = publish_hazard_coordinates_materialized(
-            active_hazard=item,
-            dependent_counts=dependent_counts,
-        )
-
-        active_hazards_table.put_item(
-            Item=item
-        )
-
-        result[
-            "active_hazards_written"
-        ] = 1
-
-    return result
+        ] = events_published
+    
+        return result
 
 
 # ---------------------------------------------------------------------------
