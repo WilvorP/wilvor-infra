@@ -2402,17 +2402,20 @@ def determine_change_type(
     existing_source_version
     == incoming_source_version
     ):
-        #
-        # A previous attempt may have written the
-        # BUILDING parent but failed before READY.
-        # Re-run the same deterministic materialization.
-        #
-        if (
+        materialization_status = (
             existing.get(
                 "materialization_status"
             )
-            != "READY"
-        ):
+        )
+
+        #
+        # Retry only records that explicitly
+        # represent an unfinished materialization.
+        #
+        if materialization_status in {
+            "BUILDING",
+            "FAILED",
+        }:
             return (
                 "UPDATED",
                 True,
@@ -3467,14 +3470,68 @@ def process_decoded_record(
         # Parent MUST exist as BUILDING
         # before any children are written.
         #
+        put_kwargs = {
+            "Item": item,
+        }
+
+        if existing is None:
+            put_kwargs[
+                "ConditionExpression"
+            ] = (
+                "attribute_not_exists(hazard_id)"
+            )
+
+        else:
+            condition = (
+                "source_version = :expected_version "
+                "AND source_event_time_utc = :expected_time"
+            )
+
+            values = {
+                ":expected_version": (
+                    existing["source_version"]
+                ),
+                ":expected_time": (
+                    existing[
+                        "source_event_time_utc"
+                    ]
+                ),
+            }
+
+            #
+            # Same-version retries are allowed only
+            # while the previous materialization is
+            # explicitly unfinished.
+            #
+            if (
+                existing.get("source_version")
+                == item["source_version"]
+            ):
+                condition += (
+                    " AND materialization_status "
+                    "IN (:building, :failed)"
+                )
+
+                values[":building"] = "BUILDING"
+                values[":failed"] = "FAILED"
+
+            put_kwargs[
+                "ConditionExpression"
+            ] = condition
+
+            put_kwargs[
+                "ExpressionAttributeValues"
+            ] = values
+
+
         active_hazards_table.put_item(
-            Item=item
+            **put_kwargs
         )
-    
+
         result[
             "active_hazards_written"
         ] = 1
-    
+
         #
         # Write all version-addressed children.
         #
@@ -3490,11 +3547,11 @@ def process_decoded_record(
                 ),
             )
         )
-    
+
         result.update(
             dependent_counts
         )
-    
+
         #
         # Do not expose READY unless every
         # required child set completed.
@@ -3505,7 +3562,7 @@ def process_decoded_record(
                 dependent_counts
             ),
         )
-    
+
         #
         # READY last.
         #
@@ -3514,7 +3571,7 @@ def process_decoded_record(
                 item
             )
         )
-    
+
         #
         # Preserve the existing downstream
         # HazardStationCandidates trigger.
@@ -3527,7 +3584,7 @@ def process_decoded_record(
                 ),
             )
         )
-    
+
         #
         # Canonical v4 readiness event.
         #
@@ -3539,12 +3596,12 @@ def process_decoded_record(
                 ),
             )
         )
-    
+
         result[
             "eventbridge_events_published"
         ] = events_published
-    
-        return result
+
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -3698,7 +3755,6 @@ def write_bad_record(
         f"{BAD_RECORDS_BUCKET_NAME}/"
         f"{key}"
     )
-
 
 # ---------------------------------------------------------------------------
 # Lambda

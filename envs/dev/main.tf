@@ -339,7 +339,7 @@ module "projection" {
 
   # Keep disabled until AircraftProjection parent
   # materialization is implemented.
-  enable_projection_event_trigger = false
+  enable_projection_event_trigger = true
 
   dynamodb_read_capacity  = 5
   dynamodb_write_capacity = 25
