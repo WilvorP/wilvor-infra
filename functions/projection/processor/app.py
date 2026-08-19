@@ -1898,7 +1898,7 @@ def materialize_projection(
     # change after eligibility was evaluated.
     #
     expected_state_version = eligibility[
-        "state_version"
+    "state_version"
     ]
 
     if (
@@ -2178,11 +2178,11 @@ def materialize_projection(
         ),
     }
 
+
 def lambda_handler(
     event: dict[str, Any],
     context: Any,
 ) -> dict[str, Any]:
-
     detail = event.get(
         "detail",
         {},
@@ -2208,7 +2208,9 @@ def lambda_handler(
             "EligibilityFailures"
         ] = 1
 
-        emit_metrics(metrics)
+        emit_metrics(
+            metrics
+        )
 
         print(
             json.dumps(
@@ -2244,9 +2246,6 @@ def lambda_handler(
         )
     )
 
-    #
-    # Aircraft is NOT eligible.
-    #
     if not result["eligible"]:
         metrics[
             "IneligibleAircraft"
@@ -2260,14 +2259,15 @@ def lambda_handler(
                 "StaleEventsSkipped"
             ] = 1
 
-        emit_metrics(metrics)
+        emit_metrics(
+            metrics
+        )
 
         print(
             json.dumps(
                 {
                     "event": (
-                        "projection_"
-                        "eligibility_evaluated"
+                        "projection_eligibility_evaluated"
                     ),
                     **result,
                 },
@@ -2277,39 +2277,46 @@ def lambda_handler(
 
         return result
 
-    #
-    # Aircraft IS eligible.
-    #
     metrics[
         "EligibleAircraft"
     ] = 1
 
-    emit_metrics(metrics)
+    emit_metrics(
+        metrics
+    )
 
-    #
-    # Build the actual projection.
-    #
     try:
-        state = get_aircraft_state(
-            result["aircraft_id"]
+        materialization = (
+            materialize_projection(
+                result
+            )
         )
 
-        if state:
-            projection_id, _ = (
-                projection_identity(
+    except Exception:
+        try:
+            state = get_aircraft_state(
+                result[
+                    "aircraft_id"
+                ]
+            )
+
+            if state:
+                (
+                    projection_id,
+                    _,
+                ) = projection_identity(
                     state=state,
                     eligibility=result,
                 )
-            )
 
-            mark_projection_failed(
-                projection_id
-            )
+                mark_projection_failed(
+                    projection_id
+                )
 
-    except Exception:
-        pass
+        except Exception:
+            pass
 
-    raise
+        raise
 
     response = {
         **result,
@@ -2320,8 +2327,7 @@ def lambda_handler(
         json.dumps(
             {
                 "event": (
-                    "projection_"
-                    "materialization_completed"
+                    "projection_materialization_completed"
                 ),
                 **response,
             },

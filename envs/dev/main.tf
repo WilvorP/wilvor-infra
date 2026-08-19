@@ -419,3 +419,43 @@ module "encounter" {
 
   tags = local.common_tags
 }
+
+module "risk" {
+  source = "../../modules/risk"
+
+  name_prefix = local.name_prefix
+  aws_region  = var.aws_region
+
+  aircraft_hazard_encounter_table_name = (
+    module.encounter
+    .aircraft_hazard_encounter_table_name
+  )
+
+  aircraft_hazard_encounter_table_arn = (
+    module.encounter
+    .aircraft_hazard_encounter_table_arn
+  )
+
+  risk_processor_zip_path = (
+    "${path.root}/../../functions/risk/processor/dist/risk_processor.zip"
+  )
+
+  event_bus_name = (
+    local.default_event_bus_name
+  )
+
+  event_bus_arn = (
+    local.default_event_bus_arn
+  )
+
+  # Keep disabled until manual Risk Processor
+  # verification succeeds.
+  enable_risk_event_trigger = true
+
+  dynamodb_read_capacity  = 5
+  dynamodb_write_capacity = 10
+
+  enable_point_in_time_recovery = false
+
+  tags = local.common_tags
+}
