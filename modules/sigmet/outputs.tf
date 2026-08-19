@@ -91,3 +91,7 @@ output "hazard_station_candidates_processor_function_name" {
 output "hazard_station_candidates_processor_function_arn" {
   value = aws_lambda_function.sigmet_hazard_station_candidates_processor.arn
 }
+
+output "hazard_cells_hazard_version_index_name" {
+  value = "hazard_version_key-h3_cell-index"
+}

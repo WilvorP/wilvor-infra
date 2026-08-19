@@ -348,3 +348,74 @@ module "projection" {
 
   tags = local.common_tags
 }
+
+module "encounter" {
+  source = "../../modules/encounter"
+
+  name_prefix = local.name_prefix
+  aws_region  = var.aws_region
+
+  aircraft_projection_table_name = (
+    module.projection.aircraft_projection_table_name
+  )
+
+  aircraft_projection_table_arn = (
+    module.projection.aircraft_projection_table_arn
+  )
+
+  aircraft_projection_cells_table_name = (
+    module.projection.aircraft_projection_cells_table_name
+  )
+
+  aircraft_projection_cells_table_arn = (
+    module.projection.aircraft_projection_cells_table_arn
+  )
+
+  aircraft_projection_cells_h3_index_name = (
+    module.projection.aircraft_projection_cells_h3_index_name
+  )
+
+  hazard_cells_table_name = (
+    module.sigmet.hazard_cells_table_name
+  )
+
+  hazard_cells_table_arn = (
+    module.sigmet.hazard_cells_table_arn
+  )
+
+  hazard_cells_hazard_version_index_name = (
+    module.sigmet.hazard_cells_hazard_version_index_name
+  )
+
+  active_hazards_table_name = (
+    module.sigmet.active_hazards_table_name
+  )
+
+  active_hazards_table_arn = (
+    module.sigmet.active_hazards_table_arn
+  )
+
+  hazard_coordinates_table_name = (
+    module.sigmet.hazard_coordinates_table_name
+  )
+
+  hazard_coordinates_table_arn = (
+    module.sigmet.hazard_coordinates_table_arn
+  )
+
+  encounter_processor_zip_path = (
+    "${path.root}/../../functions/encounter/processor/dist/encounter_processor.zip"
+  )
+
+  event_bus_name = local.default_event_bus_name
+  event_bus_arn  = local.default_event_bus_arn
+
+  enable_encounter_event_trigger = true
+
+  dynamodb_read_capacity  = 5
+  dynamodb_write_capacity = 10
+
+  enable_point_in_time_recovery = false
+
+  tags = local.common_tags
+}
