@@ -72,3 +72,23 @@ variable "log_retention_days" {
 variable "event_bus_arn" {
   type = string
 }
+
+variable "projection_horizons_min" {
+  type    = string
+  default = "5,10,15,30"
+}
+
+variable "corridor_grid_distances" {
+  type    = string
+  default = "0,0,1,1"
+}
+
+variable "max_corridor_cells" {
+  type    = number
+  default = 2000
+}
+
+variable "projection_config_version" {
+  type    = string
+  default = "wilvor.projection.config.v1"
+}

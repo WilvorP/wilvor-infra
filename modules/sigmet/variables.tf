@@ -97,3 +97,21 @@ variable "hazard_station_candidate_h3_resolution" {
   type    = number
   default = 4
 }
+
+variable "impact_grid_distance" {
+  type        = number
+  default     = 2
+  description = "H3 grid-ring expansion around exact SIGMET hazard cells for ImpactCells."
+}
+
+variable "impact_radius_nm" {
+  type        = number
+  default     = 50
+  description = "Metadata radius stored on ImpactCells. Actual H3 expansion is controlled by impact_grid_distance."
+}
+
+variable "impact_expansion_config_version" {
+  type        = string
+  default     = "wilvor.impact_expansion.v1"
+  description = "Version string used to force impact-cell rematerialization when expansion config changes."
+}

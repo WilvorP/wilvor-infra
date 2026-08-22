@@ -55,6 +55,10 @@ module "sigmet" {
   aws_region  = var.aws_region
   account_id  = data.aws_caller_identity.current.account_id
 
+  impact_grid_distance            = 12
+  impact_radius_nm                = 300
+  impact_expansion_config_version = "wilvor.impact_expansion.dev_wide_v3"
+
   sigmet_poller_zip_path = (
     "${path.root}/../../functions/weather/sigmet/poller/dist/sigmet_poller.zip"
   )
@@ -305,6 +309,11 @@ module "projection" {
 
   name_prefix = local.name_prefix
   aws_region  = var.aws_region
+
+  projection_horizons_min   = "5,10,15,30"
+  corridor_grid_distances   = "1,2,3,4"
+  max_corridor_cells        = 8000
+  projection_config_version = "wilvor.projection.config.dev_wide_v2"
 
   aircraft_current_state_table_name = (
     module.aircraft_foundation.aircraft_current_state_table_name

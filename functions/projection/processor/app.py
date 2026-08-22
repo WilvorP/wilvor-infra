@@ -122,7 +122,7 @@ EARTH_RADIUS_NM = 3440.065
 MAX_POSITION_AGE_SECONDS = int(
     os.environ.get(
         "MAX_POSITION_AGE_SECONDS",
-        "180",
+        "900",
     )
 )
 
@@ -257,7 +257,8 @@ def query_impact_cells(
     response = impact_cells_table.query(
         KeyConditionExpression=(
             Key("h3_cell").eq(h3_cell)
-        )
+        ),
+        ConsistentRead=True,
     )
 
     items.extend(
@@ -279,6 +280,7 @@ def query_impact_cells(
             ExclusiveStartKey=response[
                 "LastEvaluatedKey"
             ],
+            ConsistentRead=True,
         )
 
         items.extend(
@@ -288,8 +290,18 @@ def query_impact_cells(
             )
         )
 
-    return items
+    print(
+        json.dumps(
+            {
+                "event": "impact_cells_query_completed",
+                "impact_table_name": IMPACT_CELLS_TABLE_NAME,
+                "h3_cell": h3_cell,
+                "items_found": len(items),
+            }
+        )
+    )
 
+    return items
 
 def get_active_hazard(
     hazard_id: str,
@@ -534,7 +546,6 @@ def hazard_matches_impact(
 
     return True
 
-
 def evaluate_eligibility(
     detail: dict[str, Any],
 ) -> dict[str, Any]:
@@ -739,6 +750,9 @@ def evaluate_eligibility(
             "AIRCRAFT_STATE_CHANGED"
         ),
         "aircraft_id": aircraft_id,
+        "state_version": (
+            current_state_version
+        ),
         "aircraft_state_version": (
             current_state_version
         ),
@@ -1864,6 +1878,81 @@ def publish_projection_ready(
             "projection.ready event."
         )
 
+def projection_identity(
+    *,
+    state: dict[str, Any],
+    eligibility: dict[str, Any],
+) -> tuple[str, str]:
+    aircraft_id = str(
+        state["aircraft_id"]
+    )
+
+    aircraft_state_version = str(
+        state["state_version"]
+    )
+
+    current_h3_cell = str(
+        state["current_h3_cell"]
+    )
+
+    trigger_hazard_version_keys = sorted(
+        str(value)
+        for value in eligibility.get(
+            "trigger_hazard_version_keys",
+            [],
+        )
+    )
+
+    matched_impact_cells = sorted(
+        str(value)
+        for value in eligibility.get(
+            "matched_impact_cells",
+            [],
+        )
+    )
+
+    identity_payload = {
+        "aircraft_id": aircraft_id,
+        "aircraft_state_version": aircraft_state_version,
+        "current_h3_cell": current_h3_cell,
+        "trigger_hazard_version_keys": (
+            trigger_hazard_version_keys
+        ),
+        "matched_impact_cells": (
+            matched_impact_cells
+        ),
+        "projection_algorithm_version": (
+            PROJECTION_ALGORITHM_VERSION
+        ),
+        "projection_config_version": (
+            PROJECTION_CONFIG_VERSION
+        ),
+        "projection_horizons_min": list(
+            PROJECTION_HORIZONS_MIN
+        ),
+        "corridor_grid_distances": list(
+            CORRIDOR_GRID_DISTANCES
+        ),
+    }
+
+    idempotency_key = hashlib.sha256(
+        json.dumps(
+            identity_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+
+    projection_id = (
+        "projection-"
+        f"{idempotency_key[:32]}"
+    )
+
+    return (
+        projection_id,
+        idempotency_key,
+    )
+
 def materialize_projection(
     eligibility: dict[str, Any],
 ) -> dict[str, Any]:
@@ -2178,15 +2267,55 @@ def materialize_projection(
         ),
     }
 
-
 def lambda_handler(
     event: dict[str, Any],
     context: Any,
 ) -> dict[str, Any]:
+    detail_type = (
+        event.get("detail-type")
+        or event.get("detailType")
+    )
+
     detail = event.get(
         "detail",
         {},
     )
+
+    # This projection processor currently handles
+    # aircraft.state.updated events only.
+    #
+    # hazard.materialized events are also reaching
+    # this Lambda from EventBridge, but they do not
+    # contain aircraft_id/state_version, so they should
+    # be ignored instead of raising ValueError.
+    if (
+        detail_type
+        and detail_type
+        != "aircraft.state.updated"
+    ):
+        print(
+            json.dumps(
+                {
+                    "event": (
+                        "projection_event_ignored"
+                    ),
+                    "detail_type": detail_type,
+                    "reason": (
+                        "projection_processor_currently_"
+                        "supports_aircraft_state_updated_only"
+                    ),
+                },
+                default=str,
+            )
+        )
+
+        return {
+            "ignored": True,
+            "detail_type": detail_type,
+            "reason": (
+                "UNSUPPORTED_EVENT_TYPE"
+            ),
+        }
 
     metrics = {
         "EventsReceived": 1,
@@ -2218,11 +2347,13 @@ def lambda_handler(
                     "event": (
                         "projection_eligibility_failed"
                     ),
+                    "detail_type": detail_type,
                     "error_type": (
                         type(exc).__name__
                     ),
                     "message": str(exc),
-                }
+                },
+                default=str,
             )
         )
 
@@ -2269,6 +2400,7 @@ def lambda_handler(
                     "event": (
                         "projection_eligibility_evaluated"
                     ),
+                    "detail_type": detail_type,
                     **result,
                 },
                 default=str,
@@ -2329,6 +2461,7 @@ def lambda_handler(
                 "event": (
                     "projection_materialization_completed"
                 ),
+                "detail_type": detail_type,
                 **response,
             },
             default=str,

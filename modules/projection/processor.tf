@@ -344,20 +344,13 @@ resource "aws_lambda_function" "projection_processor" {
       # Projection configuration
       # ---------------------------------------------------------------------
 
-      PROJECTION_HORIZONS_MIN = (
-        "5,10,15,30"
-      )
-
-      CORRIDOR_GRID_DISTANCES = (
-        "0,0,1,1"
-      )
+      PROJECTION_HORIZONS_MIN   = var.projection_horizons_min
+      CORRIDOR_GRID_DISTANCES   = var.corridor_grid_distances
+      MAX_CORRIDOR_CELLS        = tostring(var.max_corridor_cells)
+      PROJECTION_CONFIG_VERSION = var.projection_config_version
 
       PROJECTION_ALGORITHM_VERSION = (
         "wilvor.projection.constant_velocity.v1"
-      )
-
-      PROJECTION_CONFIG_VERSION = (
-        "wilvor.projection.config.v1"
       )
 
       PROJECTION_SCHEMA_VERSION = (
@@ -374,10 +367,6 @@ resource "aws_lambda_function" "projection_processor" {
 
       PROJECTION_RETENTION_SECONDS = (
         "3600"
-      )
-
-      MAX_CORRIDOR_CELLS = (
-        "2000"
       )
 
       MAX_TRIGGER_HAZARDS = (

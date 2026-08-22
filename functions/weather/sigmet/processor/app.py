@@ -652,6 +652,15 @@ def build_source_version(
         "materialization_contract": (
             "hazard_coordinates_metadata_v2"
         ),
+        "impact_expansion_config_version": (
+                IMPACT_EXPANSION_CONFIG_VERSION
+            ),
+        "impact_grid_distance": str(
+                IMPACT_GRID_DISTANCE
+            ),
+        "impact_radius_nm": str(
+                IMPACT_RADIUS_NM
+            ),
         "rawAirSigmet": properties.get(
             "rawAirSigmet"
         ),
