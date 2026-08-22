@@ -459,3 +459,160 @@ module "risk" {
 
   tags = local.common_tags
 }
+
+module "airport_assessment" {
+  source = "../../modules/airport_assessment"
+
+  name_prefix = local.name_prefix
+  aws_region  = var.aws_region
+
+  risk_results_table_name = (
+    module.risk.risk_results_table_name
+  )
+
+  risk_results_table_arn = (
+    module.risk.risk_results_table_arn
+  )
+
+  aircraft_current_state_table_name = (
+    module.aircraft_foundation.aircraft_current_state_table_name
+  )
+
+  aircraft_current_state_table_arn = (
+    module.aircraft_foundation.aircraft_current_state_table_arn
+  )
+
+  airport_status_table_name = (
+    module.airport_status.airport_status_table_name
+  )
+
+  airport_status_table_arn = (
+    module.airport_status.airport_status_table_arn
+  )
+
+  taf_forecast_periods_table_name = (
+    module.taf.taf_forecast_periods_table_name
+  )
+
+  taf_forecast_periods_table_arn = (
+    module.taf.taf_forecast_periods_table_arn
+  )
+
+  taf_station_period_index_name = (
+    "station_id-period_from_epoch-index"
+  )
+
+  processor_zip_path = (
+    "${path.root}/../../functions/airport_assessment/processor/dist/airport_assessment_processor.zip"
+  )
+
+  event_bus_name = (
+    local.default_event_bus_name
+  )
+
+  event_bus_arn = (
+    local.default_event_bus_arn
+  )
+
+  # Enable after first manual processor verification.
+  enable_event_trigger = true
+
+  dynamodb_read_capacity  = 5
+  dynamodb_write_capacity = 10
+
+  enable_point_in_time_recovery = false
+
+  tags = local.common_tags
+}
+
+module "recommendations" {
+  source = "../../modules/recommendations"
+
+  name_prefix = local.name_prefix
+  aws_region  = var.aws_region
+
+  risk_results_table_name = (
+    module.risk.risk_results_table_name
+  )
+
+  risk_results_table_arn = (
+    module.risk.risk_results_table_arn
+  )
+
+  airport_assessment_table_name = (
+    module.airport_assessment.airport_assessment_table_name
+  )
+
+  airport_assessment_table_arn = (
+    module.airport_assessment.airport_assessment_table_arn
+  )
+
+  processor_zip_path = (
+    "${path.root}/../../functions/recommendations/processor/dist/recommendation_processor.zip"
+  )
+
+  event_bus_name = (
+    local.default_event_bus_name
+  )
+
+  event_bus_arn = (
+    local.default_event_bus_arn
+  )
+
+  enable_event_trigger = true
+
+  dynamodb_read_capacity  = 5
+  dynamodb_write_capacity = 10
+
+  enable_point_in_time_recovery = false
+
+  tags = local.common_tags
+}
+
+module "active_alerts" {
+  source = "../../modules/active_alerts"
+
+  name_prefix = local.name_prefix
+  aws_region  = var.aws_region
+
+  recommendations_table_name = (
+    module.recommendations.recommendations_table_name
+  )
+
+  recommendations_table_arn = (
+    module.recommendations.recommendations_table_arn
+  )
+
+  risk_results_table_name = (
+    module.risk.risk_results_table_name
+  )
+
+  risk_results_table_arn = (
+    module.risk.risk_results_table_arn
+  )
+
+  risk_results_encounter_index_name = (
+    module.risk.risk_results_encounter_index_name
+  )
+
+  processor_zip_path = (
+    "${path.root}/../../functions/active_alerts/processor/dist/active_alert_processor.zip"
+  )
+
+  event_bus_name = (
+    local.default_event_bus_name
+  )
+
+  event_bus_arn = (
+    local.default_event_bus_arn
+  )
+
+  enable_event_trigger = true
+
+  dynamodb_read_capacity  = 5
+  dynamodb_write_capacity = 10
+
+  enable_point_in_time_recovery = false
+
+  tags = local.common_tags
+}
