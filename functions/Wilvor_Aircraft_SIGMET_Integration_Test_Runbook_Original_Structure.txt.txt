@@ -24,6 +24,14 @@ aws sso login --profile wilvor-dev
 .\scripts\build_metar_processor.ps1
 .\scripts\build_metar_poller.ps1
 
+
+
+# Default — correct for current architecture
+.\scripts\poll-all-once.ps1
+
+# Only if you explicitly want to test direct/manual invokes
+.\scripts\poll-all-once.ps1 -IncludeMetar -IncludeTaf
+
 Test-Path functions\weather\sigmet\poller\dist\sigmet_poller.zip
 Test-Path functions\weather\sigmet\processor\dist\sigmet_processor.zip
 Test-Path functions\weather\metar\poller\dist\metar_poller.zip

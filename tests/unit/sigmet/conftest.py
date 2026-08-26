@@ -130,20 +130,36 @@ def sigmet_processor(
         "test-active-hazards",
     )
     monkeypatch.setenv(
+        "HAZARD_COORDINATES_TABLE_NAME",
+        "test-hazard-coordinates",
+    )
+    monkeypatch.setenv(
         "HAZARD_CELLS_TABLE_NAME",
         "test-hazard-cells",
+    )
+    monkeypatch.setenv(
+        "IMPACT_CELLS_TABLE_NAME",
+        "test-impact-cells",
     )
     monkeypatch.setenv(
         "H3_RESOLUTION",
         "4",
     )
     monkeypatch.setenv(
-        "SCHEMA_VERSION",
-        "internal.sigmet.v1",
+        "IMPACT_GRID_DISTANCE",
+        "2",
     )
     monkeypatch.setenv(
-        "EVENT_BUS_NAME",
-        "test-weather-events",
+        "IMPACT_RADIUS_NM",
+        "50",
+    )
+    monkeypatch.setenv(
+        "SCHEMA_VERSION",
+        "wilvor.active_hazards.v4.0",
+    )
+    monkeypatch.setenv(
+        "RETENTION_AFTER_VALID_TO_HOURS",
+        "6",
     )
     monkeypatch.setenv(
         "BAD_RECORDS_BUCKET_NAME",

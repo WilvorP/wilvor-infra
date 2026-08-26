@@ -169,6 +169,8 @@ def publish_raw_records(
     poll_id: str,
     opensky_response: dict[str, Any],
     fetched_at_utc: str,
+    raw_s3_bucket: str,
+    raw_s3_key: str,
 ) -> tuple[int, int]:
     stream_name = os.environ["AIRCRAFT_RAW_STREAM_NAME"]
     states = opensky_response.get("states") or []
@@ -190,6 +192,8 @@ def publish_raw_records(
             "poll_id": poll_id,
             "fetched_at_utc": fetched_at_utc,
             "opensky_response_time": response_time,
+            "raw_s3_bucket": raw_s3_bucket,
+            "raw_s3_key": raw_s3_key,
             "raw_index": index,
             "raw_state_vector": state_vector,
         }
@@ -247,6 +251,8 @@ def handler(event, context):
             poll_id=poll_id,
             opensky_response=opensky_response,
             fetched_at_utc=fetched_at_utc,
+            raw_s3_bucket=os.environ["AIRCRAFT_ARCHIVE_BUCKET"],
+            raw_s3_key=s3_key,
         )
 
         states_count = len(opensky_response.get("states") or [])

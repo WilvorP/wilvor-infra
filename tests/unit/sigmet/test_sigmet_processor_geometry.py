@@ -240,3 +240,155 @@ def test_geometry_to_h3_cells_rejects_unsupported_geometry(
         match=message,
     ):
         sigmet_processor.geometry_to_h3_cells(geometry, 4)
+
+def test_flatten_geometry_points_preserves_source_order(
+    sigmet_processor,
+    sigmet_feature,
+):
+    points = sigmet_processor.flatten_geometry_points(
+        sigmet_feature["geometry"]
+    )
+
+    assert len(points) == 5
+
+    assert points[0] == {
+        "geometry_type": "POLYGON",
+        "polygon_index": 0,
+        "ring_index": 0,
+        "sequence_number": 0,
+        "latitude": 40.0,
+        "longitude": -75.0,
+    }
+
+    # The source closing point must be preserved.
+    assert points[-1] == {
+        "geometry_type": "POLYGON",
+        "polygon_index": 0,
+        "ring_index": 0,
+        "sequence_number": 4,
+        "latitude": 40.0,
+        "longitude": -75.0,
+    }
+
+
+def test_flatten_geometry_points_supports_multipolygon(
+    sigmet_processor,
+):
+    geometry = {
+        "type": "MultiPolygon",
+        "coordinates": [
+            [
+                [
+                    [-75.0, 40.0],
+                    [-74.0, 40.0],
+                    [-74.0, 41.0],
+                    [-75.0, 40.0],
+                ]
+            ],
+            [
+                [
+                    [-80.0, 35.0],
+                    [-79.0, 35.0],
+                    [-79.0, 36.0],
+                    [-80.0, 35.0],
+                ]
+            ],
+        ],
+    }
+
+    points = sigmet_processor.flatten_geometry_points(geometry)
+
+    assert len(points) == 8
+    assert {point["polygon_index"] for point in points} == {0, 1}
+    assert {
+        point["geometry_type"]
+        for point in points
+    } == {"MULTIPOLYGON"}
+
+
+@pytest.mark.parametrize(
+    "point",
+    [
+        ["bad", 40.0],
+        [-75.0, "bad"],
+        [-181.0, 40.0],
+        [-75.0, 91.0],
+        [True, 40.0],
+    ],
+)
+def test_flatten_geometry_points_rejects_invalid_coordinates(
+    sigmet_processor,
+    point,
+):
+    geometry = {
+        "type": "Polygon",
+        "coordinates": [
+            [
+                [-75.0, 40.0],
+                [-74.0, 40.0],
+                point,
+            ]
+        ],
+    }
+
+    with pytest.raises(sigmet_processor.PermanentRecordError):
+        sigmet_processor.flatten_geometry_points(geometry)
+
+
+def test_geometry_hash_changes_when_coordinate_order_changes(
+    sigmet_processor,
+    sigmet_feature,
+):
+    original = sigmet_processor.build_geometry_hash(
+        sigmet_feature["geometry"]
+    )
+
+    changed_geometry = {
+        "type": "Polygon",
+        "coordinates": [
+            list(
+                reversed(
+                    sigmet_feature["geometry"]["coordinates"][0]
+                )
+            )
+        ],
+    }
+
+    changed = sigmet_processor.build_geometry_hash(
+        changed_geometry
+    )
+
+    assert original != changed
+
+
+def test_expand_impact_cells_deduplicates_and_keeps_minimum_distance(
+    sigmet_processor,
+    monkeypatch,
+):
+    rings = {
+        ("cell-a", 1): {"near-a", "shared"},
+        ("cell-a", 2): {"outer-a", "shared-two"},
+        ("cell-b", 1): {"near-b", "shared-two"},
+        ("cell-b", 2): {"outer-b"},
+    }
+
+    monkeypatch.setattr(
+        sigmet_processor.h3,
+        "grid_ring",
+        lambda cell, distance: rings[(cell, distance)],
+    )
+
+    result = sigmet_processor.expand_impact_cells(
+        ["cell-a", "cell-b"],
+        max_grid_distance=2,
+    )
+
+    assert result["cell-a"] == 0
+    assert result["cell-b"] == 0
+    assert result["shared"] == 1
+
+    # Appears at distance 2 from cell-a but distance 1 from cell-b.
+    assert result["shared-two"] == 1
+
+    assert result["outer-a"] == 2
+    assert result["outer-b"] == 2

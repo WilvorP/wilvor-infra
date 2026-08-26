@@ -51,10 +51,10 @@ def configure_lambda_like_environment() -> None:
     os.environ["OPENSKY_STATES_URL"] = "https://opensky-network.org/api/states/all"
 
     # Same test box currently configured in Terraform for the Lambda.
-    os.environ["OPENSKY_LAMIN"] = "37.0"
-    os.environ["OPENSKY_LOMIN"] = "-123.0"
-    os.environ["OPENSKY_LAMAX"] = "38.5"
-    os.environ["OPENSKY_LOMAX"] = "-121.5"
+    os.environ["OPENSKY_LAMIN"] = "24.0"
+    os.environ["OPENSKY_LOMIN"] = "-125.0"
+    os.environ["OPENSKY_LAMAX"] = "50.0"
+    os.environ["OPENSKY_LOMAX"] = "-66.0"
 
     os.environ["ENVIRONMENT"] = "dev"
     os.environ["MODE"] = "local-opensky-poller"

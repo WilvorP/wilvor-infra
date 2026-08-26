@@ -274,7 +274,7 @@ def test_lambda_handler_success(
     monkeypatch.setattr(
         taf_poller,
         "fetch_taf_records",
-        lambda: [taf_record],
+        lambda station_ids=None: [taf_record],
     )
     monkeypatch.setattr(
         taf_poller,
@@ -316,7 +316,7 @@ def test_lambda_handler_publish_failure_emits_failure_metric(
     monkeypatch.setattr(
         taf_poller,
         "fetch_taf_records",
-        lambda: [taf_record],
+        lambda station_ids=None: [taf_record],
     )
     monkeypatch.setattr(
         taf_poller,

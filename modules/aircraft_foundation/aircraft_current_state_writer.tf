@@ -61,6 +61,19 @@ data "aws_iam_policy_document" "aircraft_current_state_writer_policy" {
       "${aws_cloudwatch_log_group.aircraft_current_state_writer.arn}:*"
     ]
   }
+
+  statement {
+    sid    = "PublishAircraftStateEvents"
+    effect = "Allow"
+
+    actions = [
+      "events:PutEvents"
+    ]
+
+    resources = [
+      var.event_bus_arn
+    ]
+  }
 }
 
 resource "aws_iam_role_policy" "aircraft_current_state_writer_lambda" {
@@ -84,6 +97,7 @@ resource "aws_lambda_function" "aircraft_current_state_writer" {
   environment {
     variables = {
       AIRCRAFT_CURRENT_STATE_TABLE_NAME = aws_dynamodb_table.aircraft_current_state.name
+      EVENT_BUS_NAME                    = var.event_bus_name
     }
   }
 

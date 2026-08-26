@@ -286,10 +286,26 @@ No changes. Your infrastructure matches the configuration.
 
 ---
 
-## Poll every pipeline once
+## Poll ingestion pipelines once
+
+By default this runs **aircraft** and **SIGMET** only. METAR and TAF are
+event-driven: they are invoked by `hazard.stations.ready` after SIGMET
+processing publishes hazard station candidates. Bare Lambda invokes for
+METAR/TAF require manual station configuration and are not the production
+path.
 
 ```powershell
 .\scripts\poll-all-once.ps1
+
+# Optional: force direct METAR/TAF invokes (local/manual fallback only)
+.\scripts\poll-all-once.ps1 -IncludeMetar -IncludeTaf
+```
+
+Poll evidence is saved under:
+
+```text
+test-results/poll-once/<timestamp>/
+```
 
 # Evidence and generated files
 

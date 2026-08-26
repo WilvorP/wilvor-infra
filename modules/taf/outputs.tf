@@ -38,3 +38,15 @@ output "dashboard_name" {
   description = "Name of the TAF CloudWatch dashboard"
   value       = aws_cloudwatch_dashboard.taf_pipeline.dashboard_name
 }
+
+output "taf_forecast_periods_table_name" {
+  value = aws_dynamodb_table.taf_forecast_periods.name
+}
+
+output "taf_forecast_periods_table_arn" {
+  value = aws_dynamodb_table.taf_forecast_periods.arn
+}
+
+output "taf_latest_table_arn" {
+  value = aws_dynamodb_table.taf_latest.arn
+}

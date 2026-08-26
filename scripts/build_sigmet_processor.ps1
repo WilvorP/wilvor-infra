@@ -3,6 +3,11 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $FunctionDir = Join-Path $RepoRoot "functions\weather\sigmet\processor"
 $SharedWeatherDir = Join-Path $RepoRoot "functions\shared\wilvor_weather"
+$DistDir = Join-Path $FunctionDir "dist"
+$ZipPath = Join-Path $DistDir "sigmet_processor.zip"
+
+$TempRoot = Join-Path $env:TEMP ("wilvor-sigmet-processor-" + [guid]::NewGuid().ToString())
+$PackageDir = Join-Path $TempRoot "package"
 
 if (-not (Test-Path $FunctionDir)) {
     throw "SIGMET processor directory not found: $FunctionDir"
@@ -12,28 +17,46 @@ if (-not (Test-Path $SharedWeatherDir)) {
     throw "Shared weather package not found: $SharedWeatherDir"
 }
 
-Push-Location $FunctionDir
-
 try {
-    Remove-Item -Recurse -Force package, dist -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force $DistDir -ErrorAction SilentlyContinue
 
-    New-Item -ItemType Directory -Force package | Out-Null
-    New-Item -ItemType Directory -Force dist | Out-Null
+    New-Item -ItemType Directory -Force $DistDir | Out-Null
+    New-Item -ItemType Directory -Force $PackageDir | Out-Null
 
-    python -m pip install `
-        --upgrade `
-        --platform manylinux2014_x86_64 `
-        --implementation cp `
-        --python-version 3.12 `
-        --abi cp312 `
-        --only-binary=:all: `
-        -r requirements.txt `
-        -t package
+    $RequirementsPath = Join-Path $FunctionDir "requirements.txt"
 
-    Copy-Item app.py package\app.py -Force
+    if (Test-Path $RequirementsPath) {
+        Push-Location $FunctionDir
 
-    $SharedTargetDir = Join-Path $FunctionDir "package\wilvor_weather"
-    New-Item -ItemType Directory -Force $SharedTargetDir | Out-Null
+        try {
+            python -m pip install `
+                --upgrade `
+                --platform manylinux2014_x86_64 `
+                --implementation cp `
+                --python-version 3.12 `
+                --only-binary=:all: `
+                --target $PackageDir `
+                -r $RequirementsPath
+
+            if ($LASTEXITCODE -ne 0) {
+                throw "pip install failed for SIGMET processor."
+            }
+        }
+        finally {
+            Pop-Location
+        }
+    }
+
+    Get-ChildItem -Path $FunctionDir -File -Filter "*.py" | ForEach-Object {
+        Copy-Item $_.FullName -Destination $PackageDir -Force
+    }
+
+    $SharedTargetDir = Join-Path $PackageDir "wilvor_weather"
+
+    New-Item `
+        -ItemType Directory `
+        -Force `
+        $SharedTargetDir | Out-Null
 
     Copy-Item `
         -Path "$SharedWeatherDir\*" `
@@ -42,12 +65,13 @@ try {
         -Force
 
     Compress-Archive `
-        -Path package\* `
-        -DestinationPath dist\sigmet_processor.zip `
+        -Path (Join-Path $PackageDir "*") `
+        -DestinationPath $ZipPath `
         -Force
 
-    Write-Host "Built: $FunctionDir\dist\sigmet_processor.zip"
+    Write-Host "Built SIGMET processor Lambda package:"
+    Write-Host $ZipPath
 }
 finally {
-    Pop-Location
+    Remove-Item -Recurse -Force $TempRoot -ErrorAction SilentlyContinue
 }

@@ -1,93 +1,46 @@
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
-
-$FunctionDir = Join-Path `
-  $RepoRoot `
-  "functions\runway_metadata\loader"
-
-$SharedPackageDir = Join-Path `
-  $RepoRoot `
-  "functions\shared\wilvor_weather"
-
-$PackageDir = Join-Path $FunctionDir "package"
+$FunctionDir = Join-Path $RepoRoot "functions\runway_metadata\loader"
 $DistDir = Join-Path $FunctionDir "dist"
+$ZipPath = Join-Path $DistDir "runway_metadata_loader.zip"
 
-$OutputZip = Join-Path `
-  $DistDir `
-  "runway_metadata_loader.zip"
+$TempRoot = Join-Path $env:TEMP ("wilvor-runway-metadata-loader-" + [guid]::NewGuid().ToString())
+$PackageDir = Join-Path $TempRoot "package"
 
 if (-not (Test-Path $FunctionDir)) {
-  throw "Runway loader directory does not exist: $FunctionDir"
+    throw "Runway metadata loader directory not found: $FunctionDir"
 }
-
-if (-not (Test-Path $SharedPackageDir)) {
-  throw "Shared Wilvor package does not exist: $SharedPackageDir"
-}
-
-Push-Location $FunctionDir
 
 try {
-  Remove-Item `
-    -Path $PackageDir, $DistDir `
-    -Recurse `
-    -Force `
-    -ErrorAction SilentlyContinue
+    Remove-Item -Recurse -Force $DistDir -ErrorAction SilentlyContinue
+    New-Item -ItemType Directory -Force $DistDir | Out-Null
+    New-Item -ItemType Directory -Force $PackageDir | Out-Null
 
-  New-Item `
-    -Path $PackageDir `
-    -ItemType Directory `
-    -Force |
-    Out-Null
+    $RequirementsPath = Join-Path $FunctionDir "requirements.txt"
 
-  New-Item `
-    -Path $DistDir `
-    -ItemType Directory `
-    -Force |
-    Out-Null
+    if (Test-Path $RequirementsPath) {
+        python -m pip install `
+            --upgrade `
+            -r $RequirementsPath `
+            -t $PackageDir
 
-  # Install third-party dependencies when requirements.txt exists.
-  # The current loader uses only the Python standard library and boto3,
-  # which AWS Lambda already provides.
-  if (Test-Path ".\requirements.txt") {
-    python -m pip install `
-      --upgrade `
-      -r ".\requirements.txt" `
-      -t $PackageDir
-  }
+        if ($LASTEXITCODE -ne 0) {
+            throw "pip install failed for runway metadata loader."
+        }
+    }
 
-  # All loader modules must be at the ZIP root because the configured
-  # Lambda handler will be app.lambda_handler.
-  Copy-Item `
-    -Path ".\*.py" `
-    -Destination $PackageDir `
-    -Force
+    Get-ChildItem -Path $FunctionDir -File -Filter "*.py" | ForEach-Object {
+        Copy-Item $_.FullName -Destination $PackageDir -Force
+    }
 
-  # Package the shared CloudWatch EMF helper.
-  $SharedTarget = Join-Path `
-    $PackageDir `
-    "wilvor_weather"
+    Compress-Archive `
+        -Path (Join-Path $PackageDir "*") `
+        -DestinationPath $ZipPath `
+        -Force
 
-  New-Item `
-    -Path $SharedTarget `
-    -ItemType Directory `
-    -Force |
-    Out-Null
-
-  Copy-Item `
-    -Path "$SharedPackageDir\*.py" `
-    -Destination $SharedTarget `
-    -Force
-
-  Compress-Archive `
-    -Path "$PackageDir\*" `
-    -DestinationPath $OutputZip `
-    -Force
-
-  Write-Host ""
-  Write-Host "Runway metadata Lambda package built successfully:"
-  Write-Host $OutputZip
+    Write-Host "Built: $ZipPath"
 }
 finally {
-  Pop-Location
+    Remove-Item -Recurse -Force $TempRoot -ErrorAction SilentlyContinue
 }

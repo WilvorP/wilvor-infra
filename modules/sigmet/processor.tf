@@ -50,26 +50,11 @@ data "aws_iam_policy_document" "sigmet_processor_policy" {
   }
 
   statement {
-    sid    = "ReadWriteActiveHazards"
+    sid    = "ReadWriteSigmetMaterializedState"
     effect = "Allow"
 
     actions = [
       "dynamodb:GetItem",
-      "dynamodb:PutItem",
-      "dynamodb:UpdateItem",
-      "dynamodb:BatchWriteItem",
-    ]
-
-    resources = [
-      aws_dynamodb_table.active_hazards.arn,
-    ]
-  }
-
-  statement {
-    sid    = "WriteToHazardCells"
-    effect = "Allow"
-
-    actions = [
       "dynamodb:PutItem",
       "dynamodb:UpdateItem",
       "dynamodb:DeleteItem",
@@ -77,7 +62,10 @@ data "aws_iam_policy_document" "sigmet_processor_policy" {
     ]
 
     resources = [
+      aws_dynamodb_table.active_hazards.arn,
+      aws_dynamodb_table.hazard_coordinates.arn,
       aws_dynamodb_table.hazard_cells.arn,
+      aws_dynamodb_table.impact_cells.arn,
     ]
   }
 
@@ -141,14 +129,27 @@ resource "aws_lambda_function" "sigmet_processor" {
 
   environment {
     variables = {
-      ENVIRONMENT               = replace(var.name_prefix, "wilvor-", "")
-      ACTIVE_HAZARDS_TABLE_NAME = aws_dynamodb_table.active_hazards.name
-      HAZARD_CELLS_TABLE_NAME   = aws_dynamodb_table.hazard_cells.name
-      H3_RESOLUTION             = "4"
-      SCHEMA_VERSION            = "internal.sigmet.v1"
-      EVENT_BUS_NAME            = var.event_bus_name
-      BAD_RECORDS_BUCKET_NAME   = aws_s3_bucket.sigmet_archive.bucket
-      BAD_RECORDS_PREFIX        = "bad-records/source=sigmet_processor"
+      ENVIRONMENT                   = replace(var.name_prefix, "wilvor-", "")
+      ACTIVE_HAZARDS_TABLE_NAME     = aws_dynamodb_table.active_hazards.name
+      HAZARD_COORDINATES_TABLE_NAME = aws_dynamodb_table.hazard_coordinates.name
+      HAZARD_CELLS_TABLE_NAME       = aws_dynamodb_table.hazard_cells.name
+      IMPACT_CELLS_TABLE_NAME       = aws_dynamodb_table.impact_cells.name
+
+      H3_RESOLUTION = "4"
+
+      SCHEMA_VERSION                    = "wilvor.active_hazards.v4.0"
+      HAZARD_COORDINATES_SCHEMA_VERSION = "wilvor.hazard_coordinates.v4.0"
+      HAZARD_CELLS_SCHEMA_VERSION       = "wilvor.hazard_cells.v4.0"
+      IMPACT_CELLS_SCHEMA_VERSION       = "wilvor.impact_cells.v4.0"
+
+      IMPACT_RADIUS_NM                = tostring(var.impact_radius_nm)
+      IMPACT_GRID_DISTANCE            = tostring(var.impact_grid_distance)
+      IMPACT_EXPANSION_CONFIG_VERSION = var.impact_expansion_config_version
+
+      EVENT_BUS_NAME                 = var.event_bus_name
+      BAD_RECORDS_BUCKET_NAME        = aws_s3_bucket.sigmet_archive.bucket
+      BAD_RECORDS_PREFIX             = "bad-records/source=sigmet_processor"
+      RETENTION_AFTER_VALID_TO_HOURS = "6"
     }
   }
 

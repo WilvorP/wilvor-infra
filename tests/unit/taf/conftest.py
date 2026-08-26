@@ -120,6 +120,10 @@ def taf_poller(
     monkeypatch.setenv("ARCHIVE_BUCKET_NAME", "test-weather-archive")
     monkeypatch.setenv("RAW_PREFIX", "raw/source=taf")
     monkeypatch.setenv("TAF_RAW_STREAM_NAME", "test-taf-raw")
+    monkeypatch.setenv(
+        "HAZARD_STATION_CANDIDATES_TABLE_NAME",
+        "test-hazard-station-candidates",
+    )
 
     return load_repo_module(
         "unit_taf_poller_app",
@@ -143,6 +147,10 @@ def taf_processor(
         "bad-records/source=taf_processor",
     )
     monkeypatch.setenv("SCHEMA_VERSION", "internal.taf.v1")
+    monkeypatch.setenv(
+        "TAF_FORECAST_PERIODS_TABLE_NAME",
+        "test-taf-forecast-periods",
+    )
 
     return load_repo_module(
         "unit_taf_processor_app",

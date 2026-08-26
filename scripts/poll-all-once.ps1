@@ -7,8 +7,10 @@ param(
     [int]$DownstreamWaitSeconds = 20,
     [switch]$SkipAircraft,
     [switch]$SkipSigmet,
-    [switch]$SkipMetar,
-    [switch]$SkipTaf,
+    # METAR and TAF are event-driven. They run when hazard.stations.ready is
+    # published after SIGMET processing — not via bare Lambda invokes.
+    [switch]$IncludeMetar,
+    [switch]$IncludeTaf,
     [switch]$SkipLogin
 )
 
@@ -268,14 +270,14 @@ try {
         Write-Host "SIGMET: $sigmetFunction"
     }
 
-    if (-not $SkipMetar) {
+    if ($IncludeMetar) {
         $metarFunction = Get-RequiredTerraformOutput `
             -Name "metar_poller_function_name"
 
         Write-Host "METAR:  $metarFunction"
     }
 
-    if (-not $SkipTaf) {
+    if ($IncludeTaf) {
         $tafFunction = Get-RequiredTerraformOutput `
             -Name "taf_poller_function_name"
 
@@ -284,6 +286,12 @@ try {
 }
 finally {
     Pop-Location
+}
+
+if (-not $IncludeMetar -and -not $IncludeTaf) {
+    Write-Host ""
+    Write-Host "METAR and TAF skipped. They run on hazard.stations.ready after SIGMET processing."
+    Write-Host "Use -IncludeMetar / -IncludeTaf only for direct manual invokes."
 }
 
 $timestamp = (Get-Date).ToUniversalTime().ToString("yyyyMMddTHHmmssZ")
@@ -371,7 +379,7 @@ try {
         }
     }
 
-    if (-not $SkipMetar) {
+    if ($IncludeMetar) {
         Write-Step "5. Poll METAR once"
 
         $responseFile = Join-Path $resultDirectory "metar-response.json"
@@ -407,7 +415,7 @@ try {
         }
     }
 
-    if (-not $SkipTaf) {
+    if ($IncludeTaf) {
         Write-Step "6. Poll TAF once"
 
         $responseFile = Join-Path $resultDirectory "taf-response.json"

@@ -4,6 +4,7 @@ import os
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
+from datetime import datetime, timezone
 
 import boto3
 
@@ -29,6 +30,7 @@ def configure_lambda_like_environment() -> None:
     os.environ.setdefault("AWS_PROFILE", "wilvor-dev")
     os.environ.setdefault("AWS_REGION", aws_region)
     os.environ.setdefault("AWS_DEFAULT_REGION", aws_region)
+    os.environ["EVENT_BUS_NAME"] = "default"
 
     os.environ["AIRCRAFT_ARCHIVE_BUCKET"] = terraform_output(
         "aircraft_archive_bucket_name"
@@ -77,7 +79,9 @@ def build_fake_kinesis_event(
             "schema_version": "opensky_aircraft_raw.v1",
             "source": "opensky",
             "poll_id": poll_id,
-            "fetched_at_utc": "local-test",
+            "fetched_at_utc": datetime.now(timezone.utc).isoformat(),
+            "raw_s3_bucket": os.environ["AIRCRAFT_ARCHIVE_BUCKET"],
+            "raw_s3_key": s3_key,
             "opensky_response_time": response_time,
             "raw_index": index,
             "raw_state_vector": state_vector,
