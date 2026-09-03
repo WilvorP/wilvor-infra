@@ -1,8 +1,6 @@
 resource "aws_dynamodb_table" "taf_latest" {
   name           = "${var.name_prefix}-taf-latest"
-  billing_mode   = "PROVISIONED"
-  read_capacity  = 5
-  write_capacity = 5
+  billing_mode   = "PAY_PER_REQUEST"
   hash_key       = "station_id"
 
   attribute {
@@ -25,9 +23,6 @@ resource "aws_dynamodb_table" "taf_latest" {
     hash_key        = "airport_id"
     range_key       = "issued_at_epoch"
     projection_type = "ALL"
-
-    read_capacity  = 5
-    write_capacity = 5
   }
 
   ttl {
@@ -49,9 +44,7 @@ resource "aws_dynamodb_table" "taf_latest" {
 
 resource "aws_dynamodb_table" "taf_forecast_periods" {
   name           = "${var.name_prefix}-taf-forecast-periods"
-  billing_mode   = "PROVISIONED"
-  read_capacity  = 10
-  write_capacity = 25
+  billing_mode   = "PAY_PER_REQUEST"
 
   hash_key  = "taf_version_key"
   range_key = "period_key"
@@ -81,9 +74,6 @@ resource "aws_dynamodb_table" "taf_forecast_periods" {
     hash_key        = "station_id"
     range_key       = "period_from_epoch"
     projection_type = "ALL"
-
-    read_capacity  = 10
-    write_capacity = 25
   }
 
   ttl {

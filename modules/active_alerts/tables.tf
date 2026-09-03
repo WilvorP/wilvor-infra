@@ -1,9 +1,6 @@
 resource "aws_dynamodb_table" "active_alerts" {
   name         = "${var.name_prefix}-active-alerts"
-  billing_mode = "PROVISIONED"
-
-  read_capacity  = var.dynamodb_read_capacity
-  write_capacity = var.dynamodb_write_capacity
+  billing_mode = "PAY_PER_REQUEST"
 
   hash_key = "fingerprint"
 
@@ -36,9 +33,6 @@ resource "aws_dynamodb_table" "active_alerts" {
     name            = "alert_id-index"
     hash_key        = "alert_id"
     projection_type = "ALL"
-
-    read_capacity  = var.dynamodb_read_capacity
-    write_capacity = var.dynamodb_write_capacity
   }
 
   global_secondary_index {
@@ -46,9 +40,6 @@ resource "aws_dynamodb_table" "active_alerts" {
     hash_key        = "aircraft_id"
     range_key       = "updated_at_epoch"
     projection_type = "ALL"
-
-    read_capacity  = var.dynamodb_read_capacity
-    write_capacity = var.dynamodb_write_capacity
   }
 
   global_secondary_index {
@@ -56,9 +47,6 @@ resource "aws_dynamodb_table" "active_alerts" {
     hash_key        = "alert_state"
     range_key       = "updated_at_epoch"
     projection_type = "ALL"
-
-    read_capacity  = var.dynamodb_read_capacity
-    write_capacity = var.dynamodb_write_capacity
   }
 
   ttl {

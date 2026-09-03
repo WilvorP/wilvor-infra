@@ -1,9 +1,6 @@
 resource "aws_dynamodb_table" "airport_assessment" {
   name         = "${var.name_prefix}-airport-assessment"
-  billing_mode = "PROVISIONED"
-
-  read_capacity  = var.dynamodb_read_capacity
-  write_capacity = var.dynamodb_write_capacity
+  billing_mode = "PAY_PER_REQUEST"
 
   hash_key  = "evaluation_id"
   range_key = "airport_id"
@@ -32,9 +29,6 @@ resource "aws_dynamodb_table" "airport_assessment" {
     name            = "airport_assessment_id-index"
     hash_key        = "airport_assessment_id"
     projection_type = "ALL"
-
-    read_capacity  = var.dynamodb_read_capacity
-    write_capacity = var.dynamodb_write_capacity
   }
 
   global_secondary_index {
@@ -42,9 +36,6 @@ resource "aws_dynamodb_table" "airport_assessment" {
     hash_key        = "airport_id"
     range_key       = "created_at_epoch"
     projection_type = "ALL"
-
-    read_capacity  = var.dynamodb_read_capacity
-    write_capacity = var.dynamodb_write_capacity
   }
 
   ttl {

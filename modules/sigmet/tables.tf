@@ -1,9 +1,6 @@
 resource "aws_dynamodb_table" "active_hazards" {
   name         = "${var.name_prefix}-active-hazards"
-  billing_mode = "PROVISIONED"
-
-  read_capacity  = 5
-  write_capacity = 5
+  billing_mode = "PAY_PER_REQUEST"
 
   hash_key = "hazard_id"
 
@@ -37,9 +34,6 @@ resource "aws_dynamodb_table" "active_hazards" {
     hash_key        = "status"
     range_key       = "valid_to_epoch"
     projection_type = "ALL"
-
-    read_capacity  = 5
-    write_capacity = 5
   }
 
   global_secondary_index {
@@ -47,9 +41,6 @@ resource "aws_dynamodb_table" "active_hazards" {
     hash_key        = "source_product_id"
     range_key       = "created_at_utc"
     projection_type = "ALL"
-
-    read_capacity  = 5
-    write_capacity = 5
   }
 
   ttl {
@@ -70,10 +61,7 @@ resource "aws_dynamodb_table" "active_hazards" {
 
 resource "aws_dynamodb_table" "hazard_cells" {
   name         = "${var.name_prefix}-hazard-cells"
-  billing_mode = "PROVISIONED"
-
-  read_capacity  = 5
-  write_capacity = 25
+  billing_mode = "PAY_PER_REQUEST"
 
   hash_key  = "h3_cell"
   range_key = "hazard_version_key"
@@ -93,9 +81,6 @@ resource "aws_dynamodb_table" "hazard_cells" {
     hash_key        = "hazard_version_key"
     range_key       = "h3_cell"
     projection_type = "ALL"
-
-    read_capacity  = 5
-    write_capacity = 25
   }
 
   ttl {
@@ -116,10 +101,7 @@ resource "aws_dynamodb_table" "hazard_cells" {
 
 resource "aws_dynamodb_table" "impact_cells" {
   name         = "${var.name_prefix}-impact-cells"
-  billing_mode = "PROVISIONED"
-
-  read_capacity  = 5
-  write_capacity = 50
+  billing_mode = "PAY_PER_REQUEST"
 
   hash_key  = "h3_cell"
   range_key = "hazard_version_key"
@@ -139,9 +121,6 @@ resource "aws_dynamodb_table" "impact_cells" {
     hash_key        = "hazard_version_key"
     range_key       = "h3_cell"
     projection_type = "ALL"
-
-    read_capacity  = 5
-    write_capacity = 50
   }
 
   ttl {
@@ -163,10 +142,7 @@ resource "aws_dynamodb_table" "impact_cells" {
 
 resource "aws_dynamodb_table" "hazard_coordinates" {
   name         = "${var.name_prefix}-hazard-coordinates"
-  billing_mode = "PROVISIONED"
-
-  read_capacity  = 5
-  write_capacity = 25
+  billing_mode = "PAY_PER_REQUEST"
 
   hash_key  = "hazard_version_key"
   range_key = "coordinate_key"
@@ -199,10 +175,7 @@ resource "aws_dynamodb_table" "hazard_coordinates" {
 
 resource "aws_dynamodb_table" "hazard_station_candidates" {
   name         = "${var.name_prefix}-hazard-station-candidates"
-  billing_mode = "PROVISIONED"
-
-  read_capacity  = 25
-  write_capacity = 75
+  billing_mode = "PAY_PER_REQUEST"
 
   hash_key  = "hazard_version_key"
   range_key = "station_id"
@@ -222,9 +195,6 @@ resource "aws_dynamodb_table" "hazard_station_candidates" {
     hash_key        = "station_id"
     range_key       = "hazard_version_key"
     projection_type = "ALL"
-
-    read_capacity  = 25
-    write_capacity = 75
   }
 
   ttl {

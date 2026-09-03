@@ -1,9 +1,6 @@
 resource "aws_dynamodb_table" "risk_results" {
   name         = "${var.name_prefix}-risk-results"
-  billing_mode = "PROVISIONED"
-
-  read_capacity  = var.dynamodb_read_capacity
-  write_capacity = var.dynamodb_write_capacity
+  billing_mode = "PAY_PER_REQUEST"
 
   hash_key = "risk_id"
 
@@ -34,9 +31,6 @@ resource "aws_dynamodb_table" "risk_results" {
     range_key = "generated_at_epoch"
 
     projection_type = "ALL"
-
-    read_capacity  = var.dynamodb_read_capacity
-    write_capacity = var.dynamodb_write_capacity
   }
 
   global_secondary_index {
@@ -46,9 +40,6 @@ resource "aws_dynamodb_table" "risk_results" {
     range_key = "generated_at_epoch"
 
     projection_type = "ALL"
-
-    read_capacity  = var.dynamodb_read_capacity
-    write_capacity = var.dynamodb_write_capacity
   }
 
   ttl {

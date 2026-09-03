@@ -126,10 +126,7 @@ resource "aws_s3_bucket_lifecycle_configuration" "aircraft_archive" {
 
 resource "aws_dynamodb_table" "aircraft_current_state" {
   name         = "${var.name_prefix}-aircraft-current-state"
-  billing_mode = "PROVISIONED"
-
-  read_capacity  = 5
-  write_capacity = 5
+  billing_mode = "PAY_PER_REQUEST"
 
   hash_key = "aircraft_id"
 
@@ -158,9 +155,6 @@ resource "aws_dynamodb_table" "aircraft_current_state" {
     hash_key        = "current_h3_cell"
     range_key       = "position_time_epoch"
     projection_type = "ALL"
-
-    read_capacity  = 5
-    write_capacity = 5
   }
 
   global_secondary_index {
@@ -168,9 +162,6 @@ resource "aws_dynamodb_table" "aircraft_current_state" {
     hash_key        = "callsign"
     range_key       = "position_time_epoch"
     projection_type = "ALL"
-
-    read_capacity  = 5
-    write_capacity = 5
   }
 
   ttl {
