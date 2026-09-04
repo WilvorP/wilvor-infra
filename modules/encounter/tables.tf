@@ -1,9 +1,6 @@
 resource "aws_dynamodb_table" "aircraft_hazard_encounter" {
   name         = "${var.name_prefix}-aircraft-hazard-encounter"
-  billing_mode = "PROVISIONED"
-
-  read_capacity  = var.dynamodb_read_capacity
-  write_capacity = var.dynamodb_write_capacity
+  billing_mode = "PAY_PER_REQUEST"
 
   hash_key = "encounter_id"
 
@@ -42,9 +39,6 @@ resource "aws_dynamodb_table" "aircraft_hazard_encounter" {
     hash_key        = "aircraft_id"
     range_key       = "detected_at_epoch"
     projection_type = "ALL"
-
-    read_capacity  = var.dynamodb_read_capacity
-    write_capacity = var.dynamodb_write_capacity
   }
 
   global_secondary_index {
@@ -52,9 +46,6 @@ resource "aws_dynamodb_table" "aircraft_hazard_encounter" {
     hash_key        = "hazard_id"
     range_key       = "detected_at_epoch"
     projection_type = "ALL"
-
-    read_capacity  = var.dynamodb_read_capacity
-    write_capacity = var.dynamodb_write_capacity
   }
 
   global_secondary_index {
@@ -62,9 +53,6 @@ resource "aws_dynamodb_table" "aircraft_hazard_encounter" {
     hash_key        = "projection_id"
     range_key       = "hazard_version_key"
     projection_type = "ALL"
-
-    read_capacity  = var.dynamodb_read_capacity
-    write_capacity = var.dynamodb_write_capacity
   }
 
   ttl {

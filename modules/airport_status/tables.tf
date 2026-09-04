@@ -1,8 +1,6 @@
 resource "aws_dynamodb_table" "airport_status" {
   name           = "${var.name_prefix}-airport-status"
-  billing_mode   = "PROVISIONED"
-  read_capacity  = var.dynamodb_read_capacity
-  write_capacity = var.dynamodb_write_capacity
+  billing_mode   = "PAY_PER_REQUEST"
 
   hash_key = "airport_id"
 
@@ -36,8 +34,6 @@ resource "aws_dynamodb_table" "airport_status" {
     hash_key        = "station_id"
     range_key       = "updated_at_epoch"
     projection_type = "ALL"
-    read_capacity   = var.dynamodb_read_capacity
-    write_capacity  = var.dynamodb_write_capacity
   }
 
   global_secondary_index {
@@ -45,8 +41,6 @@ resource "aws_dynamodb_table" "airport_status" {
     hash_key        = "weather_risk_level"
     range_key       = "updated_at_epoch"
     projection_type = "ALL"
-    read_capacity   = var.dynamodb_read_capacity
-    write_capacity  = var.dynamodb_write_capacity
   }
 
   global_secondary_index {
@@ -54,8 +48,6 @@ resource "aws_dynamodb_table" "airport_status" {
     hash_key        = "weather_impact_status"
     range_key       = "updated_at_epoch"
     projection_type = "ALL"
-    read_capacity   = var.dynamodb_read_capacity
-    write_capacity  = var.dynamodb_write_capacity
   }
 
   ttl {

@@ -1,10 +1,6 @@
 resource "aws_dynamodb_table" "aircraft_projection_points" {
   name         = "${var.name_prefix}-aircraft-projection-points"
-  billing_mode = "PROVISIONED"
-
-  read_capacity  = var.dynamodb_read_capacity
-  write_capacity = var.dynamodb_write_capacity
-
+  billing_mode = "PAY_PER_REQUEST"
   hash_key  = "projection_id"
   range_key = "point_key"
 
@@ -33,9 +29,6 @@ resource "aws_dynamodb_table" "aircraft_projection_points" {
     hash_key        = "aircraft_id"
     range_key       = "projected_time_epoch"
     projection_type = "ALL"
-
-    read_capacity  = var.dynamodb_read_capacity
-    write_capacity = var.dynamodb_write_capacity
   }
 
   ttl {
@@ -56,10 +49,7 @@ resource "aws_dynamodb_table" "aircraft_projection_points" {
 
 resource "aws_dynamodb_table" "aircraft_projection" {
   name         = "${var.name_prefix}-aircraft-projection"
-  billing_mode = "PROVISIONED"
-
-  read_capacity  = var.dynamodb_read_capacity
-  write_capacity = var.dynamodb_write_capacity
+  billing_mode = "PAY_PER_REQUEST"
 
   hash_key = "projection_id"
 
@@ -93,9 +83,6 @@ resource "aws_dynamodb_table" "aircraft_projection" {
     hash_key        = "aircraft_id"
     range_key       = "generated_at_epoch"
     projection_type = "ALL"
-
-    read_capacity  = var.dynamodb_read_capacity
-    write_capacity = var.dynamodb_write_capacity
   }
 
   global_secondary_index {
@@ -103,9 +90,6 @@ resource "aws_dynamodb_table" "aircraft_projection" {
     hash_key        = "projection_status"
     range_key       = "valid_until_epoch"
     projection_type = "ALL"
-
-    read_capacity  = var.dynamodb_read_capacity
-    write_capacity = var.dynamodb_write_capacity
   }
 
   ttl {
@@ -127,10 +111,7 @@ resource "aws_dynamodb_table" "aircraft_projection" {
 
 resource "aws_dynamodb_table" "aircraft_projection_cells" {
   name         = "${var.name_prefix}-aircraft-projection-cells"
-  billing_mode = "PROVISIONED"
-
-  read_capacity  = var.dynamodb_read_capacity
-  write_capacity = var.dynamodb_write_capacity
+  billing_mode = "PAY_PER_REQUEST"
 
   hash_key  = "projection_id"
   range_key = "h3_cell"
@@ -150,9 +131,6 @@ resource "aws_dynamodb_table" "aircraft_projection_cells" {
     hash_key        = "h3_cell"
     range_key       = "projection_id"
     projection_type = "ALL"
-
-    read_capacity  = var.dynamodb_read_capacity
-    write_capacity = var.dynamodb_write_capacity
   }
 
   ttl {

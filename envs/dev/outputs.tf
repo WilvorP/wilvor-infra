@@ -265,3 +265,33 @@ output "impact_cells_table_name" {
 output "hazard_station_candidates_table_name" {
   value = module.sigmet.hazard_station_candidates_table_name
 }
+
+output "operational_api_endpoint" {
+  value = (
+    module.operational_api.api_endpoint
+  )
+}
+
+output "operational_api_id" {
+  value = (
+    module.operational_api.api_id
+  )
+}
+
+output "operational_api_lambda_name" {
+  value = (
+    module.operational_api.lambda_function_name
+  )
+}
+
+output "operational_api_lambda_arn" {
+  value = (
+    module.operational_api.lambda_function_arn
+  )
+}
+
+output "operational_api_log_group_name" {
+  value = (
+    module.operational_api.lambda_log_group_name
+  )
+}

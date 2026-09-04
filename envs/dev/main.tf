@@ -625,3 +625,117 @@ module "active_alerts" {
 
   tags = local.common_tags
 }
+
+module "operational_api" {
+  source = "../../modules/operational_api"
+
+  name_prefix = local.name_prefix
+
+  api_zip_path = (
+    "${path.root}/../../functions/operational_api/dist/operational_api.zip"
+  )
+
+  table_names = {
+    AIRCRAFT_CURRENT_STATE_TABLE_NAME = (
+      module.aircraft_foundation.aircraft_current_state_table_name
+    )
+
+    AIRCRAFT_PROJECTION_TABLE_NAME = (
+      module.projection.aircraft_projection_table_name
+    )
+
+    AIRCRAFT_PROJECTION_POINTS_TABLE_NAME = (
+      module.projection.aircraft_projection_points_table_name
+    )
+
+    ACTIVE_HAZARDS_TABLE_NAME = (
+      module.sigmet.active_hazards_table_name
+    )
+
+    HAZARD_COORDINATES_TABLE_NAME = (
+      module.sigmet.hazard_coordinates_table_name
+    )
+
+    AIRCRAFT_HAZARD_ENCOUNTER_TABLE_NAME = (
+      module.encounter.aircraft_hazard_encounter_table_name
+    )
+
+    RISK_RESULTS_TABLE_NAME = (
+      module.risk.risk_results_table_name
+    )
+
+    AIRPORT_STATUS_TABLE_NAME = (
+      module.airport_status.airport_status_table_name
+    )
+
+    METAR_LATEST_TABLE_NAME = (
+      module.metar.metar_latest_table_name
+    )
+
+    TAF_LATEST_TABLE_NAME = (
+      module.taf.taf_latest_table_name
+    )
+
+    TAF_FORECAST_PERIODS_TABLE_NAME = (
+      module.taf.taf_forecast_periods_table_name
+    )
+
+    AIRPORT_ASSESSMENT_TABLE_NAME = (
+      module.airport_assessment.airport_assessment_table_name
+    )
+
+    RECOMMENDATIONS_TABLE_NAME = (
+      module.recommendations.recommendations_table_name
+    )
+
+    ACTIVE_ALERTS_TABLE_NAME = (
+      module.active_alerts.active_alerts_table_name
+    )
+  }
+
+  table_arns = [
+    module.aircraft_foundation.aircraft_current_state_table_arn,
+
+    module.projection.aircraft_projection_table_arn,
+    module.projection.aircraft_projection_points_table_arn,
+
+    module.sigmet.active_hazards_table_arn,
+    module.sigmet.hazard_coordinates_table_arn,
+
+    module.encounter.aircraft_hazard_encounter_table_arn,
+
+    module.risk.risk_results_table_arn,
+
+    module.airport_status.airport_status_table_arn,
+
+    module.metar.metar_latest_table_arn,
+
+    module.taf.taf_latest_table_arn,
+    module.taf.taf_forecast_periods_table_arn,
+
+    module.airport_assessment.airport_assessment_table_arn,
+
+    module.recommendations.recommendations_table_arn,
+
+    module.active_alerts.active_alerts_table_arn,
+  ]
+
+  cors_allowed_origins = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+  ]
+
+  lambda_reserved_concurrency = 2
+
+  log_retention_days = 3
+
+  lambda_memory_size = 512
+
+  lambda_timeout_seconds = 30
+
+  api_throttling_burst_limit = 50
+
+  api_throttling_rate_limit = 25
+
+  tags = local.common_tags
+}
