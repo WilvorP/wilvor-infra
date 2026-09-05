@@ -167,6 +167,10 @@ IDX_ALERT_AIRCRAFT_TIME = (
     "aircraft_id-updated_at_epoch-index"
 )
 
+IDX_ALERT_ID = (
+    "alert_id-index"
+)
+
 
 ACTIVE_ALERT_STATES = [
     "NEW",
@@ -1444,6 +1448,66 @@ def list_active_recommendations(
     )
 
 
+def get_recommendation_detail(
+    recommendation_id,
+):
+    recommendation_id = (
+        recommendation_id or ""
+    ).strip()
+
+    if not recommendation_id:
+        raise ValueError(
+            "recommendationId is required"
+        )
+
+    if len(recommendation_id) > 256:
+        raise ValueError(
+            "recommendationId is too long"
+        )
+
+    recommendation = RECOMMENDATIONS.get_item(
+        Key={
+            "recommendation_id": recommendation_id
+        },
+        ConsistentRead=True,
+    ).get("Item")
+
+    if not recommendation:
+        return None
+
+    risk = None
+    risk_id = recommendation.get("risk_id")
+
+    if risk_id:
+        risk = RISKS.get_item(
+            Key={
+                "risk_id": risk_id
+            },
+            ConsistentRead=True,
+        ).get("Item")
+
+    assessments = []
+    evaluation_id = recommendation.get(
+        "airport_evaluation_id"
+    )
+
+    if evaluation_id:
+        assessments = AIRPORT_ASSESSMENTS.query(
+            KeyConditionExpression=Key(
+                "evaluation_id"
+            ).eq(evaluation_id),
+            ScanIndexForward=True,
+            Limit=10,
+            ConsistentRead=True,
+        ).get("Items", [])
+
+    return {
+        "recommendation": recommendation,
+        "risk": risk,
+        "airportAssessments": assessments,
+    }
+
+
 # ---------------------------------------------------------------------
 # Alerts
 # ---------------------------------------------------------------------
@@ -1472,6 +1536,83 @@ def list_active_alerts(
     return _page(
         ALERTS.scan(**kwargs)
     )
+
+
+def get_alert_detail(
+    alert_id,
+):
+    alert_id = (
+        alert_id or ""
+    ).strip()
+
+    if not alert_id:
+        raise ValueError(
+            "alertId is required"
+        )
+
+    if len(alert_id) > 256:
+        raise ValueError(
+            "alertId is too long"
+        )
+
+    alerts = ALERTS.query(
+        IndexName=IDX_ALERT_ID,
+        KeyConditionExpression=Key(
+            "alert_id"
+        ).eq(alert_id),
+        Limit=1,
+    ).get("Items", [])
+
+    if not alerts:
+        return None
+
+    alert = alerts[0]
+    recommendation = None
+    risk = None
+    encounter = None
+
+    recommendation_id = alert.get(
+        "recommendation_id"
+    )
+
+    if recommendation_id:
+        recommendation = RECOMMENDATIONS.get_item(
+            Key={
+                "recommendation_id": (
+                    recommendation_id
+                )
+            },
+            ConsistentRead=True,
+        ).get("Item")
+
+    risk_id = alert.get("risk_id")
+
+    if risk_id:
+        risk = RISKS.get_item(
+            Key={
+                "risk_id": risk_id
+            },
+            ConsistentRead=True,
+        ).get("Item")
+
+    encounter_id = (
+        (risk or {}).get("encounter_id")
+    )
+
+    if encounter_id:
+        encounter = ENCOUNTERS.get_item(
+            Key={
+                "encounter_id": encounter_id
+            },
+            ConsistentRead=True,
+        ).get("Item")
+
+    return {
+        "alert": alert,
+        "recommendation": recommendation,
+        "risk": risk,
+        "encounter": encounter,
+    }
 
 # =====================================================================
 # DATA FRESHNESS

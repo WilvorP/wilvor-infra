@@ -28,8 +28,10 @@ locals {
   "GET /airports/{airportId}",
 
   "GET /recommendations/active",
+  "GET /recommendations/{recommendationId}",
 
   "GET /alerts/active",
+  "GET /alerts/{alertId}",
   ])
 }
 

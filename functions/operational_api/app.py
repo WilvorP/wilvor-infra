@@ -481,6 +481,44 @@ def lambda_handler(
                 result,
             )
 
+        if path.startswith(
+            "/recommendations/"
+        ):
+            recommendation_id = (
+                path_params.get(
+                    "recommendationId"
+                )
+                or path.rsplit(
+                    "/",
+                    1,
+                )[-1]
+            )
+
+            result = (
+                repository
+                .get_recommendation_detail(
+                    recommendation_id
+                )
+            )
+
+            if result is None:
+                return _response(
+                    404,
+                    {
+                        "message": (
+                            "Recommendation not found"
+                        ),
+                        "recommendationId": (
+                            recommendation_id
+                        ),
+                    },
+                )
+
+            return _response(
+                200,
+                result,
+            )
+
         # =============================================================
         # ACTIVE ALERTS
         # =============================================================
@@ -502,6 +540,41 @@ def lambda_handler(
                     ),
                 )
             )
+
+            return _response(
+                200,
+                result,
+            )
+
+        if path.startswith(
+            "/alerts/"
+        ):
+            alert_id = (
+                path_params.get(
+                    "alertId"
+                )
+                or path.rsplit(
+                    "/",
+                    1,
+                )[-1]
+            )
+
+            result = (
+                repository.get_alert_detail(
+                    alert_id
+                )
+            )
+
+            if result is None:
+                return _response(
+                    404,
+                    {
+                        "message": (
+                            "Alert not found"
+                        ),
+                        "alertId": alert_id,
+                    },
+                )
 
             return _response(
                 200,

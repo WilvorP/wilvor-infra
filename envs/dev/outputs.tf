@@ -295,3 +295,47 @@ output "operational_api_log_group_name" {
     module.operational_api.lambda_log_group_name
   )
 }
+
+output "ai_copilot_api_endpoint" {
+  value = module.ai_copilot.api_endpoint
+}
+
+output "ai_copilot_api_id" {
+  value = module.ai_copilot.api_id
+}
+
+output "ai_copilot_lambda_name" {
+  value = module.ai_copilot.lambda_function_name
+}
+
+output "ai_copilot_lambda_arn" {
+  value = module.ai_copilot.lambda_function_arn
+}
+
+output "ai_copilot_log_group_name" {
+  value = module.ai_copilot.lambda_log_group_name
+}
+
+output "ai_insights_table_name" {
+  value = module.ai_copilot.insights_table_name
+}
+
+output "ai_network_summary_schedule_name" {
+  value = module.ai_copilot.network_summary_schedule_name
+}
+
+output "ai_network_summary_schedule_state" {
+  value = module.ai_copilot.network_summary_schedule_state
+}
+
+output "ai_event_rule_names" {
+  value = module.ai_copilot.event_rule_names
+}
+
+output "ai_event_dlq_name" {
+  value = module.ai_copilot.event_dlq_name
+}
+
+output "ai_copilot_alarm_names" {
+  value = module.ai_copilot.alarm_names
+}

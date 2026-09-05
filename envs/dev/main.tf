@@ -739,3 +739,60 @@ module "operational_api" {
 
   tags = local.common_tags
 }
+
+module "ai_copilot" {
+  source = "../../modules/ai_copilot"
+
+  name_prefix = local.name_prefix
+  aws_region  = var.aws_region
+
+  lambda_zip_path = (
+    "${path.root}/../../functions/ai_copilot/dist/ai_copilot.zip"
+  )
+
+  operational_api_base_url = (
+    module.operational_api.api_endpoint
+  )
+
+  bedrock_model_id            = var.ai_bedrock_model_id
+  bedrock_foundation_model_id = var.ai_bedrock_foundation_model_id
+  prompt_version              = "wilvor-ai-v1"
+
+  ai_max_output_tokens = 1200
+  ai_temperature       = 0.1
+  ai_max_tool_rounds   = 4
+  ai_max_message_chars = 4000
+  ai_max_history_items = 10
+
+  ai_cache_ttl_seconds         = 300
+  ai_insight_retention_seconds = 604800
+
+  enable_event_triggers = (
+    var.enable_ai_event_triggers
+  )
+
+  enable_network_summary_schedule = (
+    var.enable_ai_network_summary_schedule
+  )
+
+  network_summary_schedule_expression = (
+    "rate(5 minutes)"
+  )
+
+  cors_allowed_origins = [
+    "http://localhost:3000",
+    "http://localhost:5173",
+  ]
+
+  lambda_reserved_concurrency = 2
+  lambda_memory_size          = 512
+  lambda_timeout_seconds      = 30
+  log_retention_days          = 3
+
+  api_throttling_burst_limit = 5
+  api_throttling_rate_limit  = 2
+
+  enable_point_in_time_recovery = false
+
+  tags = local.common_tags
+}
