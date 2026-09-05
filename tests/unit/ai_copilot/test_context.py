@@ -1,3 +1,5 @@
+import threading
+
 from context import ContextBuilders, material_context
 
 
@@ -166,3 +168,50 @@ def test_fingerprint_material_ignores_volatile_metadata():
     assert material_context(value) == {
         "freshness": {"status": "FRESH"}
     }
+
+
+def test_network_context_fanout_is_bounded_to_two():
+    class TrackingClient(FakeClient):
+        def __init__(self):
+            self.lock = threading.Lock()
+            self.release = threading.Event()
+            self.active = 0
+            self.maximum_active = 0
+            self.entered = 0
+
+        def _tracked(self, callback):
+            with self.lock:
+                self.active += 1
+                self.entered += 1
+                self.maximum_active = max(
+                    self.maximum_active,
+                    self.active,
+                )
+                if self.entered == 3:
+                    self.release.set()
+            self.release.wait(timeout=0.05)
+            try:
+                return callback()
+            finally:
+                with self.lock:
+                    self.active -= 1
+
+        def overview(self):
+            return self._tracked(super().overview)
+
+        def freshness(self):
+            return self._tracked(super().freshness)
+
+        def system_health(self):
+            return self._tracked(
+                super().system_health
+            )
+
+    client = TrackingClient()
+    context = ContextBuilders(
+        client
+    ).build_network_context()
+
+    assert context["subject"]["type"] == "NETWORK"
+    assert client.entered == 3
+    assert client.maximum_active == 2

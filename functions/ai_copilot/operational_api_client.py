@@ -24,6 +24,15 @@ class OperationalApiInvalidResponse(OperationalApiError):
 
 
 class OperationalApiClient:
+    RETRYABLE_HTTP_STATUSES = {
+        408,
+        429,
+        500,
+        502,
+        503,
+        504,
+    }
+
     def __init__(
         self,
         base_url: str,
@@ -31,7 +40,11 @@ class OperationalApiClient:
         timeout_seconds: float = 5.0,
         max_response_bytes: int = 262144,
         max_attempts: int = 2,
+        retry_budget_seconds: float = 6.0,
+        retry_backoff_seconds: float = 0.1,
         opener=urlopen,
+        sleeper=time.sleep,
+        clock=time.monotonic,
     ) -> None:
         parsed = urlsplit(base_url)
         if (
@@ -51,12 +64,34 @@ class OperationalApiClient:
             raise ValueError("max_response_bytes is too small")
         if max_attempts < 1 or max_attempts > 3:
             raise ValueError("max_attempts is out of bounds")
+        if (
+            retry_budget_seconds < 0.1
+            or retry_budget_seconds > 15
+        ):
+            raise ValueError(
+                "retry_budget_seconds is out of bounds"
+            )
+        if (
+            retry_backoff_seconds < 0
+            or retry_backoff_seconds > 1
+        ):
+            raise ValueError(
+                "retry_backoff_seconds is out of bounds"
+            )
 
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
         self.max_response_bytes = max_response_bytes
         self.max_attempts = max_attempts
+        self.retry_budget_seconds = (
+            retry_budget_seconds
+        )
+        self.retry_backoff_seconds = (
+            retry_backoff_seconds
+        )
         self._opener = opener
+        self._sleeper = sleeper
+        self._clock = clock
 
     @staticmethod
     def _identifier(value: Any, name: str) -> str:
@@ -91,11 +126,24 @@ class OperationalApiClient:
             method="GET",
         )
 
+        deadline = (
+            self._clock()
+            + self.retry_budget_seconds
+        )
         for attempt in range(self.max_attempts):
+            remaining = deadline - self._clock()
+            if remaining <= 0:
+                raise OperationalApiUnavailable(
+                    "Operational API retry budget was exhausted"
+                )
+            attempt_timeout = min(
+                self.timeout_seconds,
+                max(0.05, remaining),
+            )
             try:
                 with self._opener(
                     request,
-                    timeout=self.timeout_seconds,
+                    timeout=attempt_timeout,
                 ) as response:
                     raw = response.read(
                         self.max_response_bytes + 1
@@ -123,23 +171,57 @@ class OperationalApiClient:
                     raise OperationalApiNotFound(
                         "Operational subject was not found"
                     ) from exc
-                if exc.code < 500 or attempt + 1 >= self.max_attempts:
+                if (
+                    exc.code
+                    not in self.RETRYABLE_HTTP_STATUSES
+                ):
                     raise OperationalApiUnavailable(
                         "Operational API request failed"
                     ) from exc
+                delay = self._retry_delay(
+                    attempt,
+                    exc,
+                )
             except OperationalApiInvalidResponse:
                 raise
             except (URLError, TimeoutError, socket.timeout) as exc:
-                if attempt + 1 >= self.max_attempts:
-                    raise OperationalApiUnavailable(
-                        "Operational API is unavailable"
-                    ) from exc
+                delay = self._retry_delay(attempt)
 
-            time.sleep(0.05 * (attempt + 1))
+            if (
+                attempt + 1 >= self.max_attempts
+                or self._clock() + delay >= deadline
+            ):
+                raise OperationalApiUnavailable(
+                    "Operational API is unavailable"
+                )
+            self._sleeper(delay)
 
         raise OperationalApiUnavailable(
             "Operational API is unavailable"
         )
+
+    def _retry_delay(
+        self,
+        attempt: int,
+        error: HTTPError | None = None,
+    ) -> float:
+        delay = min(
+            self.retry_backoff_seconds
+            * (2 ** attempt),
+            0.5,
+        )
+        if error is None or error.headers is None:
+            return delay
+        retry_after = error.headers.get("Retry-After")
+        if retry_after is None:
+            return delay
+        try:
+            return min(
+                max(float(retry_after), 0.0),
+                0.5,
+            )
+        except (TypeError, ValueError):
+            return delay
 
     def health(self) -> dict[str, Any]:
         return self._request("/health")

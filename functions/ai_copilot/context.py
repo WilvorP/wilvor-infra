@@ -53,7 +53,7 @@ def _unique_strings(*collections: Any) -> list[str]:
 
 def _parallel(**calls) -> dict[str, Any]:
     with ThreadPoolExecutor(
-        max_workers=len(calls)
+        max_workers=min(2, len(calls))
     ) as executor:
         futures = {
             name: executor.submit(callable_)

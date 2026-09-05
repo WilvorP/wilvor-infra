@@ -81,7 +81,7 @@ def _runtime():
         timeout_seconds=(
             settings.operational_timeout_seconds
         ),
-        max_attempts=1,
+        max_attempts=2,
     )
     builders = ContextBuilders(client)
     model = BedrockConverseClient(
