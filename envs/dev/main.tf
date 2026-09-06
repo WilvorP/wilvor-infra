@@ -725,7 +725,7 @@ module "operational_api" {
     "http://localhost:5173",
   ]
 
-  lambda_reserved_concurrency = 2
+  lambda_reserved_concurrency = 5
 
   log_retention_days = 3
 

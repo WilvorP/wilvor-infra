@@ -93,7 +93,19 @@ export function useOperationsMap(
       instance.once('load', handleLoad);
     }
 
+    const observer =
+      typeof ResizeObserver === 'undefined'
+        ? null
+        : new ResizeObserver(() => {
+            if (container.clientWidth > 0 && container.clientHeight > 0) {
+              instance.resize();
+            }
+          });
+
+    observer?.observe(container);
+
     return () => {
+      observer?.disconnect();
       mapRef.current = null;
       setMap(null);
       setReady(false);

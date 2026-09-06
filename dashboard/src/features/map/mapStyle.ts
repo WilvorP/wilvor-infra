@@ -4,9 +4,12 @@ import type { StyleSpecification } from 'maplibre-gl';
  * Built-in dark basemap.
  *
  * Defined inline as a raster style rather than fetched from a vendor style
- * endpoint so the console has no API-key dependency and no extra request
- * before the first paint. Override with `VITE_WILVOR_MAP_STYLE_URL` to point
- * at a self-hosted or vendor style.
+ * endpoint so the console has no extra request before the first paint.
+ * Override with `VITE_WILVOR_MAP_STYLE_URL` to point at a self-hosted or
+ * vendor style.
+ *
+ * CARTO raster tiles accept `VITE_CARTO_BASEMAP_KEY` as `key`. Without
+ * it the tiles still load but watermark "API KEY REQUIRED".
  *
  * This style intentionally declares no `glyphs` source, so symbol layers
  * cannot render text. The aircraft layer therefore uses a rotated icon and a
@@ -16,39 +19,83 @@ import type { StyleSpecification } from 'maplibre-gl';
 
 const CARTO_DARK_SUBDOMAINS = ['a', 'b', 'c', 'd'] as const;
 
-export const DARK_BASEMAP_STYLE: StyleSpecification = {
-  version: 8,
-  sources: {
-    basemap: {
-      type: 'raster',
-      tiles: CARTO_DARK_SUBDOMAINS.map(
-        (subdomain) =>
-          `https://${subdomain}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png`,
-      ),
-      tileSize: 256,
-      maxzoom: 19,
-      attribution:
-        '<a href="https://www.openstreetmap.org/copyright">© OpenStreetMap</a> contributors, <a href="https://carto.com/attributions">© CARTO</a>',
-    },
-  },
-  layers: [
-    {
-      id: 'background',
-      type: 'background',
-      paint: { 'background-color': '#080b11' },
-    },
-    {
-      id: 'basemap',
-      type: 'raster',
-      source: 'basemap',
-      paint: {
-        // Desaturated and dimmed so operational overlays stay dominant.
-        'raster-opacity': 0.72,
-        'raster-saturation': -0.35,
+const CARTO_ATTRIBUTION =
+  '<a href="https://www.openstreetmap.org/copyright">© OpenStreetMap</a> contributors, <a href="https://carto.com/attributions">© CARTO</a>';
+
+export type RawCartoEnv = Record<string, string | boolean | undefined>;
+
+export function readCartoBasemapKey(env: RawCartoEnv): string | null {
+  const value = env.VITE_CARTO_BASEMAP_KEY;
+
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+export function cartoDarkTileUrl(
+  subdomain: string,
+  apiKey: string | null,
+): string {
+  const base = `https://${subdomain}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}@2x.png`;
+
+  if (apiKey === null) {
+    return base;
+  }
+
+  return `${base}?key=${encodeURIComponent(apiKey)}`;
+}
+
+export function buildDarkBasemapStyle(
+  apiKey: string | null,
+): StyleSpecification {
+  return {
+    version: 8,
+    sources: {
+      basemap: {
+        type: 'raster',
+        tiles: CARTO_DARK_SUBDOMAINS.map((subdomain) =>
+          cartoDarkTileUrl(subdomain, apiKey),
+        ),
+        tileSize: 256,
+        maxzoom: 19,
+        attribution: CARTO_ATTRIBUTION,
       },
     },
-  ],
-};
+    layers: [
+      {
+        id: 'background',
+        type: 'background',
+        paint: { 'background-color': '#080b11' },
+      },
+      {
+        id: 'basemap',
+        type: 'raster',
+        source: 'basemap',
+        paint: {
+          // Desaturated and dimmed so operational overlays stay dominant.
+          'raster-opacity': 0.72,
+          'raster-saturation': -0.35,
+        },
+      },
+    ],
+  };
+}
+
+const resolvedCartoKey = readCartoBasemapKey(
+  import.meta.env as unknown as RawCartoEnv,
+);
+
+if (resolvedCartoKey === null && import.meta.env.DEV) {
+  console.warn(
+    'VITE_CARTO_BASEMAP_KEY is not set. CARTO tiles may watermark API KEY REQUIRED. Add the key to dashboard/.env.local.',
+  );
+}
+
+export const DARK_BASEMAP_STYLE: StyleSpecification =
+  buildDarkBasemapStyle(resolvedCartoKey);
 
 /** Continental US default view, matching the OpenSky polling bounding box. */
 export const DEFAULT_VIEW = {

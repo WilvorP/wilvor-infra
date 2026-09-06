@@ -5,7 +5,7 @@
   height: 100%;
   min-height: 0;
   padding: var(--wv-space-4) var(--wv-space-5);
-  overflow: hidden;
+  overflow: auto;
 }
 
 .fatal {
@@ -20,12 +20,13 @@
   grid-template-columns: minmax(0, 1fr) var(--wv-rail-width);
   gap: var(--wv-space-4);
   flex: 1 1 auto;
-  min-height: 0;
+  min-height: 520px;
 }
 
 .mapColumn {
   min-width: 0;
-  min-height: 0;
+  min-height: 520px;
+  height: 100%;
 }
 
 .rail {

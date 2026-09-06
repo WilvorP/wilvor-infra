@@ -245,7 +245,7 @@ describe('OperationalApiHttpClient.getBlob', () => {
   it('returns PNG bytes and does not send a request body', async () => {
     const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
     const fetchImpl = vi.fn(
-      async () =>
+      async (_url: string, _init?: RequestInit) =>
         new Response(png, {
           status: 200,
           headers: { 'content-type': 'image/png' },
