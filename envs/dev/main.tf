@@ -729,7 +729,7 @@ module "operational_api" {
 
   log_retention_days = 3
 
-  lambda_memory_size = 512
+  lambda_memory_size = 1024
 
   lambda_timeout_seconds = 30
 
