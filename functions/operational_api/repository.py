@@ -2745,7 +2745,7 @@ def get_overview():
 
     return _cached(
         "overview",
-        20,
+        45,
         build,
     )
 

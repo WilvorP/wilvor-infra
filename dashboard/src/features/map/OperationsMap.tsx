@@ -46,6 +46,11 @@ export interface OperationsMapProps {
   visibleAircraftIds?: readonly string[] | null;
   /** Hide the fleet when the surface is airport investigation. */
   showAircraft?: boolean;
+  /**
+   * `below` (default) docks the legend under the canvas.
+   * `overlay` floats it on the canvas.
+   */
+  legendPlacement?: 'overlay' | 'below';
   /** Loaded airport pages only. There is no unpaginated `/map/airports`. */
   airports?: AirportFeatureCollection | null;
   selectedAirportId?: string | null;
@@ -72,6 +77,7 @@ export function OperationsMap({
   isolateSelectedAircraft = false,
   visibleAircraftIds = null,
   showAircraft = true,
+  legendPlacement = 'below',
   airports = null,
   selectedAirportId = null,
   onSelectAirport,
@@ -276,7 +282,9 @@ export function OperationsMap({
   }
 
   return (
-    <div className={styles.wrapper}>
+    <div
+      className={`${styles.wrapper} ${legendPlacement === 'below' ? styles.wrapperLegendBelow : ''}`}
+    >
       <div
         ref={containerRef}
         className={styles.canvas}
@@ -290,7 +298,9 @@ export function OperationsMap({
         </div>
       ) : null}
 
-      <div className={styles.legend}>
+      <div
+        className={`${styles.legend} ${legendPlacement === 'below' ? styles.legendBelow : ''}`}
+      >
         <p className={styles.legendTitle}>Layers</p>
 
         <ul className={styles.legendList}>

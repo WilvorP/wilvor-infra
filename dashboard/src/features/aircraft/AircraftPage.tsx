@@ -107,21 +107,20 @@ export function AircraftPage({ mapStyleUrl }: AircraftPageProps) {
     return (
       <div className={styles.page}>
         <div className={styles.listing}>
+          <div className={styles.mapColumn}>{map}</div>
+
           <aside className={styles.rail} aria-label="Current aircraft listing">
+            <p className={styles.empty}>
+              Select an aircraft to open investigation. The map shows the
+              current fleet; the projection path appears after a current
+              projection is returned.
+            </p>
             <AircraftFleetPanel
               selectedAircraftId={selectedAircraftId}
               onSelect={handleSelectAircraft}
             />
           </aside>
-
-          <div className={styles.mapColumn}>{map}</div>
         </div>
-
-        <p className={styles.empty}>
-          Select an aircraft to open investigation. The map shows the current
-          fleet; the projection path appears after a current projection is
-          returned.
-        </p>
       </div>
     );
   }

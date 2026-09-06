@@ -316,7 +316,7 @@ resource "aws_apigatewayv2_integration" "lambda" {
 
   payload_format_version = "2.0"
 
-  timeout_milliseconds = 20000
+  timeout_milliseconds = 29000
 }
 
 

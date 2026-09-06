@@ -6,7 +6,7 @@
  * rather than being rediscovered as magic numbers across features.
  *
  * Backend context that constrains these values:
- *   - `/overview` and `/system-health` are cached inside the Lambda for 20s
+ *   - `/overview` and `/system-health` are cached inside the Lambda for 45s
  *     and 15s respectively, and `/freshness` for 15s
  *     (functions/operational_api/repository.py). Polling faster than the cache
  *     window costs invocations without producing newer data.

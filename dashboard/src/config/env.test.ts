@@ -12,7 +12,7 @@ describe('resolveConfig', () => {
     expect(result.config?.apiBaseUrl).toBe(
       'https://abc.execute-api.us-west-1.amazonaws.com',
     );
-    expect(result.config?.apiTimeoutMs).toBe(20_000);
+    expect(result.config?.apiTimeoutMs).toBe(30_000);
     expect(result.config?.mapStyleUrl).toBeNull();
   });
 
@@ -58,7 +58,7 @@ describe('resolveConfig', () => {
       VITE_WILVOR_API_TIMEOUT_MS: 'soon',
     });
 
-    expect(nonNumeric.config?.apiTimeoutMs).toBe(20_000);
+    expect(nonNumeric.config?.apiTimeoutMs).toBe(30_000);
     expect(nonNumeric.errors[0]).toContain('VITE_WILVOR_API_TIMEOUT_MS');
 
     const outOfRange = resolveConfig({
@@ -66,7 +66,7 @@ describe('resolveConfig', () => {
       VITE_WILVOR_API_TIMEOUT_MS: '999999',
     });
 
-    expect(outOfRange.config?.apiTimeoutMs).toBe(20_000);
+    expect(outOfRange.config?.apiTimeoutMs).toBe(30_000);
     expect(outOfRange.errors).toHaveLength(1);
   });
 

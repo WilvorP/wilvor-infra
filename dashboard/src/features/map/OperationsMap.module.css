@@ -105,6 +105,52 @@
   z-index: var(--wv-z-map-overlay);
 }
 
+.wrapperLegendBelow {
+  display: flex;
+  flex-direction: column;
+}
+
+.wrapperLegendBelow .canvas {
+  position: relative;
+  inset: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.legendBelow {
+  position: static;
+  top: auto;
+  left: auto;
+  z-index: auto;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--wv-space-3) var(--wv-space-5);
+  padding: var(--wv-space-2) var(--wv-space-4);
+  background-color: var(--wv-surface-2);
+  border: none;
+  border-top: 1px solid var(--wv-border);
+  border-radius: 0;
+}
+
+.legendBelow .legendTitle {
+  margin-bottom: 0;
+}
+
+.legendBelow .legendList {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: var(--wv-space-3) var(--wv-space-5);
+}
+
+.legendBelow .legendNote {
+  display: none;
+}
+
 .legendTitle {
   font-size: var(--wv-text-2xs);
   font-weight: var(--wv-weight-semibold);

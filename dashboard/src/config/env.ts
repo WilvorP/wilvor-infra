@@ -21,7 +21,7 @@ export interface ConfigResult {
   readonly errors: readonly string[];
 }
 
-const DEFAULT_API_TIMEOUT_MS = 20_000;
+const DEFAULT_API_TIMEOUT_MS = 30_000;
 const MIN_API_TIMEOUT_MS = 1_000;
 const MAX_API_TIMEOUT_MS = 120_000;
 
