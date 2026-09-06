@@ -1,0 +1,98 @@
+.drawer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background-color: var(--wv-surface-1);
+  border: 1px solid var(--wv-border);
+  border-radius: var(--wv-radius-md);
+  overflow: hidden;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--wv-space-5);
+  padding: var(--wv-space-4) var(--wv-space-5);
+  background-color: var(--wv-surface-2);
+  border-bottom: 1px solid var(--wv-border);
+  flex: 0 0 auto;
+}
+
+.identity {
+  display: flex;
+  align-items: baseline;
+  gap: var(--wv-space-4);
+  min-width: 0;
+}
+
+.kind {
+  font-size: var(--wv-text-md);
+  font-weight: var(--wv-weight-semibold);
+  color: var(--wv-text-primary);
+}
+
+.id {
+  font-size: var(--wv-text-2xs);
+  color: var(--wv-text-tertiary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.close {
+  margin-left: auto;
+  padding: var(--wv-space-2) var(--wv-space-4);
+  font-size: var(--wv-text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--wv-tracking-wide);
+  color: var(--wv-text-secondary);
+  border: 1px solid var(--wv-border-strong);
+  border-radius: var(--wv-radius-sm);
+  flex: 0 0 auto;
+}
+
+.close:hover {
+  color: var(--wv-text-primary);
+  background-color: var(--wv-surface-3);
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wv-space-6);
+  padding: var(--wv-space-5);
+  overflow: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.rawBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wv-space-3);
+}
+
+.rawHeading {
+  font-size: var(--wv-text-2xs);
+  font-weight: var(--wv-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: var(--wv-tracking-wider);
+  color: var(--wv-text-tertiary);
+}
+
+.raw {
+  margin: 0;
+  padding: var(--wv-space-4);
+  font-family: var(--wv-font-mono);
+  font-size: var(--wv-text-2xs);
+  line-height: 1.5;
+  color: var(--wv-text-secondary);
+  background-color: var(--wv-bg-base);
+  border: 1px solid var(--wv-border-subtle);
+  border-radius: var(--wv-radius-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 140px;
+  overflow: auto;
+}

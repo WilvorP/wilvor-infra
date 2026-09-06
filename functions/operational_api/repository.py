@@ -873,6 +873,131 @@ def _hazard_geometry(hazard):
 # Aircraft
 # ---------------------------------------------------------------------
 
+MAP_AIRCRAFT_CACHE_TTL_SECONDS = 15
+
+MAP_AIRCRAFT_MAX_ITEMS = 8000
+
+MAP_AIRCRAFT_COLUMNS = [
+    "aircraftId",
+    "callsign",
+    "longitude",
+    "latitude",
+    "trackDeg",
+    "baroAltitudeFt",
+    "groundSpeedKt",
+    "positionTimeEpoch",
+]
+
+
+def get_map_aircraft():
+    """
+    Compact aircraft layer for the operations map.
+
+    The paginated /aircraft listing cannot back a network map: the
+    unfiltered path is a Scan, limit is capped at 100, and pagination
+    is strictly sequential, so a full fleet costs dozens of chained
+    round trips per refresh cycle.
+
+    This response is deliberately lean:
+    - only the attributes needed to draw and label the layer
+    - row arrays, so attribute names are not repeated per aircraft
+    - one response, no client pagination
+
+    Rows are positional and described by MAP_AIRCRAFT_COLUMNS, which
+    is returned alongside them so the encoding stays self-describing.
+
+    Complete aircraft objects stay available through
+    GET /aircraft/{aircraftId}.
+
+    Risk level is intentionally not joined here. It lives in a
+    separate table and would require a second full scan; the map
+    highlights risk through the encounter and risk APIs instead.
+    """
+
+    def _load():
+        now_epoch = int(time.time())
+
+        aircraft = _scan_all(
+            AIRCRAFT,
+            FilterExpression=(
+                Attr(
+                    "expires_at_epoch"
+                ).gt(
+                    now_epoch
+                )
+                & Attr(
+                    "latitude"
+                ).exists()
+                & Attr(
+                    "longitude"
+                ).exists()
+            ),
+            ProjectionExpression=(
+                "aircraft_id,"
+                "callsign,"
+                "latitude,"
+                "longitude,"
+                "track_deg,"
+                "baro_altitude_ft,"
+                "ground_speed_kt,"
+                "position_time_epoch"
+            ),
+        )
+
+        rows = []
+        truncated = False
+
+        for item in aircraft:
+            if (
+                len(rows)
+                >= MAP_AIRCRAFT_MAX_ITEMS
+            ):
+                truncated = True
+                break
+
+            aircraft_id = item.get(
+                "aircraft_id"
+            )
+
+            if not aircraft_id:
+                continue
+
+            rows.append(
+                [
+                    aircraft_id,
+                    item.get("callsign"),
+                    item.get("longitude"),
+                    item.get("latitude"),
+                    item.get("track_deg"),
+                    item.get(
+                        "baro_altitude_ft"
+                    ),
+                    item.get(
+                        "ground_speed_kt"
+                    ),
+                    item.get(
+                        "position_time_epoch"
+                    ),
+                ]
+            )
+
+        return {
+            "generatedAt": _now_iso(),
+            "columns": (
+                MAP_AIRCRAFT_COLUMNS
+            ),
+            "count": len(rows),
+            "truncated": truncated,
+            "aircraft": rows,
+        }
+
+    return _cached(
+        "map_aircraft",
+        MAP_AIRCRAFT_CACHE_TTL_SECONDS,
+        _load,
+    )
+
+
 def list_aircraft(
     limit,
     next_token=None,

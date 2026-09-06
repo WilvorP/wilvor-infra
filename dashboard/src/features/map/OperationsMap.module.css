@@ -1,0 +1,180 @@
+.wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  background-color: var(--wv-bg-base);
+  border: 1px solid var(--wv-border);
+  border-radius: var(--wv-radius-md);
+  overflow: hidden;
+}
+
+.canvas {
+  position: absolute;
+  inset: 0;
+}
+
+.canvas :global(.maplibregl-ctrl-attrib) {
+  background-color: rgba(8, 11, 17, 0.75);
+  color: var(--wv-text-tertiary);
+  font-size: var(--wv-text-2xs);
+}
+
+.canvas :global(.maplibregl-ctrl-attrib a) {
+  color: var(--wv-text-secondary);
+}
+
+.canvas :global(.maplibregl-ctrl-group) {
+  background-color: var(--wv-surface-2);
+  border: 1px solid var(--wv-border);
+  box-shadow: none;
+}
+
+.canvas :global(.maplibregl-ctrl-group button + button) {
+  border-top-color: var(--wv-border);
+}
+
+.canvas :global(.maplibregl-ctrl-scale) {
+  background-color: rgba(8, 11, 17, 0.75);
+  border-color: var(--wv-border-strong);
+  color: var(--wv-text-secondary);
+  font-family: var(--wv-font-mono);
+  font-size: var(--wv-text-2xs);
+}
+
+.overlayCentre {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--wv-text-xs);
+  color: var(--wv-text-tertiary);
+  pointer-events: none;
+  z-index: var(--wv-z-map-overlay);
+}
+
+/*
+ * Bottom-left notice column.
+ *
+ * Stacked rather than absolutely positioned per notice: the map can report a
+ * basemap failure, a layer failure and a partial-data warning at the same
+ * time, and overlapping them would hide whichever rendered last.
+ */
+.overlayStack {
+  position: absolute;
+  left: var(--wv-space-4);
+  bottom: var(--wv-space-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--wv-space-2);
+  max-width: 52ch;
+  z-index: var(--wv-z-map-overlay);
+}
+
+.overlayError,
+.overlayWarning {
+  padding: var(--wv-space-3) var(--wv-space-5);
+  font-size: var(--wv-text-2xs);
+  line-height: var(--wv-leading-normal);
+  border-radius: var(--wv-radius-sm);
+  backdrop-filter: blur(2px);
+}
+
+.overlayError {
+  color: var(--wv-risk-high);
+  background-color: rgba(8, 11, 17, 0.9);
+  border: 1px solid color-mix(in srgb, var(--wv-risk-high) 40%, transparent);
+}
+
+.overlayWarning {
+  color: var(--wv-acceptable);
+  background-color: rgba(8, 11, 17, 0.9);
+  border: 1px solid color-mix(in srgb, var(--wv-acceptable) 40%, transparent);
+}
+
+.legend {
+  position: absolute;
+  top: var(--wv-space-4);
+  left: var(--wv-space-4);
+  min-width: 190px;
+  padding: var(--wv-space-4) var(--wv-space-5);
+  background-color: var(--wv-surface-overlay);
+  border: 1px solid var(--wv-border);
+  border-radius: var(--wv-radius-md);
+  z-index: var(--wv-z-map-overlay);
+}
+
+.legendTitle {
+  font-size: var(--wv-text-2xs);
+  font-weight: var(--wv-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: var(--wv-tracking-wider);
+  color: var(--wv-text-tertiary);
+  margin-bottom: var(--wv-space-3);
+}
+
+.legendList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wv-space-3);
+}
+
+.legendItem {
+  display: flex;
+  align-items: center;
+  gap: var(--wv-space-3);
+  font-size: var(--wv-text-2xs);
+  color: var(--wv-text-secondary);
+}
+
+.legendPending {
+  color: var(--wv-text-tertiary);
+}
+
+.legendCount {
+  margin-left: auto;
+  color: var(--wv-text-tertiary);
+}
+
+.swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: var(--wv-radius-xs);
+  flex: 0 0 auto;
+}
+
+.swatchHazard {
+  background-color: rgba(240, 180, 41, 0.22);
+  border: 1px solid var(--wv-risk-medium);
+}
+
+/* Matches AIRCRAFT_FILL_RGB in aircraftIcon.ts. */
+.swatchAircraft {
+  background-color: rgb(207, 227, 255);
+  border: 1px solid rgb(207, 227, 255);
+  clip-path: polygon(50% 0%, 100% 88%, 50% 66%, 0% 88%);
+  border-radius: 0;
+}
+
+.swatchTrajectory {
+  border: none;
+  border-radius: 0;
+  height: 2px;
+  width: 14px;
+  background-color: #5cc3f2;
+}
+
+.swatchPending {
+  background-color: transparent;
+  border: 1px dashed var(--wv-border-strong);
+}
+
+.legendNote {
+  margin-top: var(--wv-space-4);
+  padding-top: var(--wv-space-3);
+  border-top: 1px solid var(--wv-border-subtle);
+  font-size: var(--wv-text-2xs);
+  color: var(--wv-text-tertiary);
+  line-height: var(--wv-leading-normal);
+}

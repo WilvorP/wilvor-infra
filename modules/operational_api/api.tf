@@ -19,6 +19,8 @@ locals {
   "GET /aircraft",
   "GET /aircraft/{aircraftId}",
 
+  "GET /map/aircraft",
+
   "GET /hazards/active",
 
   "GET /encounters/active",

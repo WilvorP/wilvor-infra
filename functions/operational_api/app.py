@@ -214,6 +214,22 @@ def lambda_handler(
             )
 
         # =============================================================
+        # AIRCRAFT MAP LAYER
+        #
+        # Compact, single-response projection for the operations map.
+        #
+        # This is deliberately NOT the paginated /aircraft listing:
+        # see repository.get_map_aircraft for why that endpoint cannot
+        # back a network map.
+        # =============================================================
+
+        if path == "/map/aircraft":
+            return _response(
+                200,
+                repository.get_map_aircraft(),
+            )
+
+        # =============================================================
         # AIRCRAFT LIST
         #
         # Examples:

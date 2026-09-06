@@ -1,0 +1,112 @@
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--wv-space-6);
+  height: var(--wv-header-height);
+  padding: 0 var(--wv-space-6);
+  background-color: var(--wv-surface-2);
+  border-bottom: 1px solid var(--wv-border);
+  z-index: var(--wv-z-header);
+  flex: 0 0 auto;
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: var(--wv-space-3);
+  flex: 0 0 auto;
+}
+
+.mark {
+  width: 8px;
+  height: 8px;
+  border-radius: 1px;
+  background-color: var(--wv-accent);
+  transform: rotate(45deg);
+  align-self: center;
+}
+
+.wordmark {
+  font-size: var(--wv-text-md);
+  font-weight: var(--wv-weight-semibold);
+  letter-spacing: var(--wv-tracking-wide);
+  color: var(--wv-text-primary);
+}
+
+.product {
+  font-size: var(--wv-text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--wv-tracking-wider);
+  color: var(--wv-text-tertiary);
+}
+
+.live {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--wv-space-3);
+  padding: var(--wv-space-1) var(--wv-space-4);
+  font-size: var(--wv-text-2xs);
+  font-weight: var(--wv-weight-medium);
+  text-transform: uppercase;
+  letter-spacing: var(--wv-tracking-wide);
+  color: var(--wv-text-secondary);
+  background-color: var(--wv-surface-3);
+  border: 1px solid var(--wv-border);
+  border-radius: var(--wv-radius-sm);
+}
+
+.liveActive {
+  color: var(--wv-accent-strong);
+  border-color: color-mix(in srgb, var(--wv-accent) 40%, transparent);
+}
+
+.liveDot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background-color: var(--wv-fresh);
+}
+
+.liveActive .liveDot {
+  background-color: var(--wv-accent-strong);
+}
+
+.spacer {
+  flex: 1 1 auto;
+}
+
+.meta {
+  display: flex;
+  align-items: baseline;
+  gap: var(--wv-space-3);
+  flex: 0 0 auto;
+}
+
+.metaLabel {
+  font-size: var(--wv-text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--wv-tracking-wide);
+  color: var(--wv-text-tertiary);
+}
+
+.metaValue {
+  font-size: var(--wv-text-xs);
+  color: var(--wv-text-primary);
+}
+
+.advisory {
+  font-size: var(--wv-text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--wv-tracking-wide);
+  color: var(--wv-text-tertiary);
+  padding-left: var(--wv-space-5);
+  border-left: 1px solid var(--wv-border);
+  flex: 0 0 auto;
+}
+
+@media (max-width: 1100px) {
+  .advisory,
+  .metaLabel {
+    display: none;
+  }
+}
