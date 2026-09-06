@@ -3,6 +3,7 @@
   align-items: center;
   flex-wrap: wrap;
   gap: var(--wv-space-4);
+  min-width: 0;
   padding: var(--wv-space-3) var(--wv-space-5);
   background-color: var(--wv-surface-1);
   border: 1px solid var(--wv-border);
@@ -35,6 +36,7 @@
 }
 
 .open {
+  flex: 0 0 auto;
   padding: var(--wv-space-2) var(--wv-space-4);
   font-size: var(--wv-text-2xs);
   font-weight: var(--wv-weight-semibold);
@@ -52,6 +54,7 @@
 }
 
 .clear {
+  flex: 0 0 auto;
   padding: var(--wv-space-2) var(--wv-space-4);
   font-size: var(--wv-text-2xs);
   text-transform: uppercase;

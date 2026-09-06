@@ -2,6 +2,9 @@
   display: flex;
   flex-direction: column;
   gap: var(--wv-space-4);
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
   height: 100%;
   min-height: 0;
   padding: var(--wv-space-4) var(--wv-space-5);
@@ -17,40 +20,61 @@
 
 .main {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) var(--wv-rail-width);
+  grid-template-columns: minmax(0, 1fr) minmax(0, var(--wv-rail-width));
+  grid-template-rows: minmax(520px, 1fr);
+  align-items: stretch;
   gap: var(--wv-space-4);
   flex: 1 1 auto;
+  min-width: 0;
   min-height: 520px;
 }
 
 .mapColumn {
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 520px;
+}
+
+.mapFrame {
+  flex: 1 1 auto;
+  width: 100%;
   height: 100%;
+  min-width: 0;
+  min-height: 520px;
 }
 
 .rail {
   display: flex;
   flex-direction: column;
   gap: var(--wv-space-4);
+  min-width: 0;
   min-height: 0;
-  overflow-y: auto;
+  height: 100%;
+  max-height: 100%;
+  overflow: auto;
   padding-right: var(--wv-space-1);
 }
 
 .rail > * {
   flex: 0 0 auto;
+  min-width: 0;
 }
 
 .worklist {
   flex: 0 0 auto;
+  min-width: 0;
   min-height: 0;
 }
 
 .drawer {
   flex: 0 0 auto;
-  height: var(--wv-drawer-height);
+  min-width: 0;
   min-height: 0;
+}
+
+.drawerOccupied {
+  height: min(var(--wv-drawer-height), 42vh);
 }
 
 .drawerCompact {
@@ -58,28 +82,27 @@
 }
 
 @media (max-width: 1280px) {
-  .page {
-    overflow: auto;
-  }
-
   .main {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: 520px auto;
+    flex: 0 0 auto;
+    min-height: auto;
   }
 
-  .mapColumn {
+  .mapColumn,
+  .mapFrame {
     height: 520px;
+    min-height: 520px;
   }
 
   .rail {
+    height: auto;
+    max-height: none;
     overflow: visible;
   }
 
-  .drawer {
+  .drawerOccupied {
     height: auto;
-    min-height: var(--wv-drawer-height);
-  }
-
-  .drawerCompact {
-    min-height: 0;
+    max-height: min(var(--wv-drawer-height), 50vh);
   }
 }

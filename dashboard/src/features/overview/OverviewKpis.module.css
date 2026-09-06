@@ -2,6 +2,9 @@
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: var(--wv-space-4);
+  width: 100%;
+  min-width: 0;
+  flex: 0 0 auto;
 }
 
 @media (max-width: 1400px) {

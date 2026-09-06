@@ -132,23 +132,25 @@ export function OverviewPage({ mapStyleUrl }: OverviewPageProps) {
 
       <div className={styles.main}>
         <div className={styles.mapColumn}>
-          <OperationsMap
-            styleUrl={mapStyleUrl}
-            selectedHazardId={asString(selectedHazard?.hazard_id)}
-            onSelectHazard={handleSelectHazard}
-            selectedAircraftId={selectedAircraftId}
-            onSelectAircraft={handleSelectAircraft}
-            projectionPoints={
-              selectedAircraftId === null
-                ? null
-                : (detail.data?.projectionPoints ?? null)
-            }
-            emphasizedHazardIds={
-              selectedAircraftId === null
-                ? NO_EMPHASIZED_HAZARDS
-                : emphasizedHazardIds
-            }
-          />
+          <div className={styles.mapFrame}>
+            <OperationsMap
+              styleUrl={mapStyleUrl}
+              selectedHazardId={asString(selectedHazard?.hazard_id)}
+              onSelectHazard={handleSelectHazard}
+              selectedAircraftId={selectedAircraftId}
+              onSelectAircraft={handleSelectAircraft}
+              projectionPoints={
+                selectedAircraftId === null
+                  ? null
+                  : (detail.data?.projectionPoints ?? null)
+              }
+              emphasizedHazardIds={
+                selectedAircraftId === null
+                  ? NO_EMPHASIZED_HAZARDS
+                  : emphasizedHazardIds
+              }
+            />
+          </div>
         </div>
 
         <aside className={styles.rail} aria-label="Operational detail">
@@ -182,7 +184,13 @@ export function OverviewPage({ mapStyleUrl }: OverviewPageProps) {
       </div>
 
       <div
-        className={`${styles.drawer} ${selectedAircraftId !== null ? styles.drawerCompact : ''}`}
+        className={[
+          styles.drawer,
+          selectedAircraftId !== null ? styles.drawerCompact : '',
+          selectedHazard !== null ? styles.drawerOccupied : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
       >
         {selectedAircraftId !== null ? (
           <SelectedAircraftStrip
