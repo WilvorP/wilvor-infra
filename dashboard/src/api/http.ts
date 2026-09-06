@@ -3,11 +3,10 @@ import { ApiError } from './errors';
 /**
  * Minimal typed HTTP layer for the Wilvor operational API.
  *
- * The operational API is GET-only, unauthenticated at the edge, and always
- * responds with `content-type: application/json`
- * (functions/operational_api/app.py `_response`). This client therefore stays
- * deliberately small: no interceptors, no retry policy (TanStack Query owns
- * retries), no request body handling.
+ * The operational API is GET-only and unauthenticated at the edge. JSON
+ * routes use `content-type: application/json`. CloudWatch widget images
+ * return `image/png`. This client stays small: no interceptors, no retry
+ * policy (TanStack Query owns retries), no request body handling.
  */
 
 export type QueryValue = string | number | boolean | null | undefined;
@@ -265,6 +264,85 @@ export class OperationalApiHttpClient {
       }
 
       return parsedBody as T;
+    } finally {
+      this.release();
+    }
+  }
+
+  /**
+   * Binary GET for CloudWatch widget PNGs.
+   *
+   * JSON error bodies from the operational API are still parsed so a 404
+   * or 400 surfaces as an ApiError instead of a generic blob failure.
+   */
+  async getBlob(path: string, options: RequestOptions = {}): Promise<Blob> {
+    await this.acquire(options.signal);
+
+    try {
+      if (options.signal?.aborted) {
+        throw (
+          options.signal.reason ??
+          new DOMException('Aborted', 'AbortError')
+        );
+      }
+
+      const url = buildUrl(this.baseUrl, path, options.params);
+      const timeout = withTimeout(this.timeoutMs, options.signal);
+
+      let response: Response;
+
+      try {
+        response = await this.fetchImpl(url, {
+          method: 'GET',
+          headers: { accept: 'image/png, application/json' },
+          signal: timeout.signal,
+          cache: 'no-store',
+          mode: 'cors',
+        });
+      } catch (cause) {
+        if (timeout.didTimeOut()) {
+          throw new ApiError(
+            `Request to ${path} timed out after ${this.timeoutMs}ms.`,
+            { kind: 'timeout', url, cause },
+          );
+        }
+
+        if (options.signal?.aborted) {
+          throw cause;
+        }
+
+        throw new ApiError(`Request to ${path} failed.`, {
+          kind: 'network',
+          url,
+          cause,
+        });
+      } finally {
+        timeout.dispose();
+      }
+
+      if (!response.ok) {
+        let parsedBody: unknown = null;
+
+        try {
+          parsedBody = await response.json();
+        } catch {
+          parsedBody = null;
+        }
+
+        const { message, requestId } = extractErrorBody(parsedBody);
+
+        throw new ApiError(
+          message ?? `Request to ${path} failed with status ${response.status}.`,
+          {
+            kind: response.status >= 500 ? 'server' : 'client',
+            status: response.status,
+            url,
+            requestId,
+          },
+        );
+      }
+
+      return response.blob();
     } finally {
       this.release();
     }

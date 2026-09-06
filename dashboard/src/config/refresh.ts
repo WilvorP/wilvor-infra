@@ -52,6 +52,11 @@ export const REFRESH = {
   freshness: policy(30),
   /** Platform and pipeline health. */
   systemHealth: policy(60),
+  /**
+   * Selected CloudWatch dashboard only. Images share this cadence so
+   * unselected dashboards are never pre-rendered.
+   */
+  cloudWatchDashboard: policy(60),
   /** Currently selected aircraft investigation detail. */
   aircraftDetail: policy(12),
   /** Currently selected airport investigation detail. */

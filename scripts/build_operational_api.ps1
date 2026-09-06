@@ -57,6 +57,10 @@ Copy-Item `
     "$FunctionDir\current_set.py" `
     "$BuildDir\current_set.py"
 
+Copy-Item `
+    "$FunctionDir\cloudwatch_dashboards.py" `
+    "$BuildDir\cloudwatch_dashboards.py"
+
 Compress-Archive `
     -Path "$BuildDir\*" `
     -DestinationPath $ZipPath `

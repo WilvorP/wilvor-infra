@@ -13,6 +13,8 @@ import type {
   OverviewResponse,
   PaginatedResponse,
   SystemHealthResponse,
+  CloudWatchDashboardView,
+  CloudWatchViewerRange,
 } from '@/types/api';
 import { asString } from '@/utils/coerce';
 
@@ -35,6 +37,61 @@ function withPolicy(policy: RefreshPolicy): {
       import.meta.env.MODE === 'test' ? false : policy.refetchIntervalMs,
     staleTime: policy.staleTimeMs,
   };
+}
+
+export function useHealth() {
+  const client = useApiClient();
+
+  return useQuery({
+    queryKey: queryKeys.health(),
+    queryFn: ({ signal }) => client.health({ signal }),
+    ...withPolicy(REFRESH.systemHealth),
+  });
+}
+
+export function useCloudWatchDashboard(
+  dashboardId: string,
+): UseQueryResult<CloudWatchDashboardView> {
+  const client = useApiClient();
+
+  return useQuery({
+    queryKey: queryKeys.cloudWatchDashboard(dashboardId),
+    queryFn: ({ signal }) =>
+      client.getCloudWatchDashboard(dashboardId, { signal }),
+    ...withPolicy(REFRESH.cloudWatchDashboard),
+  });
+}
+
+export function useCloudWatchWidgetImage(
+  dashboardId: string,
+  widgetId: string,
+  range: CloudWatchViewerRange,
+  revision: string,
+  enabled: boolean,
+  pixelSize?: { width: number; height: number } | null,
+) {
+  const client = useApiClient();
+  const width = pixelSize?.width;
+  const height = pixelSize?.height;
+
+  return useQuery({
+    queryKey: queryKeys.cloudWatchWidgetImage(
+      dashboardId,
+      widgetId,
+      range,
+      revision,
+      width,
+      height,
+    ),
+    queryFn: ({ signal }) =>
+      client.getCloudWatchWidgetImage(dashboardId, widgetId, range, {
+        signal,
+        width,
+        height,
+      }),
+    enabled,
+    ...withPolicy(REFRESH.cloudWatchDashboard),
+  });
 }
 
 export function useOverview(): UseQueryResult<OverviewResponse> {

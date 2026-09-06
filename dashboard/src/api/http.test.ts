@@ -232,11 +232,57 @@ describe('OperationalApiHttpClient.get', () => {
       http.get('/overview'),
       http.get('/freshness'),
       http.get('/system-health'),
-      http.get('/map/aircraft'),
+      http.getBlob('/system-health/dashboards/aircraft-pipeline/widgets/widget-1/image'),
       http.get('/hazards/active'),
     ]);
 
     expect(fetchImpl).toHaveBeenCalledTimes(5);
     expect(peak).toBe(2);
+  });
+});
+
+describe('OperationalApiHttpClient.getBlob', () => {
+  it('returns PNG bytes and does not send a request body', async () => {
+    const png = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(png, {
+          status: 200,
+          headers: { 'content-type': 'image/png' },
+        }),
+    );
+
+    const blob = await client(fetchImpl as unknown as typeof fetch).getBlob(
+      '/system-health/dashboards/aircraft-pipeline/widgets/widget-1/image',
+      { params: { range: '3h' } },
+    );
+
+    const init = fetchImpl.mock.calls[0]![1]!;
+
+    expect(init.method).toBe('GET');
+    expect(init).not.toHaveProperty('body');
+    expect((init.headers as Record<string, string>).accept).toBe(
+      'image/png, application/json',
+    );
+    expect(blob.type).toBe('image/png');
+    expect(new Uint8Array(await blob.arrayBuffer())).toEqual(png);
+  });
+
+  it('maps a JSON image-route error without treating it as a PNG', async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse({ message: 'Widget widget-0 is not a metric widget' }, 400),
+    );
+
+    const error = await client(fetchImpl as unknown as typeof fetch)
+      .getBlob(
+        '/system-health/dashboards/aircraft-pipeline/widgets/widget-0/image',
+      )
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect((error as ApiError).kind).toBe('client');
+    expect((error as ApiError).message).toBe(
+      'Widget widget-0 is not a metric widget',
+    );
   });
 });

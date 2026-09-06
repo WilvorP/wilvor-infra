@@ -280,12 +280,9 @@ enough to matter.
 - **Airports are not yet on the map**, though `AirportStatus` does carry
   `latitude`/`longitude`, so this needs no backend change — only pagination
   handling for the `/airports` scan.
-- **Alerts and recommendations show overview projections only.** The full
-  objects come from `/alerts/active` and `/recommendations/active`, which the
-  dedicated workflows will consume.
-- **Aircraft, Airports, Encounters, Recommendations, Alerts and System Health
-  routes are registered but not implemented.** They render explicit
-  placeholders and no data.
+- **System Health renders CloudWatch dashboards as server-side PNGs.** The
+  AWS console chrome, hover tooltips and interactive zoom are not available
+  inside Wilvor; use Open in CloudWatch for those.
 - **`deck.gl` is not used.** MapLibre's own GeoJSON source, with
   `icon-allow-overlap` and collision detection disabled, handles the fleet as
   a single GPU-backed source. It stays worth re-measuring once aircraft

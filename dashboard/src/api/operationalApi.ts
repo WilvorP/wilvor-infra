@@ -14,6 +14,8 @@ import type {
   PaginatedResponse,
   Recommendation,
   SystemHealthResponse,
+  CloudWatchDashboardView,
+  CloudWatchViewerRange,
 } from '@/types/api';
 
 /**
@@ -93,6 +95,33 @@ export class OperationalApiClient {
 
   systemHealth(options: RequestOptions = {}): Promise<SystemHealthResponse> {
     return this.http.get<SystemHealthResponse>('/system-health', options);
+  }
+
+  getCloudWatchDashboard(
+    dashboardId: string,
+    options: RequestOptions = {},
+  ): Promise<CloudWatchDashboardView> {
+    return this.http.get<CloudWatchDashboardView>(
+      `/system-health/dashboards/${encodeURIComponent(dashboardId)}`,
+      options,
+    );
+  }
+
+  getCloudWatchWidgetImage(
+    dashboardId: string,
+    widgetId: string,
+    range: CloudWatchViewerRange,
+    options: RequestOptions & {
+      width?: number;
+      height?: number;
+    } = {},
+  ): Promise<Blob> {
+    const { width, height, ...request } = options;
+
+    return this.http.getBlob(
+      `/system-health/dashboards/${encodeURIComponent(dashboardId)}/widgets/${encodeURIComponent(widgetId)}/image`,
+      { ...request, params: { range, width, height } },
+    );
   }
 
   /**

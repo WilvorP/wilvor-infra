@@ -9,12 +9,36 @@ locals {
     )
   )
 
+  cloudwatch_dashboard_ids = [
+    "aircraft-pipeline",
+    "aircraft-hazard-encounter",
+    "projection-pipeline",
+    "sigmet-pipeline",
+    "metar-pipeline",
+    "taf-pipeline",
+    "weather-events",
+    "hazard-station-candidates",
+    "airport-status",
+    "airport-assessment",
+    "risk-pipeline",
+    "recommendations",
+    "active-alerts",
+    "runway-metadata",
+  ]
+
+  cloudwatch_dashboard_arns = [
+    for dashboard_id in local.cloudwatch_dashboard_ids :
+    "arn:aws:cloudwatch::${data.aws_caller_identity.current.account_id}:dashboard/${var.name_prefix}-${dashboard_id}"
+  ]
+
   route_keys = toset([
   "GET /health",
 
   "GET /overview",
   "GET /freshness",
   "GET /system-health",
+  "GET /system-health/dashboards/{dashboardId}",
+  "GET /system-health/dashboards/{dashboardId}/widgets/{widgetId}/image",
 
   "GET /aircraft",
   "GET /aircraft/{aircraftId}",
@@ -34,6 +58,8 @@ locals {
   "GET /alerts/active",
   ])
 }
+
+data "aws_caller_identity" "current" {}
 
 
 # =====================================================================
@@ -113,6 +139,29 @@ data "aws_iam_policy_document" "lambda" {
       "cloudwatch:DescribeAlarms",
       "cloudwatch:GetMetricStatistics",
       "lambda:GetAccountSettings",
+    ]
+
+    resources = [
+      "*",
+    ]
+  }
+
+  statement {
+    sid = "ReadAllowlistedDashboards"
+
+    actions = [
+      "cloudwatch:GetDashboard",
+    ]
+
+    resources = local.cloudwatch_dashboard_arns
+  }
+
+  statement {
+    sid = "RenderDashboardMetricWidgets"
+
+    # GetMetricWidgetImage does not support resource-level IAM.
+    actions = [
+      "cloudwatch:GetMetricWidgetImage",
     ]
 
     resources = [

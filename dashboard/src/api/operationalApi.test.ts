@@ -28,9 +28,23 @@ describe('OperationalApiClient routes', () => {
   it('targets the documented route paths', async () => {
     const cases: Array<[string, (c: ReturnType<typeof clientWith>) => unknown]> =
       [
+        ['/health', (c) => c.health()],
         ['/overview', (c) => c.overview()],
         ['/freshness', (c) => c.freshness()],
         ['/system-health', (c) => c.systemHealth()],
+        [
+          '/system-health/dashboards/aircraft-pipeline',
+          (c) => c.getCloudWatchDashboard('aircraft-pipeline'),
+        ],
+        [
+          '/system-health/dashboards/aircraft-pipeline/widgets/widget-1/image?range=3h',
+          (c) =>
+            c.getCloudWatchWidgetImage(
+              'aircraft-pipeline',
+              'widget-1',
+              '3h',
+            ),
+        ],
         ['/map/aircraft', (c) => c.mapAircraft()],
         ['/hazards/active', (c) => c.listActiveHazards()],
         ['/encounters/active', (c) => c.listActiveEncounters()],
@@ -233,6 +247,40 @@ describe('OperationalApiClient guard rails', () => {
     await expect(
       clientWith(fetchImpl).listActiveEncounters({ limit: 50 }),
     ).resolves.toBeDefined();
+  });
+
+  it('requests widget images by allowlisted ids and range only', async () => {
+    const fetchImpl = stubFetch();
+
+    await clientWith(fetchImpl).getCloudWatchWidgetImage(
+      'aircraft-pipeline',
+      'widget-1',
+      '6h',
+    );
+
+    const [url, init] = fetchImpl.mock.calls[0]!;
+
+    expect(url).toBe(
+      'https://api.example.test/system-health/dashboards/aircraft-pipeline/widgets/widget-1/image?range=6h',
+    );
+    expect(init?.method).toBe('GET');
+    expect(init).not.toHaveProperty('body');
+    expect(url).not.toMatch(/metrics|MetricWidget/i);
+  });
+
+  it('forwards display pixels for CloudWatch image sizing', async () => {
+    const fetchImpl = stubFetch();
+
+    await clientWith(fetchImpl).getCloudWatchWidgetImage(
+      'aircraft-pipeline',
+      'widget-1',
+      '3h',
+      { width: 960, height: 420 },
+    );
+
+    expect(requestedUrl(fetchImpl)).toBe(
+      'https://api.example.test/system-health/dashboards/aircraft-pipeline/widgets/widget-1/image?range=3h&width=960&height=420',
+    );
   });
 
   it('rejects combining callsign and h3Cell, which the API forbids', async () => {

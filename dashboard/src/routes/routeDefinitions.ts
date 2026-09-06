@@ -58,17 +58,17 @@ export const ROUTES: readonly RouteDefinition[] = [
   {
     path: '/alerts',
     navLabel: 'Alerts',
-    title: 'Active Alerts',
+    title: 'Current Alerts',
     description:
-      'Active alert lifecycle feed across new, escalated, updated and monitored states.',
-    implemented: false,
+      'What operational alerts require attention right now, what state they are in, and what changed.',
+    implemented: true,
   },
   {
-    path: '/health',
+    path: '/system-health',
     navLabel: 'System Health',
     title: 'Data & System Health',
     description:
-      'Source freshness, pipeline health, Lambda capacity and active CloudWatch alarms.',
-    implemented: false,
+      'Wilvor-native health plus the existing CloudWatch infrastructure dashboards.',
+    implemented: true,
   },
 ] as const;

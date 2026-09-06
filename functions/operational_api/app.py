@@ -1,9 +1,11 @@
+import base64
 import json
 import logging
 from decimal import Decimal
 
 from botocore.exceptions import ClientError
 
+import cloudwatch_dashboards
 import repository
 
 
@@ -29,6 +31,20 @@ def _json_default(value):
         f"Object of type {type(value).__name__} "
         "is not JSON serializable"
     )
+
+
+def _png_response(png_bytes, cache_seconds=30):
+    return {
+        "statusCode": 200,
+        "headers": {
+            "content-type": "image/png",
+            "cache-control": (
+                f"public, max-age={cache_seconds}"
+            ),
+        },
+        "isBase64Encoded": True,
+        "body": base64.b64encode(png_bytes).decode("ascii"),
+    }
 
 
 def _response(status_code, body):
@@ -104,6 +120,62 @@ def _request_meta(event):
             event.get("rawPath")
         ),
     }
+
+
+def _handle_cloudwatch_dashboard(
+    path,
+    path_params,
+    params,
+):
+    parts = [
+        part
+        for part in path.split("/")
+        if part
+    ]
+
+    # system-health / dashboards / {id}
+    # system-health / dashboards / {id} / widgets / {widgetId} / image
+    if (
+        len(parts) < 3
+        or parts[0] != "system-health"
+        or parts[1] != "dashboards"
+    ):
+        raise BadRequest("Invalid dashboard path")
+
+    dashboard_id = (
+        path_params.get("dashboardId")
+        or parts[2]
+    )
+
+    if len(parts) == 3:
+        return _response(
+            200,
+            cloudwatch_dashboards.get_dashboard_view(
+                dashboard_id
+            ),
+        )
+
+    if (
+        len(parts) == 6
+        and parts[3] == "widgets"
+        and parts[5] == "image"
+    ):
+        widget_id = (
+            path_params.get("widgetId")
+            or parts[4]
+        )
+
+        png = cloudwatch_dashboards.get_widget_image(
+            dashboard_id,
+            widget_id,
+            params.get("range"),
+            params.get("width"),
+            params.get("height"),
+        )
+
+        return _png_response(png)
+
+    raise BadRequest("Invalid dashboard path")
 
 
 def lambda_handler(
@@ -211,6 +283,22 @@ def lambda_handler(
             return _response(
                 200,
                 repository.get_system_health(),
+            )
+
+        # =============================================================
+        # CLOUDWATCH DASHBOARD RENDER
+        #
+        # Stable IDs only. Metric definitions come from GetDashboard,
+        # never from the caller.
+        # =============================================================
+
+        if path.startswith(
+            "/system-health/dashboards/"
+        ):
+            return _handle_cloudwatch_dashboard(
+                path,
+                path_params,
+                params,
             )
 
         # =============================================================
@@ -541,6 +629,20 @@ def lambda_handler(
         )
 
     except (
+        cloudwatch_dashboards.UnknownDashboard,
+        cloudwatch_dashboards.UnknownWidget,
+    ) as exc:
+        return _response(
+            404,
+            {
+                "message": str(exc)
+            },
+        )
+
+    except (
+        cloudwatch_dashboards.WidgetNotMetric,
+        cloudwatch_dashboards.BadTimeRange,
+        cloudwatch_dashboards.BadImageSize,
         BadRequest,
         ValueError,
     ) as exc:

@@ -11,6 +11,26 @@ export const queryKeys = {
   overview: () => [...queryKeys.all, 'overview'] as const,
   freshness: () => [...queryKeys.all, 'freshness'] as const,
   systemHealth: () => [...queryKeys.all, 'system-health'] as const,
+  cloudWatchDashboard: (dashboardId: string) =>
+    [...queryKeys.all, 'cloudwatch-dashboard', dashboardId] as const,
+  cloudWatchWidgetImage: (
+    dashboardId: string,
+    widgetId: string,
+    range: string,
+    revision: string,
+    width?: number,
+    height?: number,
+  ) =>
+    [
+      ...queryKeys.all,
+      'cloudwatch-widget-image',
+      dashboardId,
+      widgetId,
+      range,
+      revision,
+      width ?? 'auto',
+      height ?? 'auto',
+    ] as const,
 
   aircraftList: (params: Record<string, unknown> = {}) =>
     [...queryKeys.all, 'aircraft', 'list', params] as const,

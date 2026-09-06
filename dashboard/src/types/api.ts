@@ -119,6 +119,31 @@ export interface SystemHealthResponse {
   } | null;
 }
 
+export type CloudWatchViewerRange = '1h' | '3h' | '6h' | '12h' | '24h';
+
+export interface CloudWatchDashboardWidget {
+  id?: string;
+  type?: string | null;
+  x?: number | null;
+  y?: number | null;
+  width?: number | null;
+  height?: number | null;
+  title?: string | null;
+  markdown?: string | null;
+  supported?: boolean | null;
+}
+
+/** `GET /system-health/dashboards/{dashboardId}` */
+export interface CloudWatchDashboardView {
+  id?: string;
+  name?: string | null;
+  awsDashboardName?: string | null;
+  generatedAt?: string | null;
+  revision?: string | null;
+  gridColumns?: number | null;
+  widgets?: CloudWatchDashboardWidget[] | null;
+}
+
 /* ------------------------------------------------------------------ */
 /* Domain records (raw DynamoDB items)                                */
 /* ------------------------------------------------------------------ */
