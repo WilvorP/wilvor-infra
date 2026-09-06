@@ -15,12 +15,12 @@ export interface AlertsSummaryPanelProps {
 }
 
 /**
- * Active alert counts by lifecycle state.
+ * Retained alert state counts from `overview.alerts.byState`.
  *
- * `/overview` returns state counts only; the individual alert objects come
- * from `GET /alerts/active`, which the dedicated Alerts workflow will consume.
- * That limitation is stated in the panel rather than filled with placeholder
- * rows.
+ * Overview no longer uses this panel: the KPI reads
+ * `overview.alerts.currentCount`, and individual current alerts come from
+ * `GET /alerts/active` via the worklist. `byState` remains the retained
+ * ACTIVE+valid_until mix and must not be labelled as the current set.
  */
 export function AlertsSummaryPanel({
   activeCount,

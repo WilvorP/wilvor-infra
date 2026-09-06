@@ -177,7 +177,7 @@ resource "aws_lambda_function" "risk_processor" {
       )
 
       SCORING_RULESET_VERSION = (
-        "wilvor.risk.ruleset.v1"
+        "wilvor.risk.ruleset.v2"
       )
 
       SCORING_CONFIG_VERSION = (

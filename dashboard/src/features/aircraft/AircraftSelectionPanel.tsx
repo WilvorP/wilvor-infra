@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 
 import { describeApiError, isApiError } from '@/api/errors';
 import { DataField, DataFieldGrid } from '@/components/DataField';
@@ -10,6 +10,7 @@ import type {
   ActiveAlert,
   AircraftCurrentState,
   AircraftHazardEncounter,
+  AircraftOperationalContext,
   AircraftProjection,
   AircraftProjectionPoint,
   Recommendation,
@@ -38,12 +39,16 @@ import {
 
 import {
   asRecordList,
+  contextSelectionIsExplicit,
   formatAdvisoryAction,
   formatEvidenceReference,
   formatSourceVersions,
+  highestCurrentRisk,
   latestRecommendation,
   latestRisk,
+  matchCurrentContext,
   uniqueHorizons,
+  type ContextSelection,
 } from './investigation';
 import styles from './AircraftSelectionPanel.module.css';
 
@@ -53,23 +58,37 @@ export interface AircraftSelectionPanelProps {
   /** Resolved from the latest poll, or `null` if it dropped out of the feed. */
   aircraft: MapAircraft | null;
   onClose: () => void;
+  /**
+   * Explicit current-context IDs from the worklist. Matched by stored IDs,
+   * never by latest timestamp.
+   */
+  contextSelection?: ContextSelection | null;
   /** Clock source, injectable so age rendering is testable. */
   now?: number;
+  /**
+   * `standalone` keeps a self-contained header for isolated tests.
+   * `page` is the dedicated investigation surface; page chrome owns identity.
+   */
+  variant?: 'standalone' | 'page';
+  /** Investigation map, rendered in the spatial column. */
+  children?: ReactNode;
 }
 
 /**
- * Operational investigation surface for an aircraft selected on the map.
+ * Operational investigation surface for a selected aircraft.
  *
- * Map-level fields come from `/map/aircraft` and stay visible while
- * `GET /aircraft/{aircraftId}` loads. Detail sections render only attributes
- * the endpoint actually returns. Risk, recommendation and overlap values are
- * presented as stored — never recalculated here.
+ * Map-level fields stay visible while `GET /aircraft/{aircraftId}` loads.
+ * Risk, recommendation and overlap values are presented as stored — never
+ * recalculated here.
  */
 export function AircraftSelectionPanel({
   aircraftId,
   aircraft,
   onClose,
+  contextSelection = null,
   now = Date.now(),
+  variant = 'standalone',
+  children,
 }: AircraftSelectionPanelProps) {
   const detailQuery = useAircraftDetail(aircraftId);
   const detail = detailQuery.data;
@@ -84,6 +103,34 @@ export function AircraftSelectionPanel({
 
   const current = detail?.aircraft ?? null;
   const callsign = aircraft?.callsign ?? asString(current?.callsign);
+  const contexts = asRecordList(detail?.currentContexts);
+  const matched = matchCurrentContext(contexts, contextSelection);
+  const expectingMatch = contextSelectionIsExplicit(contextSelection);
+  const [viewedOverrideKey, setViewedOverrideKey] = useState<string | null>(
+    null,
+  );
+
+  useEffect(() => {
+    setViewedOverrideKey(null);
+  }, [
+    aircraftId,
+    contextSelection?.encounterId,
+    contextSelection?.recommendationId,
+    contextSelection?.riskId,
+    contextSelection?.alertId,
+    contextSelection?.fingerprint,
+  ]);
+
+  const viewed = useMemo(
+    () =>
+      resolveViewedContext(
+        contexts,
+        matched,
+        expectingMatch,
+        viewedOverrideKey,
+      ),
+    [contexts, matched, expectingMatch, viewedOverrideKey],
+  );
 
   const header = (
     <div className={styles.header}>
@@ -96,11 +143,13 @@ export function AircraftSelectionPanel({
         </span>
       </div>
 
-      {latestRisk(detail?.recentRisks) ? (
+      {highestCurrentRisk(detail?.currentContexts) ? (
         <StatusPill
           size="sm"
           prefix="Risk"
-          presentation={presentRiskLevel(latestRisk(detail?.recentRisks)?.risk_level)}
+          presentation={presentRiskLevel(
+            highestCurrentRisk(detail?.currentContexts)?.risk_level,
+          )}
         />
       ) : null}
 
@@ -111,10 +160,10 @@ export function AircraftSelectionPanel({
   );
 
   return (
-    <div className={styles.panel}>
-      {header}
+    <div className={variant === 'page' ? styles.pageRoot : styles.panel}>
+      {variant === 'standalone' ? header : null}
 
-      <div className={styles.body}>
+      <div className={variant === 'page' ? styles.pageBody : styles.body}>
         {aircraft === null ? (
           <Notice tone="warning">
             This aircraft was not present in the most recent map refresh. It
@@ -148,28 +197,59 @@ export function AircraftSelectionPanel({
           </Notice>
         ) : null}
 
-        <div className={styles.sections}>
-          <IdentitySection
-            aircraftId={aircraftId}
-            aircraft={aircraft}
-            current={current}
-            now={now}
-          />
+        <div className={styles.layout}>
+          <div className={styles.decision}>
+            {detail !== undefined && !notFound ? (
+              <>
+                <CurrentContextSection
+                  contexts={contexts}
+                  viewed={viewed}
+                  matched={matched}
+                  expectingMatch={expectingMatch}
+                  viewedKey={contextKey(viewed)}
+                  onView={setViewedOverrideKey}
+                />
+                <WhySection context={viewed} />
+              </>
+            ) : null}
+          </div>
 
-          {detail !== undefined && !notFound ? (
-            <>
+          <div className={styles.spatial}>
+            {children != null ? (
+              <div className={styles.mapSlot}>{children}</div>
+            ) : null}
+
+            <IdentitySection
+              aircraft={aircraft}
+              current={current}
+              now={now}
+            />
+
+            {detail !== undefined && !notFound ? (
               <ProjectionSection
                 projection={detail.projection ?? null}
                 points={detail.projectionPoints}
                 now={now}
               />
-              <EncounterSection encounters={detail.recentEncounters} />
-              <RiskSection risks={detail.recentRisks} />
-              <RecommendationSection
-                recommendations={detail.recentRecommendations}
-              />
-              <AlertSection alerts={detail.recentAlerts} />
-            </>
+            ) : null}
+          </div>
+
+          {detail !== undefined && !notFound ? (
+            <div className={styles.history}>
+              <details className={styles.historyDetails}>
+                <summary className={styles.historySummary}>
+                  Recent history
+                </summary>
+                <div className={styles.historyBody}>
+                  <EncounterSection encounters={detail.recentEncounters} />
+                  <RiskSection risks={detail.recentRisks} />
+                  <RecommendationSection
+                    recommendations={detail.recentRecommendations}
+                  />
+                  <AlertSection alerts={detail.recentAlerts} />
+                </div>
+              </details>
+            </div>
           ) : null}
         </div>
       </div>
@@ -177,13 +257,62 @@ export function AircraftSelectionPanel({
   );
 }
 
+function contextKey(
+  context: AircraftOperationalContext | null | undefined,
+  index = 0,
+): string {
+  if (context == null) {
+    return '';
+  }
+
+  return (
+    asString(context.encounter?.encounter_id) ??
+    asString(context.risk?.risk_id) ??
+    asString(context.recommendation?.recommendation_id) ??
+    asString(context.alert?.alert_id) ??
+    asString(context.alert?.fingerprint) ??
+    `index:${index}`
+  );
+}
+
+/**
+ * Viewing target for the decision columns.
+ *
+ * Worklist IDs still go through `matchCurrentContext`. A chip click is an
+ * explicit operator choice, not a recency fallback.
+ */
+function resolveViewedContext(
+  items: readonly AircraftOperationalContext[],
+  matched: AircraftOperationalContext | null,
+  expectingMatch: boolean,
+  viewedOverrideKey: string | null,
+): AircraftOperationalContext | null {
+  if (viewedOverrideKey !== null) {
+    const override = items.find(
+      (context, index) => contextKey(context, index) === viewedOverrideKey,
+    );
+
+    if (override != null) {
+      return override;
+    }
+  }
+
+  if (matched != null) {
+    return matched;
+  }
+
+  if (expectingMatch) {
+    return null;
+  }
+
+  return items[0] ?? null;
+}
+
 function IdentitySection({
-  aircraftId,
   aircraft,
   current,
   now,
 }: {
-  aircraftId: string;
   aircraft: MapAircraft | null;
   current: AircraftCurrentState | null;
   now: number;
@@ -208,10 +337,8 @@ function IdentitySection({
         secondsSince(current?.position_time_utc, now));
 
   return (
-    <Section title="Current state" wide>
+    <Section title="Current state">
       <DataFieldGrid columns={3}>
-        <DataField label="Callsign" value={formatAircraftLabel(aircraft?.callsign ?? current?.callsign, aircraftId)} />
-        <DataField label="Aircraft ID" value={aircraftId.toUpperCase()} numeric />
         <DataField
           label="Latitude"
           value={formatNumber(latitude, { digits: 4 })}
@@ -227,9 +354,8 @@ function IdentitySection({
           value={track === null ? NOT_REPORTED : `${formatNumber(track)}° true`}
           numeric
         />
-
         <DataField
-          label="Barometric altitude"
+          label="Altitude"
           value={
             baroAltitude === null
               ? NOT_REPORTED
@@ -238,7 +364,7 @@ function IdentitySection({
           numeric
         />
         <DataField
-          label="Ground speed"
+          label="Speed"
           value={
             groundSpeed === null
               ? NOT_REPORTED
@@ -251,7 +377,6 @@ function IdentitySection({
           value={ageSeconds === null ? NOT_REPORTED : formatAge(ageSeconds)}
           numeric
         />
-
         <DataField
           label="Position time"
           value={formatUtcDateTime(positionIso)}
@@ -259,19 +384,6 @@ function IdentitySection({
         />
         {current != null ? (
           <>
-            <DataField
-              label="Origin country"
-              value={asString(current.origin_country) ?? NOT_REPORTED}
-            />
-            <DataField
-              label="Geometric altitude"
-              value={
-                asNumber(current.geo_altitude_ft) === null
-                  ? NOT_REPORTED
-                  : formatNumber(current.geo_altitude_ft, { unit: 'ft' })
-              }
-              numeric
-            />
             <DataField
               label="Vertical rate"
               value={
@@ -299,9 +411,22 @@ function IdentitySection({
               }
             />
             <DataField
+              label="Geometric altitude"
+              value={
+                asNumber(current.geo_altitude_ft) === null
+                  ? NOT_REPORTED
+                  : formatNumber(current.geo_altitude_ft, { unit: 'ft' })
+              }
+              numeric
+            />
+            <DataField
               label="Current H3 cell"
               value={asString(current.current_h3_cell) ?? NOT_REPORTED}
               numeric
+            />
+            <DataField
+              label="Origin country"
+              value={asString(current.origin_country) ?? NOT_REPORTED}
             />
           </>
         ) : null}
@@ -337,11 +462,6 @@ function ProjectionSection({
         <>
           <DataFieldGrid columns={3}>
             <DataField
-              label="Created"
-              value={formatUtcDateTime(projection.generated_at_utc)}
-              numeric
-            />
-            <DataField
               label="Horizon"
               value={
                 asNumber(projection.projection_horizon_min) === null
@@ -366,6 +486,15 @@ function ProjectionSection({
               }
             />
             <DataField
+              label="Status"
+              value={humaniseToken(projection.projection_status)}
+            />
+            <DataField
+              label="Created"
+              value={formatUtcDateTime(projection.generated_at_utc)}
+              numeric
+            />
+            <DataField
               label="Valid until"
               value={formatUtcDateTime(projection.valid_until_utc)}
               numeric
@@ -374,10 +503,6 @@ function ProjectionSection({
               label="Projection age"
               value={age === null ? NOT_REPORTED : formatAge(age)}
               numeric
-            />
-            <DataField
-              label="Status"
-              value={humaniseToken(projection.projection_status)}
             />
             <DataField
               label="Point count"
@@ -392,13 +517,6 @@ function ProjectionSection({
                   : horizons.map((h) => `${h} min`).join(', ')
               }
               numeric
-            />
-            <DataField
-              label="Trigger hazards"
-              value={
-                asStringArray(projection.trigger_hazard_ids).join(', ') ||
-                NOT_REPORTED
-              }
             />
           </DataFieldGrid>
 
@@ -444,6 +562,299 @@ function ProjectionSection({
   );
 }
 
+function CurrentContextSection({
+  contexts,
+  viewed,
+  matched,
+  expectingMatch,
+  viewedKey,
+  onView,
+}: {
+  contexts: readonly AircraftOperationalContext[];
+  viewed: AircraftOperationalContext | null;
+  matched: AircraftOperationalContext | null;
+  expectingMatch: boolean;
+  viewedKey: string;
+  onView: (key: string) => void;
+}) {
+  const items = contexts;
+
+  return (
+    <Section
+      title="Current decision context"
+      note="Current aircraft-hazard chain joined by stored IDs. History is below."
+    >
+      {expectingMatch && items.length > 0 && matched == null ? (
+        <Notice tone="warning">
+          The selected worklist record is not among this aircraft&apos;s
+          current contexts. Matching used stored encounter, risk and alert
+          IDs only — not the latest timestamp.
+        </Notice>
+      ) : null}
+
+      {items.length === 0 ? (
+        <p className={styles.empty}>
+          No current encounter is supported by the current projection and
+          hazard version.
+        </p>
+      ) : (
+        <>
+          {items.length > 1 ? (
+            <div className={styles.contextSwitch}>
+              <p className={styles.contextCount}>
+                Current contexts ({items.length})
+              </p>
+              <div className={styles.chips} role="tablist" aria-label="Current contexts">
+                {items.map((context, index) => {
+                  const key = contextKey(context, index);
+                  const hazardId =
+                    asString(context.encounter?.hazard_id) ?? NOT_REPORTED;
+                  const hazardType = humaniseToken(context.encounter?.hazard_type);
+                  const selected = key === viewedKey;
+
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      role="tab"
+                      aria-selected={selected}
+                      className={`${styles.chip} ${selected ? styles.chipActive : ''}`}
+                      onClick={() => onView(key)}
+                    >
+                      {hazardType === NOT_REPORTED
+                        ? hazardId
+                        : `${hazardType} · ${hazardId}`}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          {viewed != null ? (
+            <CurrentContextCard
+              context={viewed}
+              selected={viewed === matched}
+            />
+          ) : items.length > 0 && expectingMatch ? null : (
+            <p className={styles.empty}>
+              Select a current context to inspect the decision chain.
+            </p>
+          )}
+        </>
+      )}
+    </Section>
+  );
+}
+
+function CurrentContextCard({
+  context,
+  selected,
+}: {
+  context: AircraftOperationalContext;
+  selected: boolean;
+}) {
+  const encounter = context.encounter ?? null;
+  const risk = context.risk ?? null;
+  const recommendation = context.recommendation ?? null;
+  const alert = context.alert ?? null;
+  const advisory = asString(recommendation?.primary_action_details?.advisory);
+  const riskPresentation = risk
+    ? presentRiskLevel(risk.risk_level)
+    : null;
+
+  return (
+    <article
+      className={`${styles.card} ${styles.decisionCard} ${selected ? styles.cardSelected : ''}`}
+      aria-current={selected ? 'true' : undefined}
+    >
+      {selected ? (
+        <span className={styles.selectedMark}>Selected context</span>
+      ) : null}
+
+      {risk ? (
+        <div className={styles.riskBlock}>
+          <p className={styles.kicker}>Risk</p>
+          <div className={styles.riskRow}>
+            <span
+              className={`${styles.riskLevel} ${styles[`tone_${riskPresentation?.tone ?? 'unknown'}`]}`}
+            >
+              <span aria-hidden="true">{riskPresentation?.glyph} </span>
+              {riskPresentation?.label.toUpperCase()}
+            </span>
+            <span className={styles.score}>
+              Score {formatRiskScore(risk.risk_score)}
+            </span>
+            {risk.confidence ? (
+              <StatusPill
+                size="sm"
+                prefix="Confidence"
+                presentation={presentConfidence(risk.confidence)}
+              />
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+
+      {recommendation ? (
+        <div className={styles.advisoryBlock}>
+          <p className={styles.kicker}>Primary advisory</p>
+          <p className={styles.advisoryHero}>
+            {formatAdvisoryAction(recommendation.primary_action_type)}
+          </p>
+          {advisory ? <p className={styles.advisory}>{advisory}</p> : null}
+          <DataFieldGrid columns={2}>
+            {recommendation.confidence ? (
+              <DataField
+                label="Confidence"
+                value={
+                  <StatusPill
+                    size="sm"
+                    presentation={presentConfidence(recommendation.confidence)}
+                  />
+                }
+              />
+            ) : null}
+            <DataField
+              label="Valid until"
+              value={formatUtcDateTime(recommendation.valid_until_utc)}
+              numeric
+            />
+            <DataField
+              label="Preferred airport"
+              value={
+                asString(recommendation.preferred_airport_id) ?? NOT_REPORTED
+              }
+            />
+          </DataFieldGrid>
+        </div>
+      ) : null}
+
+      {alert ? (
+        <StatusPill
+          size="sm"
+          prefix="Alert"
+          presentation={presentAlertState(alert.alert_state)}
+        />
+      ) : null}
+
+      {encounter ? (
+        <DataFieldGrid columns={2}>
+          <DataField
+            label="Hazard ID"
+            value={asString(encounter.hazard_id) ?? NOT_REPORTED}
+            numeric
+          />
+          <DataField
+            label="Hazard type"
+            value={humaniseToken(encounter.hazard_type)}
+          />
+          <DataField
+            label="Inside now"
+            value={formatBoolean(encounter.inside_now)}
+          />
+          <OverlapField
+            label="Geometry overlap"
+            value={encounter.geometry_overlap_status}
+          />
+          <OverlapField
+            label="Time overlap"
+            value={encounter.time_overlap_status}
+          />
+          <OverlapField
+            label="Altitude overlap"
+            value={encounter.altitude_overlap_status}
+            prefix="Altitude"
+          />
+          <DataField
+            label="Trajectory confidence"
+            value={
+              encounter.trajectory_confidence ? (
+                <StatusPill
+                  size="sm"
+                  presentation={presentConfidence(
+                    encounter.trajectory_confidence,
+                  )}
+                />
+              ) : (
+                NOT_REPORTED
+              )
+            }
+          />
+          <DataField
+            label="Encounter state"
+            value={humaniseToken(encounter.encounter_state)}
+          />
+        </DataFieldGrid>
+      ) : (
+        <p className={styles.empty}>
+          Current context is missing its encounter record.
+        </p>
+      )}
+
+      <details className={styles.expand}>
+        <summary>Record IDs</summary>
+        <DataFieldGrid columns={2}>
+          <DataField
+            label="Encounter ID"
+            value={asString(encounter?.encounter_id) ?? NOT_REPORTED}
+            numeric
+          />
+          <DataField
+            label="Risk ID"
+            value={asString(risk?.risk_id) ?? NOT_REPORTED}
+            numeric
+          />
+          <DataField
+            label="Recommendation ID"
+            value={asString(recommendation?.recommendation_id) ?? NOT_REPORTED}
+            numeric
+          />
+          <DataField
+            label="Alert ID"
+            value={asString(alert?.alert_id) ?? NOT_REPORTED}
+            numeric
+          />
+        </DataFieldGrid>
+      </details>
+    </article>
+  );
+}
+
+function WhySection({
+  context,
+}: {
+  context: AircraftOperationalContext | null;
+}) {
+  if (context == null) {
+    return null;
+  }
+
+  const reasons = [
+    ...asStringArray(context.risk?.reasons),
+    ...asStringArray(context.recommendation?.reasons),
+  ];
+  const limitations = [
+    ...asStringArray(context.risk?.limitations),
+    ...asStringArray(context.recommendation?.limitations),
+  ];
+
+  if (reasons.length === 0 && limitations.length === 0) {
+    return null;
+  }
+
+  return (
+    <Section title="Why this is flagged">
+      <StringList title="Why" values={dedupeStrings(reasons)} tone="why" />
+      <StringList
+        title="Uncertainties / limitations"
+        values={dedupeStrings(limitations)}
+        tone="limit"
+      />
+    </Section>
+  );
+}
+
 function EncounterSection({
   encounters,
 }: {
@@ -453,8 +864,8 @@ function EncounterSection({
 
   return (
     <Section
-      title="Hazard encounters"
-      note="Altitude overlap is not evaluated by the backend and is stored as Unknown."
+      title="Recent encounters"
+      note="Historical and superseded rows. Do not combine these with current context as one decision."
     >
       {items.length === 0 ? (
         <p className={styles.empty}>No encounters were returned.</p>
@@ -597,7 +1008,10 @@ function RiskSection({
   const risk = latestRisk(items);
 
   return (
-    <Section title="Risk">
+    <Section
+      title="Recent risk results"
+      note="History only. Current risk is in Current decision context."
+    >
       {risk == null ? (
         <p className={styles.empty}>No risk result was returned.</p>
       ) : (
@@ -722,8 +1136,8 @@ function RecommendationSection({
 
   return (
     <Section
-      title="Recommendation"
-      note="Advisory decision support only. Wording is preserved as returned."
+      title="Recent recommendations"
+      note="Historical advisory rows. Current recommendation is joined in Current decision context."
     >
       {recommendation == null ? (
         <p className={styles.empty}>No recommendation was returned.</p>
@@ -882,7 +1296,10 @@ function AlertSection({
   const items = asRecordList(alerts);
 
   return (
-    <Section title="Alert context">
+    <Section
+      title="Recent alerts"
+      note="Historical alert rows. Current alert is joined in Current decision context."
+    >
       {items.length === 0 ? (
         <p className={styles.empty}>No alerts were returned.</p>
       ) : (
@@ -959,16 +1376,14 @@ function AlertCard({ alert }: { alert: ActiveAlert }) {
 function Section({
   title,
   note,
-  wide = false,
   children,
 }: {
   title: string;
   note?: string;
-  wide?: boolean;
   children: ReactNode;
 }) {
   return (
-    <section className={`${styles.section} ${wide ? styles.sectionWide : ''}`}>
+    <section className={styles.section}>
       <header className={styles.sectionHeader}>
         <h3 className={styles.sectionTitle}>{title}</h3>
         {note ? <p className={styles.sectionNote}>{note}</p> : null}
@@ -1007,7 +1422,15 @@ function OverlapField({
   );
 }
 
-function StringList({ title, values }: { title: string; values: string[] }) {
+function StringList({
+  title,
+  values,
+  tone,
+}: {
+  title: string;
+  values: string[];
+  tone?: 'why' | 'limit';
+}) {
   if (values.length === 0) {
     return null;
   }
@@ -1015,11 +1438,47 @@ function StringList({ title, values }: { title: string; values: string[] }) {
   return (
     <div className={styles.listBlock}>
       <h4 className={styles.listHeading}>{title}</h4>
-      <ul className={styles.reasonList}>
-        {values.map((value) => (
-          <li key={value}>{value}</li>
+      <ul
+        className={
+          tone === 'why'
+            ? styles.whyList
+            : tone === 'limit'
+              ? styles.limitList
+              : styles.reasonList
+        }
+      >
+        {values.map((value, index) => (
+          <li key={`${title}:${index}:${value}`}>
+            {tone === 'why' ? (
+              <span className={styles.listMark} aria-hidden="true">
+                ✓
+              </span>
+            ) : null}
+            {tone === 'limit' ? (
+              <span className={styles.listMark} aria-hidden="true">
+                !
+              </span>
+            ) : null}
+            <span>{value}</span>
+          </li>
         ))}
       </ul>
     </div>
   );
+}
+
+function dedupeStrings(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+
+  for (const value of values) {
+    if (seen.has(value)) {
+      continue;
+    }
+
+    seen.add(value);
+    unique.push(value);
+  }
+
+  return unique;
 }

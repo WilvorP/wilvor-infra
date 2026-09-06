@@ -41,6 +41,19 @@ spec.loader.exec_module(app)
 NOW = 1_700_000_000
 
 
+def stub_current_projection(monkeypatch, current=None):
+    monkeypatch.setattr(
+        app,
+        "projection_is_operationally_current",
+        lambda *args, **kwargs: True,
+    )
+    monkeypatch.setattr(
+        app,
+        "supersede_stale_encounters",
+        lambda **kwargs: 0,
+    )
+
+
 def projection():
     return {
         "projection_id": "proj-1",
@@ -138,6 +151,7 @@ def test_projection_ready_writes_encounter(monkeypatch):
     written = []
     events = []
 
+    stub_current_projection(monkeypatch)
     monkeypatch.setattr(app, "now_epoch", lambda: NOW)
     monkeypatch.setattr(app, "get_projection", lambda projection_id: projection())
     monkeypatch.setattr(app, "query_projection_cells", lambda projection_id: [projection_cell()])
@@ -178,6 +192,7 @@ def test_building_hazard_is_skipped(monkeypatch):
     bad_hazard = hazard()
     bad_hazard["materialization_status"] = "BUILDING"
 
+    stub_current_projection(monkeypatch)
     monkeypatch.setattr(app, "now_epoch", lambda: NOW)
     monkeypatch.setattr(app, "get_projection", lambda projection_id: projection())
     monkeypatch.setattr(app, "query_projection_cells", lambda projection_id: [projection_cell()])
@@ -192,6 +207,7 @@ def test_building_hazard_is_skipped(monkeypatch):
 
 
 def test_no_hazard_cell_match_returns_no_candidates(monkeypatch):
+    stub_current_projection(monkeypatch)
     monkeypatch.setattr(app, "now_epoch", lambda: NOW)
     monkeypatch.setattr(app, "get_projection", lambda projection_id: projection())
     monkeypatch.setattr(app, "query_projection_cells", lambda projection_id: [projection_cell()])
@@ -251,3 +267,167 @@ def test_hazard_materialized_finds_projection_ids(monkeypatch):
     result = app.projection_ids_for_hazard_version("hazard-1#v1")
 
     assert result == ["proj-1", "proj-2"]
+
+
+def test_unknown_altitude_does_not_confirm_or_erase_horizontal_encounter():
+    geometry = {
+        "geometry_overlap_status": "CORRIDOR_ONLY_INTERSECTION",
+        "corridor_intersects": True,
+        "centerline_intersects": False,
+        "inside_now": False,
+        "exact_intersection_confirmed": True,
+    }
+
+    item = app.build_encounter_item(
+        projection=projection(),
+        hazard=hazard(),
+        candidate={
+            "hazard_version_key": "hazard-1#v1",
+            "hazard_id": "hazard-1",
+        },
+        matched_h3_cells=["8428309ffffffff"],
+        geometry_result=geometry,
+        detected_epoch=NOW,
+    )
+
+    assert item["altitude_overlap_status"] == "UNKNOWN"
+    assert item["exact_intersection_confirmed"] is True
+    assert item["encounter_state"] == "DETECTED"
+
+
+def test_altitude_overlap_and_no_overlap_from_available_bands():
+    proj = projection()
+    proj["current_altitude_ft"] = 28000
+    overlapping = hazard()
+    overlapping["minimum_lower_altitude_ft"] = 20000
+    overlapping["maximum_upper_altitude_ft"] = 35000
+    separated = hazard()
+    separated["minimum_lower_altitude_ft"] = 1000
+    separated["maximum_upper_altitude_ft"] = 5000
+
+    assert (
+        app.altitude_overlap_status(projection=proj, hazard=overlapping)
+        == "OVERLAP"
+    )
+    assert (
+        app.altitude_overlap_status(projection=proj, hazard=separated)
+        == "NO_OVERLAP"
+    )
+    assert (
+        app.altitude_overlap_status(projection=projection(), hazard=overlapping)
+        == "UNKNOWN"
+    )
+
+
+def test_stale_projection_is_not_evaluated(monkeypatch):
+    monkeypatch.setattr(app, "now_epoch", lambda: NOW)
+    monkeypatch.setattr(app, "get_projection", lambda projection_id: projection())
+    monkeypatch.setattr(
+        app,
+        "projection_is_operationally_current",
+        lambda *args, **kwargs: False,
+    )
+
+    result = app.evaluate_projection("proj-1")
+
+    assert result["processed"] is False
+    assert result["reason"] == "PROJECTION_NOT_CURRENT"
+    assert result["encounters_written"] == 0
+
+
+def test_newer_projection_supersedes_only_same_hazard(monkeypatch):
+    old = {
+        "encounter_id": "proj-old#hazard-1#v1",
+        "aircraft_id": "abc123",
+        "projection_id": "proj-old",
+        "hazard_id": "hazard-1",
+        "encounter_state": "DETECTED",
+        "detected_at_epoch": NOW - 60,
+        "schema_version": "wilvor.aircraft_hazard_encounter.v4.0",
+        "correlation_id": "corr-old",
+        "aircraft_state_version": "state-v0",
+        "hazard_source_version": "v1",
+        "hazard_version_key": "hazard-1#v1",
+        "geometry_overlap_status": "CORRIDOR_ONLY_INTERSECTION",
+        "time_overlap_status": "OVERLAP",
+        "altitude_overlap_status": "UNKNOWN",
+        "exact_intersection_confirmed": True,
+    }
+    other = {
+        **old,
+        "encounter_id": "proj-1#hazard-2#v1",
+        "projection_id": "proj-1",
+        "hazard_id": "hazard-2",
+        "hazard_version_key": "hazard-2#v1",
+        "hazard_source_version": "v1",
+    }
+    published = []
+    written = []
+
+    monkeypatch.setattr(
+        app,
+        "query_encounters_for_aircraft",
+        lambda aircraft_id: [old, other],
+    )
+    monkeypatch.setattr(
+        app,
+        "persist_resolved_encounter",
+        lambda item: written.append(item) or True,
+    )
+    monkeypatch.setattr(
+        app,
+        "publish_encounter_event",
+        lambda **kwargs: published.append(kwargs),
+    )
+
+    resolved = app.supersede_stale_encounters(
+        aircraft_id="abc123",
+        current_projection_id="proj-1",
+        written_encounter_ids={"proj-1#hazard-2#v1"},
+        current_epoch=NOW,
+        full_evaluation=True,
+    )
+
+    assert resolved == 1
+    assert written[0]["encounter_state"] == "SUPERSEDED"
+    assert written[0]["encounter_id"] == "proj-old#hazard-1#v1"
+    assert other["encounter_state"] == "DETECTED"
+    assert published[0]["detail_type"] == "encounter.resolved"
+
+
+def test_resolve_replay_is_idempotent(monkeypatch):
+    existing = {
+        "encounter_id": "proj-1#hazard-1#v1",
+        "encounter_state": "SUPERSEDED",
+        "aircraft_id": "abc123",
+        "projection_id": "proj-1",
+        "hazard_id": "hazard-1",
+        "hazard_source_version": "v1",
+        "hazard_version_key": "hazard-1#v1",
+        "geometry_overlap_status": "CORRIDOR_ONLY_INTERSECTION",
+        "time_overlap_status": "OVERLAP",
+        "altitude_overlap_status": "UNKNOWN",
+        "exact_intersection_confirmed": True,
+        "detected_at_epoch": NOW,
+        "schema_version": "v",
+        "correlation_id": "c",
+        "aircraft_state_version": "s",
+    }
+    published = []
+
+    monkeypatch.setattr(
+        app,
+        "publish_encounter_event",
+        lambda **kwargs: published.append(kwargs),
+    )
+
+    assert (
+        app.resolve_encounter(
+            existing,
+            encounter_state="SUPERSEDED",
+            reason="replay",
+            current_epoch=NOW,
+        )
+        is False
+    )
+    assert published == []

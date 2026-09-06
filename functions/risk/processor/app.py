@@ -39,7 +39,7 @@ RISK_SCHEMA_VERSION = os.environ.get(
 
 SCORING_RULESET_VERSION = os.environ.get(
     "SCORING_RULESET_VERSION",
-    "wilvor.risk.ruleset.v1",
+    "wilvor.risk.ruleset.v2",
 )
 
 SCORING_CONFIG_VERSION = os.environ.get(
@@ -172,9 +172,26 @@ def normalize(
 # ---------------------------------------------------------------------------
 # Risk component scoring
 #
-# This is a versioned DEV baseline.
-# The schema intentionally does not define final operational thresholds.
+# Advisory MVP model. Stronger operational risk requires stronger evidence.
+# Unknown evidence contributes 0 positive points. Weak components cannot
+# accumulate into HIGH.
+#
+# Intended effects:
+# - Geometry: inside-now is strong; corridor-only is moderate; unknown is 0.
+# - Time: already-inside / persisted horizon is strongest; window overlap
+#   without entry time is moderate; unknown is 0.
+# - Altitude: OVERLAP is positive evidence; UNKNOWN is 0 and lowers
+#   confidence; NO_OVERLAP gates the result down.
+# - Confidence / freshness change the final confidence and HIGH eligibility
+#   more than they add score, to avoid double-counting projection uncertainty.
 # ---------------------------------------------------------------------------
+
+TERMINAL_ENCOUNTER_STATES = {
+    "RESOLVED",
+    "SUPERSEDED",
+    "EXPIRED",
+}
+
 
 def hazard_component(
     encounter: dict[str, Any],
@@ -269,14 +286,11 @@ def geometry_component(
         or status
         == "CORRIDOR_ONLY_INTERSECTION"
     ):
-        return 18
+        return 12
 
-    if status == "NO_INTERSECTION":
-        return 0
-
-    # Unknown must not be interpreted
-    # as safe.
-    return 10
+    # Unknown / no intersection is not
+    # positive geometry evidence.
+    return 0
 
 
 def threat_horizon_minutes(
@@ -309,6 +323,17 @@ def threat_horizon_minutes(
 def time_component(
     encounter: dict[str, Any],
 ) -> int:
+    if (
+        encounter.get("inside_now") is True
+        or normalize(
+            encounter.get(
+                "geometry_overlap_status"
+            )
+        )
+        == "INSIDE_NOW"
+    ):
+        return 20
+
     horizon = threat_horizon_minutes(
         encounter
     )
@@ -321,12 +346,12 @@ def time_component(
             return 16
 
         if horizon <= 20:
-            return 12
+            return 10
 
         if horizon <= 30:
-            return 8
+            return 6
 
-        return 4
+        return 3
 
     status = normalize(
         encounter.get(
@@ -337,10 +362,7 @@ def time_component(
     if status == "OVERLAP":
         return 8
 
-    if status == "NO_OVERLAP":
-        return 0
-
-    return 6
+    return 0
 
 
 def altitude_component(
@@ -353,14 +375,11 @@ def altitude_component(
     )
 
     if status == "OVERLAP":
-        return 15
+        return 12
 
-    if status == "NO_OVERLAP":
-        return 0
-
-    # Unknown altitude is uncertainty,
-    # not evidence of safety.
-    return 8
+    # UNKNOWN and NO_OVERLAP contribute
+    # no positive altitude evidence.
+    return 0
 
 
 def confidence_component(
@@ -376,9 +395,9 @@ def confidence_component(
     )
 
     mapping = {
-        "HIGH": 5,
-        "MEDIUM": 3,
-        "LOW": 1,
+        "HIGH": 2,
+        "MEDIUM": 1,
+        "LOW": 0,
         "UNKNOWN": 0,
     }
 
@@ -399,8 +418,8 @@ def freshness_component(
     )
 
     mapping = {
-        "FRESH": 5,
-        "ACCEPTABLE": 3,
+        "FRESH": 3,
+        "ACCEPTABLE": 2,
         "STALE": 0,
         "UNAVAILABLE": 0,
         "UNKNOWN": 0,
@@ -415,7 +434,7 @@ def freshness_component(
 def data_quality_component(
     encounter: dict[str, Any],
 ) -> int:
-    score = 5
+    score = 4
 
     checks = [
         normalize(
@@ -431,14 +450,6 @@ def data_quality_component(
         normalize(
             encounter.get(
                 "altitude_overlap_status"
-            )
-        ),
-        normalize(
-            encounter.get(
-                "encounter_confidence"
-            )
-            or encounter.get(
-                "trajectory_confidence"
             )
         ),
         normalize(
@@ -495,8 +506,32 @@ def build_limitations(
             "Aircraft-to-hazard altitude overlap is unknown."
         )
 
-    if not encounter.get(
+    if normalize(
+        encounter.get(
+            "altitude_overlap_status"
+        )
+    ) == "NO_OVERLAP":
+        limitations.append(
+            "Hazard altitude does not overlap the projected aircraft altitude."
+        )
+
+    confidence = normalize(
+        encounter.get(
+            "encounter_confidence"
+        )
+        or encounter.get(
+            "trajectory_confidence"
+        )
+    )
+
+    if confidence == "LOW":
+        limitations.append(
+            "Projection horizon is long and trajectory confidence is low."
+        )
+    elif not encounter.get(
         "encounter_confidence"
+    ) and not encounter.get(
+        "trajectory_confidence"
     ):
         limitations.append(
             "Encounter-specific confidence is unavailable."
@@ -509,8 +544,11 @@ def build_limitations(
         "UNAVAILABLE",
     )
 
-    if freshness in {
-        "STALE",
+    if freshness == "STALE":
+        limitations.append(
+            "Aircraft state is stale."
+        )
+    elif freshness in {
         "UNAVAILABLE",
         "UNKNOWN",
     }:
@@ -529,44 +567,44 @@ def build_reasons(
     time_score: int,
     altitude_score: int,
 ) -> list[str]:
-    reasons = [
-        (
-            "Hazard component contributed "
-            f"{hazard_score} points."
-        ),
-        (
-            "Geometry component contributed "
-            f"{geometry_score} points."
-        ),
-        (
-            "Time-to-threat component contributed "
-            f"{time_score} points."
-        ),
-        (
-            "Altitude component contributed "
-            f"{altitude_score} points."
-        ),
-    ]
+    reasons: list[str] = []
 
-    if encounter.get(
-        "inside_now"
-    ) is True:
+    if encounter.get("inside_now") is True or normalize(
+        encounter.get("geometry_overlap_status")
+    ) == "INSIDE_NOW":
         reasons.append(
-            "Aircraft position is evaluated inside the hazard geometry."
+            "Aircraft is already inside active hazard geometry."
         )
-
-    elif encounter.get(
-        "centerline_intersects"
-    ) is True:
+    elif encounter.get("centerline_intersects") is True:
         reasons.append(
             "Projected centerline intersects the hazard geometry."
         )
-
-    elif encounter.get(
-        "corridor_intersects"
-    ) is True:
+    elif (
+        encounter.get("corridor_intersects") is True
+        or normalize(
+            encounter.get("geometry_overlap_status")
+        )
+        == "CORRIDOR_ONLY_INTERSECTION"
+    ):
         reasons.append(
-            "Projected uncertainty corridor intersects the hazard geometry."
+            "Projected corridor intersects an active hazard."
+        )
+
+    altitude = normalize(
+        encounter.get("altitude_overlap_status")
+    )
+
+    if altitude == "OVERLAP":
+        reasons.append(
+            "Aircraft altitude overlaps the hazard altitude band."
+        )
+    elif altitude == "NO_OVERLAP":
+        reasons.append(
+            "Hazard altitude does not overlap projected aircraft altitude."
+        )
+    elif altitude == "UNKNOWN":
+        reasons.append(
+            "Altitude relationship is unknown and is not treated as overlap."
         )
 
     horizon = threat_horizon_minutes(
@@ -575,33 +613,115 @@ def build_reasons(
 
     if horizon is not None:
         reasons.append(
-            (
-                "Closest confirmed threat timing is "
-                f"{horizon:g} minutes."
-            )
+            f"Closest confirmed threat timing is {horizon:g} minutes."
         )
+    elif normalize(
+        encounter.get("time_overlap_status")
+    ) == "OVERLAP":
+        reasons.append(
+            "Projection validity window overlaps the hazard valid time."
+        )
+
+    freshness = normalize(
+        encounter.get("freshness_status"),
+        "UNAVAILABLE",
+    )
+
+    if freshness == "STALE":
+        reasons.append(
+            "Aircraft state is stale and cannot increase operational risk."
+        )
+
+    confidence = normalize(
+        encounter.get("encounter_confidence")
+        or encounter.get("trajectory_confidence")
+    )
+
+    if confidence == "LOW":
+        reasons.append(
+            "Projection horizon is long and confidence is low."
+        )
+
+    reasons.extend(
+        [
+            f"Hazard component contributed {hazard_score} points.",
+            f"Geometry component contributed {geometry_score} points.",
+            f"Time-to-threat component contributed {time_score} points.",
+            f"Altitude component contributed {altitude_score} points.",
+        ]
+    )
 
     return reasons
 
 
-def essential_evidence_unknown(
+def geometry_is_strong(
     encounter: dict[str, Any],
 ) -> bool:
-    geometry = normalize(
+    status = normalize(
         encounter.get(
             "geometry_overlap_status"
         )
     )
 
-    time_status = normalize(
-        encounter.get(
-            "time_overlap_status"
+    return (
+        encounter.get("inside_now") is True
+        or status == "INSIDE_NOW"
+        or (
+            (
+                encounter.get("corridor_intersects")
+                is True
+                or status
+                == "CORRIDOR_ONLY_INTERSECTION"
+            )
+            and encounter.get(
+                "exact_intersection_confirmed"
+            )
+            is True
         )
     )
 
+
+def geometry_is_weak(
+    encounter: dict[str, Any],
+) -> bool:
+    status = normalize(
+        encounter.get(
+            "geometry_overlap_status"
+        )
+    )
+
+    if (
+        encounter.get("inside_now") is True
+        or status == "INSIDE_NOW"
+    ):
+        return False
+
+    if (
+        encounter.get("corridor_intersects")
+        is True
+        or status
+        == "CORRIDOR_ONLY_INTERSECTION"
+    ):
+        return False
+
+    return True
+
+
+def high_risk_gates_pass(
+    encounter: dict[str, Any],
+) -> bool:
     altitude = normalize(
         encounter.get(
             "altitude_overlap_status"
+        )
+    )
+
+    confidence = normalize(
+        encounter.get(
+            "encounter_confidence"
+        )
+        or encounter.get(
+            "trajectory_confidence"
         )
     )
 
@@ -612,16 +732,22 @@ def essential_evidence_unknown(
         "UNAVAILABLE",
     )
 
+    time_status = normalize(
+        encounter.get(
+            "time_overlap_status"
+        )
+    )
+
     return (
-        geometry == "UNKNOWN"
-        or time_status == "UNKNOWN"
-        or altitude == "UNKNOWN"
-        or freshness
-        in {
-            "STALE",
-            "UNAVAILABLE",
-            "UNKNOWN",
-        }
+        geometry_is_strong(encounter)
+        and not geometry_is_weak(encounter)
+        and altitude == "OVERLAP"
+        and confidence in {"HIGH", "MEDIUM"}
+        and freshness in {"FRESH", "ACCEPTABLE"}
+        and (
+            time_status == "OVERLAP"
+            or encounter.get("inside_now") is True
+        )
     )
 
 
@@ -636,34 +762,25 @@ def classify_risk(
         )
     )
 
-    if encounter_state in {
-        "RESOLVED",
-        "EXPIRED",
-    }:
+    if encounter_state in TERMINAL_ENCOUNTER_STATES:
         return "LOW"
 
-    if score >= 70:
-        return "HIGH"
+    altitude = normalize(
+        encounter.get(
+            "altitude_overlap_status"
+        )
+    )
 
-    if score >= 40:
-        return "MEDIUM"
+    freshness = normalize(
+        encounter.get(
+            "freshness_status"
+        ),
+        "UNAVAILABLE",
+    )
 
-    # Unknown evidence cannot produce
-    # a positive LOW-risk conclusion.
-    if essential_evidence_unknown(
-        encounter
-    ):
-        return "UNKNOWN"
-
-    return "LOW"
-
-
-def risk_confidence(
-    encounter: dict[str, Any],
-) -> str:
-    if essential_evidence_unknown(
-        encounter
-    ):
+    # Stale state and confirmed altitude
+    # separation cannot increase risk.
+    if freshness == "STALE" or altitude == "NO_OVERLAP":
         return "LOW"
 
     confidence = normalize(
@@ -675,11 +792,71 @@ def risk_confidence(
         )
     )
 
-    if confidence in {
-        "HIGH",
-        "MEDIUM",
-        "LOW",
-    }:
+    inside = (
+        encounter.get("inside_now") is True
+        or normalize(
+            encounter.get(
+                "geometry_overlap_status"
+            )
+        )
+        == "INSIDE_NOW"
+    )
+
+    # Corridor-only, unknown altitude, and
+    # low-confidence long-horizon evidence
+    # is not a meaningful MEDIUM encounter.
+    if (
+        not inside
+        and altitude != "OVERLAP"
+        and confidence == "LOW"
+    ):
+        return "LOW"
+
+    if score >= 70 and high_risk_gates_pass(
+        encounter
+    ):
+        return "HIGH"
+
+    if score >= 40:
+        return "MEDIUM"
+
+    return "LOW"
+
+
+def risk_confidence(
+    encounter: dict[str, Any],
+) -> str:
+    altitude = normalize(
+        encounter.get(
+            "altitude_overlap_status"
+        )
+    )
+
+    freshness = normalize(
+        encounter.get(
+            "freshness_status"
+        ),
+        "UNAVAILABLE",
+    )
+
+    confidence = normalize(
+        encounter.get(
+            "encounter_confidence"
+        )
+        or encounter.get(
+            "trajectory_confidence"
+        )
+    )
+
+    if (
+        altitude == "UNKNOWN"
+        or freshness in {"STALE", "UNAVAILABLE", "UNKNOWN"}
+        or confidence in {"LOW", "UNKNOWN"}
+        or geometry_is_weak(encounter)
+    ):
+        return "LOW"
+
+    if confidence in {"HIGH", "MEDIUM"}:
         return confidence
 
     return "LOW"
@@ -695,11 +872,11 @@ def input_fingerprint(
         "projection_id": encounter.get(
             "projection_id"
         ),
+        "aircraft_state_version": encounter.get(
+            "aircraft_state_version"
+        ),
         "hazard_source_version": encounter.get(
             "hazard_source_version"
-        ),
-        "detected_at_epoch": encounter.get(
-            "detected_at_epoch"
         ),
         "encounter_state": encounter.get(
             "encounter_state"
@@ -713,8 +890,23 @@ def input_fingerprint(
         "altitude_overlap_status": encounter.get(
             "altitude_overlap_status"
         ),
+        "inside_now": encounter.get(
+            "inside_now"
+        ),
+        "corridor_intersects": encounter.get(
+            "corridor_intersects"
+        ),
         "exact_intersection_confirmed": encounter.get(
             "exact_intersection_confirmed"
+        ),
+        "first_intersection_horizon_min": encounter.get(
+            "first_intersection_horizon_min"
+        ),
+        "trajectory_confidence": encounter.get(
+            "trajectory_confidence"
+        ),
+        "freshness_status": encounter.get(
+            "freshness_status"
         ),
         "ruleset": SCORING_RULESET_VERSION,
         "config": SCORING_CONFIG_VERSION,
@@ -786,10 +978,7 @@ def build_risk_result(
         )
     )
 
-    if encounter_state in {
-        "RESOLVED",
-        "EXPIRED",
-    }:
+    if encounter_state in TERMINAL_ENCOUNTER_STATES:
         score = 0
 
     risk_level = classify_risk(
@@ -1094,10 +1283,7 @@ def publish_risk_event(
     detail_type = (
         "risk.resolved"
         if encounter_state
-        in {
-            "RESOLVED",
-            "EXPIRED",
-        }
+        in TERMINAL_ENCOUNTER_STATES
         else "risk.updated"
     )
 
@@ -1361,12 +1547,15 @@ def lambda_handler(
         )
     )
 
-    detail_type = publish_risk_event(
-        item=stored_item,
-        encounter_state=(
-            encounter_state
-        ),
-    )
+    detail_type = None
+
+    if created or encounter_state in TERMINAL_ENCOUNTER_STATES:
+        detail_type = publish_risk_event(
+            item=stored_item,
+            encounter_state=(
+                encounter_state
+            ),
+        )
 
     emit_metrics(
         item=stored_item,

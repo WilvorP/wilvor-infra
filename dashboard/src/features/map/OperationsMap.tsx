@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
 
 import 'maplibre-gl/dist/maplibre-gl.css';
 
@@ -7,9 +7,15 @@ import { useActiveHazards } from '@/hooks/useOperationalQueries';
 import type { ActiveHazard, AircraftProjectionPoint } from '@/types/api';
 import { formatCount } from '@/utils/format';
 
+import {
+  EMPTY_AIRPORT_COLLECTION,
+  type AirportFeatureCollection,
+} from './airportGeoJson';
+import { EMPTY_AIRCRAFT_COLLECTION } from './aircraftGeoJson';
 import { buildHazardGeoJson } from './hazardGeoJson';
 import { useAircraftLayer } from './useAircraftLayer';
 import { useAircraftLayerData } from './useAircraftLayerData';
+import { useAirportLayer } from './useAirportLayer';
 import { useHazardLayer } from './useHazardLayer';
 import { useOperationsMap } from './useOperationsMap';
 import { useTrajectoryLayer } from './useTrajectoryLayer';
@@ -27,6 +33,23 @@ export interface OperationsMapProps {
   projectionPoints?: readonly AircraftProjectionPoint[] | null;
   /** Hazard ids referenced by the selected aircraft's returned encounters. */
   emphasizedHazardIds?: readonly string[];
+  /**
+   * Investigation focus: draw only the selected aircraft. Hazard geometry and
+   * the selected projection are unchanged.
+   */
+  isolateSelectedAircraft?: boolean;
+  /**
+   * Restrict the aircraft layer to these ids (loaded current-encounter
+   * aircraft). `null` leaves the feed unfiltered. An empty list hides the
+   * fleet rather than falling back to every tracked aircraft.
+   */
+  visibleAircraftIds?: readonly string[] | null;
+  /** Hide the fleet when the surface is airport investigation. */
+  showAircraft?: boolean;
+  /** Loaded airport pages only. There is no unpaginated `/map/airports`. */
+  airports?: AirportFeatureCollection | null;
+  selectedAirportId?: string | null;
+  onSelectAirport?: (airportId: string) => void;
 }
 
 /**
@@ -36,9 +59,7 @@ export interface OperationsMapProps {
  *   - active hazard geometry from `GET /hazards/active`
  *   - aircraft positions and heading from `GET /map/aircraft`
  *   - selected-aircraft short-term motion projection from `/aircraft/{id}`
- *
- * Airports are not yet drawn. `AirportStatus` does carry coordinates, so that
- * needs no backend work — only pagination handling for the `/airports` scan.
+ *   - optional airport markers from loaded `GET /airports` pages
  */
 export function OperationsMap({
   styleUrl,
@@ -48,6 +69,12 @@ export function OperationsMap({
   onSelectAircraft,
   projectionPoints = null,
   emphasizedHazardIds = NO_EMPHASIZED_HAZARDS,
+  isolateSelectedAircraft = false,
+  visibleAircraftIds = null,
+  showAircraft = true,
+  airports = null,
+  selectedAirportId = null,
+  onSelectAirport,
 }: OperationsMapProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const { map, ready, error: mapError } = useOperationsMap(
@@ -56,7 +83,7 @@ export function OperationsMap({
   );
 
   const hazards = useActiveHazards();
-  const aircraft = useAircraftLayerData();
+  const aircraft = useAircraftLayerData({ enabled: showAircraft });
 
   const hazardItems = useMemo(
     () => hazards.data?.items ?? [],
@@ -73,6 +100,47 @@ export function OperationsMap({
     [hazardItems, emphasizedHazardIdSet],
   );
 
+  const visibleAircraftIdSet = useMemo(
+    () => (visibleAircraftIds == null ? null : new Set(visibleAircraftIds)),
+    [visibleAircraftIds],
+  );
+
+  const aircraftCollection = useMemo(() => {
+    if (!showAircraft) {
+      return EMPTY_AIRCRAFT_COLLECTION;
+    }
+
+    const collection = aircraft.result.collection;
+    const scoped =
+      visibleAircraftIdSet == null
+        ? collection
+        : {
+            type: 'FeatureCollection' as const,
+            features: collection.features.filter((feature) =>
+              visibleAircraftIdSet.has(feature.properties.aircraftId),
+            ),
+          };
+
+    if (!isolateSelectedAircraft || selectedAircraftId === null) {
+      return scoped;
+    }
+
+    return {
+      type: 'FeatureCollection' as const,
+      features: scoped.features.filter(
+        (feature) => feature.properties.aircraftId === selectedAircraftId,
+      ),
+    };
+  }, [
+    aircraft.result.collection,
+    isolateSelectedAircraft,
+    selectedAircraftId,
+    showAircraft,
+    visibleAircraftIdSet,
+  ]);
+
+  const airportCollection = airports ?? EMPTY_AIRPORT_COLLECTION;
+
   const handleSelectHazard = useCallback(
     (hazardId: string) => {
       const hazard = hazardItems.find(
@@ -84,9 +152,16 @@ export function OperationsMap({
     [hazardItems, onSelectHazard],
   );
 
-  // Layer order: hazards, then the selected trajectory, then aircraft so
-  // traffic symbols stay on top of fills and the projection line.
+  // Layer order: hazards, airports, trajectory, then aircraft.
   useHazardLayer(map, ready, geoJson.collection, handleSelectHazard);
+
+  useAirportLayer(
+    map,
+    ready,
+    airportCollection,
+    selectedAirportId,
+    onSelectAirport ?? null,
+  );
 
   useTrajectoryLayer(
     map,
@@ -98,10 +173,72 @@ export function OperationsMap({
   useAircraftLayer(
     map,
     ready,
-    aircraft.result.collection,
+    aircraftCollection,
     selectedAircraftId,
     onSelectAircraft,
   );
+
+  const focusedAircraftIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (map === null || !ready) {
+      return;
+    }
+
+    if (selectedAircraftId === null) {
+      focusedAircraftIdRef.current = null;
+      return;
+    }
+
+    if (focusedAircraftIdRef.current === selectedAircraftId) {
+      return;
+    }
+
+    const selected = aircraft.result.aircraftById.get(selectedAircraftId);
+
+    if (selected === undefined) {
+      return;
+    }
+
+    focusedAircraftIdRef.current = selectedAircraftId;
+    map.easeTo({
+      center: [selected.longitude, selected.latitude],
+      zoom: Math.max(map.getZoom(), 5),
+      duration: 700,
+    });
+  }, [map, ready, selectedAircraftId, aircraft.result.aircraftById]);
+
+  const focusedAirportIdRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (map === null || !ready) {
+      return;
+    }
+
+    if (selectedAirportId === null) {
+      focusedAirportIdRef.current = null;
+      return;
+    }
+
+    if (focusedAirportIdRef.current === selectedAirportId) {
+      return;
+    }
+
+    const selected = airportCollection.features.find(
+      (feature) => feature.properties.airportId === selectedAirportId,
+    );
+
+    if (selected === undefined) {
+      return;
+    }
+
+    focusedAirportIdRef.current = selectedAirportId;
+    map.easeTo({
+      center: selected.geometry.coordinates,
+      zoom: Math.max(map.getZoom(), 5),
+      duration: 700,
+    });
+  }, [map, ready, selectedAirportId, airportCollection]);
 
   const hazardsTruncated = hazards.data?.nextToken != null;
   const aircraftResult = aircraft.result;
@@ -123,14 +260,14 @@ export function OperationsMap({
     );
   }
 
-  if (aircraftResult.truncated) {
+  if (showAircraft && aircraftResult.truncated) {
     warnings.push(
       'The aircraft feed reported that it was truncated; the map shows a ' +
         'partial traffic picture.',
     );
   }
 
-  if (aircraftResult.droppedCount > 0) {
+  if (showAircraft && aircraftResult.droppedCount > 0) {
     warnings.push(
       `${formatCount(aircraftResult.droppedCount)} aircraft record` +
         `${aircraftResult.droppedCount === 1 ? '' : 's'} could not be placed ` +
@@ -164,9 +301,15 @@ export function OperationsMap({
             />
             <span>Aircraft</span>
             <span className={`${styles.legendCount} wv-numeric`}>
-              {aircraft.isPending
-                ? '…'
-                : formatCount(aircraftResult.renderedCount)}
+              {!showAircraft
+                ? 'hidden'
+                : aircraft.isPending
+                  ? '…'
+                  : formatCount(
+                      isolateSelectedAircraft || visibleAircraftIdSet != null
+                        ? aircraftCollection.features.length
+                        : aircraftResult.renderedCount,
+                    )}
             </span>
           </li>
 
@@ -193,13 +336,19 @@ export function OperationsMap({
             </li>
           ) : null}
 
-          <li className={`${styles.legendItem} ${styles.legendPending}`}>
+          <li
+            className={`${styles.legendItem} ${airports == null ? styles.legendPending : ''}`}
+          >
             <span
-              className={`${styles.swatch} ${styles.swatchPending}`}
+              className={`${styles.swatch} ${airports == null ? styles.swatchPending : styles.swatchAirport}`}
               aria-hidden="true"
             />
             <span>Airports</span>
-            <span className={styles.legendCount}>pending</span>
+            <span className={`${styles.legendCount} wv-numeric`}>
+              {airports == null
+                ? 'pending'
+                : formatCount(airportCollection.features.length)}
+            </span>
           </li>
         </ul>
 
@@ -210,10 +359,25 @@ export function OperationsMap({
           </p>
         ) : null}
 
-        {selectedHazardId !== null || selectedAircraftId !== null ? (
+        {isolateSelectedAircraft && selectedAircraftId !== null ? (
+          <p className={styles.legendNote}>
+            Investigation focus. Other aircraft are hidden.
+          </p>
+        ) : visibleAircraftIdSet != null ? (
+          <p className={styles.legendNote}>
+            Aircraft from loaded current encounters only, not the full fleet.
+          </p>
+        ) : selectedAirportId !== null ? (
+          <p className={styles.legendNote}>Airport selected.</p>
+        ) : selectedHazardId !== null || selectedAircraftId !== null ? (
           <p className={styles.legendNote}>
             {selectedAircraftId !== null ? 'Aircraft' : 'Hazard'} selected.
             Details in the investigation panel below.
+          </p>
+        ) : airports != null ? (
+          <p className={styles.legendNote}>
+            Airport markers are the loaded pages only, not a full-network
+            feed.
           </p>
         ) : null}
       </div>
@@ -226,7 +390,7 @@ export function OperationsMap({
           </div>
         ) : null}
 
-        {aircraftResult.contractError !== null ? (
+        {showAircraft && aircraftResult.contractError !== null ? (
           <div className={styles.overlayError} role="alert">
             <span aria-hidden="true">⚠ </span>
             Aircraft layer disabled. {aircraftResult.contractError} No aircraft
@@ -235,7 +399,7 @@ export function OperationsMap({
           </div>
         ) : null}
 
-        {aircraft.isError ? (
+        {showAircraft && aircraft.isError ? (
           <div className={styles.overlayError} role="alert">
             <span aria-hidden="true">⚠ </span>
             Aircraft layer unavailable. {describeApiError(aircraft.error)}

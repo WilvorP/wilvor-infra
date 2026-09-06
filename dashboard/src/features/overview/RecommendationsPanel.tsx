@@ -15,21 +15,22 @@ import styles from './FeedPanel.module.css';
 
 export interface RecommendationsPanelProps {
   recommendations: readonly OverviewRecommendationSummary[] | undefined;
-  activeCount: number | null | undefined;
+  /** Current-set total from `overview.recommendations.currentCount`. */
+  currentCount: number | null | undefined;
   loading: boolean;
   failed: boolean;
 }
 
 /**
- * Latest active advisory recommendations from `overview.recommendations.latest`.
+ * Compact preview of `overview.recommendations.latest`.
  *
- * This is the backend's own camelCase projection of the recommendation
- * records, not the raw snake_case items returned by
- * `GET /recommendations/active`.
+ * After the current-set contract change those rows are the newest current
+ * recommendations. The full operator list lives in Current attention.
+ * The panel total is `currentCount`, not retained `activeCount`.
  */
 export function RecommendationsPanel({
   recommendations,
-  activeCount,
+  currentCount,
   loading,
   failed,
 }: RecommendationsPanelProps) {
@@ -37,11 +38,11 @@ export function RecommendationsPanel({
 
   return (
     <Panel
-      title="Recommendations"
+      title="Current recommendations"
       meta={
-        failed || activeCount == null
+        failed || currentCount == null
           ? undefined
-          : `${items.length} of ${activeCount}`
+          : `${items.length} of ${currentCount}`
       }
     >
       {loading ? <LoadingState label="Loading recommendations" /> : null}
@@ -49,14 +50,14 @@ export function RecommendationsPanel({
       {!loading && failed ? (
         <EmptyState
           title="Recommendations unavailable"
-          detail="The overview request failed, so active advisories cannot be shown."
+          detail="The overview request failed, so current advisories cannot be shown."
         />
       ) : null}
 
       {!loading && !failed && items.length === 0 ? (
         <EmptyState
-          title="No active recommendations"
-          detail="No advisory recommendation is currently valid."
+          title="No current recommendations"
+          detail="No advisory recommendation is tied to a current encounter."
         />
       ) : null}
 

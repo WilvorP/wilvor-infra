@@ -7,6 +7,7 @@ from typing import Any
 import boto3
 import h3
 from boto3.dynamodb.conditions import Key
+from botocore.exceptions import ClientError
 
 
 dynamodb = boto3.resource("dynamodb")
@@ -76,6 +77,27 @@ MAX_MATCHED_H3_CELLS = int(
         "200",
     )
 )
+
+AIRCRAFT_PROJECTION_AIRCRAFT_INDEX_NAME = os.environ.get(
+    "AIRCRAFT_PROJECTION_AIRCRAFT_INDEX_NAME",
+    "aircraft_id-generated_at_epoch-index",
+)
+
+ENCOUNTER_AIRCRAFT_INDEX_NAME = os.environ.get(
+    "ENCOUNTER_AIRCRAFT_INDEX_NAME",
+    "aircraft_id-detected_at_epoch-index",
+)
+
+CURRENT_ENCOUNTER_STATES = {
+    "DETECTED",
+    "MONITORING",
+}
+
+TERMINAL_ENCOUNTER_STATES = {
+    "RESOLVED",
+    "SUPERSEDED",
+    "EXPIRED",
+}
 
 
 projection_table = dynamodb.Table(
@@ -821,17 +843,70 @@ def time_overlap_status(
     return "NO_OVERLAP"
 
 
+def _optional_float(
+    value: Any,
+) -> float | None:
+    if value is None:
+        return None
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def altitude_overlap_status(
     *,
     projection: dict[str, Any],
     hazard: dict[str, Any],
 ) -> str:
-    # Current AHE v1 intentionally does not read AircraftProjectionPoints.
-    # AircraftProjection does not contain enough per-time altitude data
-    # to compute altitude at intersection.
-    #
-    # This must remain UNKNOWN rather than being treated as safe.
-    return "UNKNOWN"
+    """
+    Compare the aircraft's current altitude to the hazard altitude band
+    when both are actually present.
+
+    Missing or unusable bounds stay UNKNOWN. This never infers overlap
+    from horizontal geometry alone.
+    """
+
+    aircraft_altitude = _optional_float(
+        projection.get("current_altitude_ft")
+    )
+
+    if aircraft_altitude is None or aircraft_altitude < 0:
+        return "UNKNOWN"
+
+    lower = _optional_float(
+        hazard.get("minimum_lower_altitude_ft")
+    )
+
+    upper = _optional_float(
+        hazard.get("maximum_upper_altitude_ft")
+    )
+
+    if lower is None and upper is None:
+        return "UNKNOWN"
+
+    if lower is not None and upper is not None and lower > upper:
+        return "UNKNOWN"
+
+    if lower is None:
+        return (
+            "OVERLAP"
+            if aircraft_altitude <= upper
+            else "NO_OVERLAP"
+        )
+
+    if upper is None:
+        return (
+            "OVERLAP"
+            if aircraft_altitude >= lower
+            else "NO_OVERLAP"
+        )
+
+    if lower <= aircraft_altitude <= upper:
+        return "OVERLAP"
+
+    return "NO_OVERLAP"
 
 
 def evaluate_geometry_overlap(
@@ -947,12 +1022,16 @@ def build_encounter_item(
         hazard=hazard,
     )
 
+    # Horizontal/temporal confirmation is independent of altitude.
+    # UNKNOWN altitude must not invent overlap, and NO_OVERLAP must not
+    # erase a confirmed corridor/inside relationship.
     exact_intersection_confirmed = (
-        geometry_result[
-            "exact_intersection_confirmed"
-        ]
+        bool(
+            geometry_result.get(
+                "exact_intersection_confirmed"
+            )
+        )
         and time_status == "OVERLAP"
-        and altitude_status != "NO_OVERLAP"
     )
 
     encounter_state = (
@@ -1049,6 +1128,12 @@ def build_encounter_item(
             "confidence",
             "UNKNOWN",
         ),
+        "freshness_status": projection.get(
+            "freshness_status"
+        ),
+        "current_altitude_ft": projection.get(
+            "current_altitude_ft"
+        ),
         "encounter_state": encounter_state,
         "evaluation_method": (
             "H3_MATCH_PLUS_HAZARD_POLYGON_CELL_CHECK"
@@ -1085,6 +1170,271 @@ def write_encounter(
     )
 
 
+def get_current_projection_for_aircraft(
+    aircraft_id: str,
+    current_epoch: int,
+) -> dict[str, Any] | None:
+    try:
+        response = projection_table.query(
+            IndexName=(
+                AIRCRAFT_PROJECTION_AIRCRAFT_INDEX_NAME
+            ),
+            KeyConditionExpression=Key(
+                "aircraft_id"
+            ).eq(
+                aircraft_id
+            ),
+            ScanIndexForward=False,
+            Limit=20,
+        )
+    except ClientError as exc:
+        code = (
+            exc.response
+            .get("Error", {})
+            .get("Code")
+        )
+
+        if code in {
+            "AccessDeniedException",
+            "UnrecognizedClientException",
+        }:
+            return None
+
+        raise
+
+    for item in response.get("Items", []):
+        ready, _reason = projection_is_ready(
+            item,
+            current_epoch=current_epoch,
+        )
+
+        if ready:
+            return item
+
+    return None
+
+
+def projection_is_operationally_current(
+    projection: dict[str, Any],
+    current_epoch: int,
+) -> bool:
+    aircraft_id = str(
+        projection.get(
+            "aircraft_id",
+            "",
+        )
+    ).strip()
+
+    if not aircraft_id:
+        return False
+
+    current = get_current_projection_for_aircraft(
+        aircraft_id,
+        current_epoch,
+    )
+
+    if current is None:
+        return True
+
+    return (
+        str(current.get("projection_id"))
+        == str(projection.get("projection_id"))
+    )
+
+
+def query_encounters_for_aircraft(
+    aircraft_id: str,
+) -> list[dict[str, Any]]:
+    try:
+        return paged_query(
+            encounter_table,
+            IndexName=ENCOUNTER_AIRCRAFT_INDEX_NAME,
+            KeyConditionExpression=Key(
+                "aircraft_id"
+            ).eq(
+                aircraft_id
+            ),
+        )
+    except ClientError as exc:
+        code = (
+            exc.response
+            .get("Error", {})
+            .get("Code")
+        )
+
+        if code in {
+            "AccessDeniedException",
+            "UnrecognizedClientException",
+        }:
+            return []
+
+        raise
+
+
+def persist_resolved_encounter(
+    item: dict[str, Any],
+) -> bool:
+    try:
+        encounter_table.put_item(
+            Item=item,
+            ConditionExpression=(
+                "encounter_state IN "
+                "(:detected, :monitoring)"
+            ),
+            ExpressionAttributeValues={
+                ":detected": "DETECTED",
+                ":monitoring": "MONITORING",
+            },
+        )
+        return True
+    except ClientError as exc:
+        code = (
+            exc.response
+            .get("Error", {})
+            .get("Code")
+        )
+
+        if code == "ConditionalCheckFailedException":
+            return False
+
+        raise
+
+
+def resolve_encounter(
+    existing: dict[str, Any],
+    *,
+    encounter_state: str,
+    reason: str,
+    current_epoch: int,
+) -> bool:
+    state = str(
+        existing.get(
+            "encounter_state",
+            "",
+        )
+    ).upper()
+
+    if state in TERMINAL_ENCOUNTER_STATES:
+        return False
+
+    if state not in CURRENT_ENCOUNTER_STATES:
+        return False
+
+    item = dict(existing)
+    item["encounter_state"] = encounter_state
+    item["resolution_reason"] = reason
+    item["resolved_at_epoch"] = current_epoch
+    item["resolved_at_utc"] = epoch_to_utc(
+        current_epoch
+    )
+
+    if not persist_resolved_encounter(item):
+        return False
+
+    publish_encounter_event(
+        item=item,
+        detail_type="encounter.resolved",
+    )
+
+    return True
+
+
+def supersede_stale_encounters(
+    *,
+    aircraft_id: str,
+    current_projection_id: str,
+    written_encounter_ids: set[str],
+    current_epoch: int,
+    hazard_id_filter: str | None = None,
+    full_evaluation: bool = True,
+) -> int:
+    resolved = 0
+
+    for existing in query_encounters_for_aircraft(
+        aircraft_id
+    ):
+        encounter_id = str(
+            existing.get(
+                "encounter_id",
+                "",
+            )
+        )
+
+        if not encounter_id or encounter_id in written_encounter_ids:
+            continue
+
+        if str(
+            existing.get(
+                "encounter_state",
+                "",
+            )
+        ).upper() not in CURRENT_ENCOUNTER_STATES:
+            continue
+
+        existing_hazard_id = str(
+            existing.get(
+                "hazard_id",
+                "",
+            )
+        )
+
+        if (
+            hazard_id_filter
+            and existing_hazard_id != hazard_id_filter
+        ):
+            continue
+
+        existing_projection_id = str(
+            existing.get(
+                "projection_id",
+                "",
+            )
+        )
+
+        if existing_projection_id != current_projection_id:
+            if resolve_encounter(
+                existing,
+                encounter_state="SUPERSEDED",
+                reason=(
+                    "Superseded by a newer current "
+                    "aircraft projection."
+                ),
+                current_epoch=current_epoch,
+            ):
+                resolved += 1
+            continue
+
+        if hazard_id_filter:
+            if resolve_encounter(
+                existing,
+                encounter_state="SUPERSEDED",
+                reason=(
+                    "Superseded by a newer hazard "
+                    "source version or the current "
+                    "projection no longer supports "
+                    "this hazard version."
+                ),
+                current_epoch=current_epoch,
+            ):
+                resolved += 1
+            continue
+
+        if full_evaluation:
+            if resolve_encounter(
+                existing,
+                encounter_state="RESOLVED",
+                reason=(
+                    "Current projection no longer "
+                    "supports this aircraft-hazard "
+                    "relationship."
+                ),
+                current_epoch=current_epoch,
+            ):
+                resolved += 1
+
+    return resolved
+
+
 def publish_encounter_event(
     *,
     item: dict[str, Any],
@@ -1093,44 +1443,53 @@ def publish_encounter_event(
     detail = {
         "encounter_id": item["encounter_id"],
         "aircraft_id": item["aircraft_id"],
-        "aircraft_state_version": (
-            item["aircraft_state_version"]
+        "aircraft_state_version": item.get(
+            "aircraft_state_version"
         ),
         "projection_id": item["projection_id"],
         "hazard_id": item["hazard_id"],
-        "hazard_source_version": (
-            item["hazard_source_version"]
+        "hazard_source_version": item.get(
+            "hazard_source_version"
         ),
-        "hazard_version_key": (
-            item["hazard_version_key"]
+        "hazard_version_key": item.get(
+            "hazard_version_key"
         ),
-        "encounter_state": (
-            item["encounter_state"]
+        "encounter_state": item.get(
+            "encounter_state"
         ),
-        "geometry_overlap_status": (
-            item["geometry_overlap_status"]
+        "geometry_overlap_status": item.get(
+            "geometry_overlap_status"
         ),
-        "time_overlap_status": (
-            item["time_overlap_status"]
+        "time_overlap_status": item.get(
+            "time_overlap_status"
         ),
-        "altitude_overlap_status": (
-            item["altitude_overlap_status"]
+        "altitude_overlap_status": item.get(
+            "altitude_overlap_status"
         ),
-        "exact_intersection_confirmed": (
-            item["exact_intersection_confirmed"]
+        "exact_intersection_confirmed": item.get(
+            "exact_intersection_confirmed"
         ),
-        "detected_at_epoch": (
-            item["detected_at_epoch"]
+        "detected_at_epoch": item.get(
+            "detected_at_epoch"
         ),
-        "detected_at_utc": (
-            item["detected_at_utc"]
+        "detected_at_utc": item.get(
+            "detected_at_utc"
         ),
-        "correlation_id": (
-            item["correlation_id"]
+        "resolution_reason": item.get(
+            "resolution_reason"
         ),
-        "schema_version": (
-            item["schema_version"]
+        "correlation_id": item.get(
+            "correlation_id"
         ),
+        "schema_version": item.get(
+            "schema_version"
+        ),
+    }
+
+    detail = {
+        key: value
+        for key, value in detail.items()
+        if value is not None
     }
 
     response = eventbridge.put_events(
@@ -1192,16 +1551,45 @@ def evaluate_projection(
             "encounters_written": 0,
         }
 
+    if not projection_is_operationally_current(
+        projection,
+        current_epoch,
+    ):
+        return {
+            "projection_id": projection_id,
+            "processed": False,
+            "reason": "PROJECTION_NOT_CURRENT",
+            "encounters_written": 0,
+        }
+
     projection_cells = query_projection_cells(
         projection_id
     )
 
     if not projection_cells:
+        resolved = supersede_stale_encounters(
+            aircraft_id=str(
+                projection["aircraft_id"]
+            ),
+            current_projection_id=str(
+                projection["projection_id"]
+            ),
+            written_encounter_ids=set(),
+            current_epoch=current_epoch,
+            hazard_id_filter=(
+                hazard_version_key_filter.split("#", 1)[0]
+                if hazard_version_key_filter
+                else None
+            ),
+            full_evaluation=hazard_version_key_filter is None,
+        )
+
         return {
             "projection_id": projection_id,
             "processed": True,
             "reason": "NO_PROJECTION_CELLS",
             "encounters_written": 0,
+            "encounters_resolved": resolved,
         }
 
     candidates = collect_hazard_candidates(
@@ -1212,11 +1600,29 @@ def evaluate_projection(
     )
 
     if not candidates:
+        resolved = supersede_stale_encounters(
+            aircraft_id=str(
+                projection["aircraft_id"]
+            ),
+            current_projection_id=str(
+                projection["projection_id"]
+            ),
+            written_encounter_ids=set(),
+            current_epoch=current_epoch,
+            hazard_id_filter=(
+                hazard_version_key_filter.split("#", 1)[0]
+                if hazard_version_key_filter
+                else None
+            ),
+            full_evaluation=hazard_version_key_filter is None,
+        )
+
         return {
             "projection_id": projection_id,
             "processed": True,
             "reason": "NO_HAZARD_CELL_MATCH",
             "encounters_written": 0,
+            "encounters_resolved": resolved,
             "projection_cells": len(
                 projection_cells
             ),
@@ -1225,6 +1631,7 @@ def evaluate_projection(
     encounters_written = 0
     exact_confirmed = 0
     skipped = 0
+    written_encounter_ids: set[str] = set()
 
     for candidate in candidates.values():
         hazard_id = candidate.get(
@@ -1289,12 +1696,33 @@ def evaluate_projection(
             detail_type="encounter.updated",
         )
 
+        written_encounter_ids.add(
+            str(item["encounter_id"])
+        )
+
         encounters_written += 1
 
         if item[
             "exact_intersection_confirmed"
         ]:
             exact_confirmed += 1
+
+    resolved = supersede_stale_encounters(
+        aircraft_id=str(
+            projection["aircraft_id"]
+        ),
+        current_projection_id=str(
+            projection["projection_id"]
+        ),
+        written_encounter_ids=written_encounter_ids,
+        current_epoch=current_epoch,
+        hazard_id_filter=(
+            hazard_version_key_filter.split("#", 1)[0]
+            if hazard_version_key_filter
+            else None
+        ),
+        full_evaluation=hazard_version_key_filter is None,
+    )
 
     return {
         "projection_id": projection_id,
@@ -1309,6 +1737,7 @@ def evaluate_projection(
         "encounters_written": (
             encounters_written
         ),
+        "encounters_resolved": resolved,
         "exact_confirmed": exact_confirmed,
         "skipped_candidates": skipped,
     }

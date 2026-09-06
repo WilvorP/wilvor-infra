@@ -1,4 +1,4 @@
-import { screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
 import type { ComponentProps } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -32,6 +32,7 @@ const EMPTY_DETAIL: AircraftDetailResponse = {
   aircraft: { aircraft_id: 'a1b2c3', callsign: 'UAL123' },
   projection: null,
   projectionPoints: [],
+  currentContexts: [],
   recentEncounters: [],
   recentRisks: [],
   recentRecommendations: [],
@@ -82,6 +83,46 @@ const FULL_DETAIL: AircraftDetailResponse = {
       longitude: -122.4,
       estimated_altitude_ft: 34800,
       projected_time_utc: '2026-01-01T00:10:10Z',
+    },
+  ],
+  currentContexts: [
+    {
+      encounter: {
+        encounter_id: 'enc-1',
+        hazard_id: 'sigmet-abc',
+        hazard_type: 'TURBULENCE',
+        severity: 'SEVERE',
+        encounter_state: 'DETECTED',
+        detected_at_utc: '2026-01-01T00:01:00Z',
+        inside_now: false,
+        altitude_overlap_status: 'UNKNOWN',
+        geometry_overlap_status: 'YES',
+        time_overlap_status: 'YES',
+        trajectory_confidence: 'HIGH',
+      },
+      risk: {
+        risk_id: 'risk-1',
+        encounter_id: 'enc-1',
+        risk_level: 'HIGH',
+        risk_score: 82,
+        confidence: 'MEDIUM',
+        freshness_status: 'FRESH',
+        reasons: ['Projected path intersects active SIGMET'],
+        limitations: ['Altitude overlap is unknown'],
+      },
+      recommendation: {
+        recommendation_id: 'rec-1',
+        primary_action_type: 'EVALUATE_DIVERSION',
+        primary_action_details: {
+          advisory: 'Evaluate diversion options using ranked airport evidence.',
+          requires_human_review: true,
+          candidate_count: 1,
+        },
+      },
+      alert: {
+        alert_id: 'alert-1',
+        alert_state: 'NEW',
+      },
     },
   ],
   recentEncounters: [
@@ -275,7 +316,7 @@ describe('AircraftSelectionPanel', () => {
     });
 
     expect(screen.getByText(/not present in the most recent map refresh/)).toBeInTheDocument();
-    expect(screen.getByText('Score 82')).toBeInTheDocument();
+    expect(screen.getAllByText('Score 82').length).toBeGreaterThan(0);
   });
 
   it('keeps the selection dismissable when the aircraft is gone', () => {
@@ -292,31 +333,93 @@ describe('AircraftSelectionPanel', () => {
     renderPanel({}, async () => FULL_DETAIL);
 
     await waitFor(() => {
-      expect(screen.getByText('Evaluate diversion')).toBeInTheDocument();
+      expect(screen.getAllByText('Evaluate diversion').length).toBeGreaterThan(0);
     });
 
-    expect(screen.getByText('Score 82')).toBeInTheDocument();
+    expect(screen.getAllByText('Score 82').length).toBeGreaterThan(0);
     expect(
-      screen.getByText('Projected path intersects active SIGMET'),
-    ).toBeInTheDocument();
+      screen.getAllByText('Projected path intersects active SIGMET').length,
+    ).toBeGreaterThan(0);
     expect(
-      screen.getByText(
+      screen.getAllByText(
         'Evaluate diversion options using ranked airport evidence.',
-      ),
-    ).toBeInTheDocument();
+      ).length,
+    ).toBeGreaterThan(0);
     expect(screen.queryByText(/^Divert to/)).not.toBeInTheDocument();
-    expect(screen.getByText('KDEN')).toBeInTheDocument();
-    expect(screen.getByText(/Altitude overlap is not evaluated/)).toBeInTheDocument();
+    expect(screen.getAllByText('KDEN').length).toBeGreaterThan(0);
+    expect(
+      screen.getByRole('heading', { name: 'Current decision context' }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'Recent encounters' }),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Recent history')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Why' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('heading', { name: 'Uncertainties / limitations' }),
+    ).toBeInTheDocument();
+  });
+
+  it('highlights the current context matched by stored IDs', async () => {
+    renderPanel(
+      {
+        contextSelection: {
+          aircraftId: 'a1b2c3',
+          encounterId: 'enc-1',
+          riskId: 'risk-1',
+          source: 'encounter',
+        },
+      },
+      async () => FULL_DETAIL,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Selected context')).toBeInTheDocument();
+    });
+
+    const selectedCard = screen.getByText('Selected context').closest('article');
+
+    expect(selectedCard).toHaveAttribute('aria-current', 'true');
+    expect(selectedCard).toHaveTextContent('enc-1');
+  });
+
+  it('does not fall back to the latest context when IDs do not match', async () => {
+    renderPanel(
+      {
+        contextSelection: {
+          aircraftId: 'a1b2c3',
+          encounterId: 'enc-missing',
+          riskId: 'risk-missing',
+          source: 'encounter',
+        },
+      },
+      async () => FULL_DETAIL,
+    );
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/not among this aircraft's current contexts/i),
+      ).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText('Selected context')).not.toBeInTheDocument();
   });
 
   it('renders stored UNKNOWN altitude overlap as Unknown, not Yes or No', async () => {
     renderPanel({}, async () => FULL_DETAIL);
 
     await waitFor(() => {
-      expect(screen.getByText('Altitude')).toBeInTheDocument();
+      expect(
+        screen.getByRole('heading', { name: 'Current decision context' }),
+      ).toBeInTheDocument();
     });
 
-    const altitude = screen.getByText('Altitude').parentElement;
+    const decision = screen
+      .getByRole('heading', { name: 'Current decision context' })
+      .closest('section');
+    const altitude = within(decision as HTMLElement).getByText(
+      'Altitude overlap',
+    ).parentElement;
 
     expect(altitude).toHaveTextContent('Unknown');
     expect(altitude).not.toHaveTextContent('Yes');
@@ -329,6 +432,7 @@ describe('AircraftSelectionPanel', () => {
         return {
           ...FULL_DETAIL,
           aircraft: { aircraft_id: 'bbbbbb', callsign: 'AAL9' },
+          currentContexts: [],
           recentRisks: [
             {
               risk_id: 'risk-b',
@@ -355,7 +459,7 @@ describe('AircraftSelectionPanel', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Score 82')).toBeInTheDocument();
+      expect(screen.getAllByText('Score 82').length).toBeGreaterThan(0);
     });
 
     rerender(
@@ -373,5 +477,53 @@ describe('AircraftSelectionPanel', () => {
 
     expect(screen.queryByText('Score 82')).not.toBeInTheDocument();
     expect(screen.getAllByText('AAL9').length).toBeGreaterThan(0);
+  });
+
+  it('lets the operator switch among multiple current contexts without rematching by recency', async () => {
+    renderPanel({}, async () => ({
+      ...FULL_DETAIL,
+      currentContexts: [
+        FULL_DETAIL.currentContexts![0],
+        {
+          encounter: {
+            encounter_id: 'enc-2',
+            hazard_id: 'sigmet-xyz',
+            hazard_type: 'ICING',
+            altitude_overlap_status: 'NO',
+            geometry_overlap_status: 'YES',
+            time_overlap_status: 'YES',
+          },
+          risk: {
+            risk_id: 'risk-2',
+            risk_level: 'LOW',
+            risk_score: 18,
+            reasons: ['Geometry overlap is distant'],
+          },
+          recommendation: {
+            recommendation_id: 'rec-2',
+            primary_action_type: 'MONITOR',
+          },
+        },
+      ],
+    }));
+
+    await waitFor(() => {
+      expect(screen.getByText('Current contexts (2)')).toBeInTheDocument();
+    });
+
+    expect(
+      screen.getByRole('tab', { name: /sigmet-abc/i }),
+    ).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getAllByText('Evaluate diversion').length).toBeGreaterThan(0);
+    expect(screen.queryByText('Selected context')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('tab', { name: /sigmet-xyz/i }));
+
+    expect(
+      screen.getByRole('tab', { name: /sigmet-xyz/i }),
+    ).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByText('Monitor')).toBeInTheDocument();
+    expect(screen.getByText('Score 18')).toBeInTheDocument();
+    expect(screen.getByText('Geometry overlap is distant')).toBeInTheDocument();
   });
 });

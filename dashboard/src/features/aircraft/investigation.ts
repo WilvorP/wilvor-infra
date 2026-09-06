@@ -1,5 +1,6 @@
 import type {
   AircraftHazardEncounter,
+  AircraftOperationalContext,
   AircraftProjectionPoint,
   Recommendation,
   RecommendationEvidenceReference,
@@ -39,6 +40,220 @@ export function encounterHazardIds(
   }
 
   return ids;
+}
+
+/** Hazard identifiers from current operational contexts only. */
+export function currentContextHazardIds(
+  contexts: readonly AircraftOperationalContext[] | null | undefined,
+): string[] {
+  return encounterHazardIds(
+    asRecordList(contexts)
+      .map((context) => context.encounter)
+      .filter((encounter): encounter is AircraftHazardEncounter => {
+        return encounter != null;
+      }),
+  );
+}
+
+const RISK_RANK: Record<string, number> = {
+  HIGH: 4,
+  MEDIUM: 3,
+  LOW: 2,
+  UNKNOWN: 1,
+};
+
+/**
+ * Worklist or map-driven pointer into `currentContexts`.
+ *
+ * Matching is by stored IDs only. Never pick a context because it is the
+ * newest timestamp.
+ */
+export interface ContextSelection {
+  aircraftId: string;
+  hazardId?: string | null;
+  encounterId?: string | null;
+  riskId?: string | null;
+  recommendationId?: string | null;
+  alertId?: string | null;
+  fingerprint?: string | null;
+  source?: 'encounter' | 'alert' | 'recommendation' | 'map';
+}
+
+function hasExplicitContextId(
+  selection: ContextSelection | null | undefined,
+): boolean {
+  if (selection == null) {
+    return false;
+  }
+
+  return (
+    asString(selection.encounterId) !== null ||
+    asString(selection.recommendationId) !== null ||
+    asString(selection.riskId) !== null ||
+    asString(selection.alertId) !== null ||
+    asString(selection.fingerprint) !== null
+  );
+}
+
+/**
+ * Find the current context that owns the selected IDs.
+ *
+ * Keys are tried in strength order, each across the full list:
+ * encounter_id, recommendation_id, risk_id, alert_id, fingerprint.
+ * Recency is never a tie-break.
+ */
+export function matchCurrentContext(
+  contexts: readonly AircraftOperationalContext[] | null | undefined,
+  selection: ContextSelection | null | undefined,
+): AircraftOperationalContext | null {
+  const items = asRecordList(contexts);
+
+  if (!hasExplicitContextId(selection) || items.length === 0) {
+    return null;
+  }
+
+  const encounterId = asString(selection?.encounterId);
+  if (encounterId !== null) {
+    const match = items.find(
+      (context) => asString(context.encounter?.encounter_id) === encounterId,
+    );
+    if (match) {
+      return match;
+    }
+  }
+
+  const recommendationId = asString(selection?.recommendationId);
+  if (recommendationId !== null) {
+    const match = items.find(
+      (context) =>
+        asString(context.recommendation?.recommendation_id) ===
+        recommendationId,
+    );
+    if (match) {
+      return match;
+    }
+  }
+
+  const riskId = asString(selection?.riskId);
+  if (riskId !== null) {
+    const match = items.find(
+      (context) => asString(context.risk?.risk_id) === riskId,
+    );
+    if (match) {
+      return match;
+    }
+  }
+
+  const alertId = asString(selection?.alertId);
+  if (alertId !== null) {
+    const match = items.find(
+      (context) => asString(context.alert?.alert_id) === alertId,
+    );
+    if (match) {
+      return match;
+    }
+  }
+
+  const fingerprint = asString(selection?.fingerprint);
+  if (fingerprint !== null) {
+    const match = items.find(
+      (context) => asString(context.alert?.fingerprint) === fingerprint,
+    );
+    if (match) {
+      return match;
+    }
+  }
+
+  return null;
+}
+
+export function contextSelectionIsExplicit(
+  selection: ContextSelection | null | undefined,
+): boolean {
+  return hasExplicitContextId(selection);
+}
+
+const CONTEXT_SEARCH_KEYS = [
+  'hazardId',
+  'encounterId',
+  'riskId',
+  'recommendationId',
+  'alertId',
+  'fingerprint',
+  'source',
+] as const;
+
+/** Encode worklist IDs for `/aircraft/{id}` so Overview does not host investigation. */
+export function contextSelectionSearchParams(
+  selection: ContextSelection,
+): URLSearchParams {
+  const params = new URLSearchParams();
+
+  for (const key of CONTEXT_SEARCH_KEYS) {
+    const value = asString(selection[key]);
+
+    if (value !== null) {
+      params.set(key, value);
+    }
+  }
+
+  return params;
+}
+
+export function aircraftInvestigationPath(selection: ContextSelection): string {
+  const params = contextSelectionSearchParams(selection);
+  const path = `/aircraft/${encodeURIComponent(selection.aircraftId)}`;
+
+  return params.size === 0 ? path : `${path}?${params.toString()}`;
+}
+
+export function contextSelectionFromSearch(
+  aircraftId: string,
+  search: URLSearchParams,
+): ContextSelection {
+  const source = asString(search.get('source'));
+
+  return {
+    aircraftId,
+    hazardId: asString(search.get('hazardId')),
+    encounterId: asString(search.get('encounterId')),
+    riskId: asString(search.get('riskId')),
+    recommendationId: asString(search.get('recommendationId')),
+    alertId: asString(search.get('alertId')),
+    fingerprint: asString(search.get('fingerprint')),
+    source:
+      source === 'encounter' ||
+      source === 'alert' ||
+      source === 'recommendation' ||
+      source === 'map'
+        ? source
+        : 'map',
+  };
+}
+
+/** Highest stored current-context risk. Does not recompute score. */
+export function highestCurrentRisk(
+  contexts: readonly AircraftOperationalContext[] | null | undefined,
+): RiskResult | null {
+  let selected: RiskResult | null = null;
+  let selectedRank = -1;
+
+  for (const context of asRecordList(contexts)) {
+    const risk = context.risk;
+
+    if (risk == null) {
+      continue;
+    }
+
+    const rank = RISK_RANK[asString(risk.risk_level)?.toUpperCase() ?? ''] ?? 0;
+
+    if (rank > selectedRank) {
+      selected = risk;
+      selectedRank = rank;
+    }
+  }
+
+  return selected;
 }
 
 /**

@@ -36,6 +36,7 @@ describe('OperationalApiClient routes', () => {
         ['/encounters/active', (c) => c.listActiveEncounters()],
         ['/recommendations/active', (c) => c.listActiveRecommendations()],
         ['/alerts/active', (c) => c.listActiveAlerts()],
+        ['/airports', (c) => c.listAirports()],
       ];
 
     for (const [path, invoke] of cases) {
@@ -109,6 +110,50 @@ describe('OperationalApiClient routes', () => {
     );
   });
 
+  it('forwards airport weather filters and an opaque nextToken', async () => {
+    const token = 'eyJhaXJwb3J0X2lkIjp7IlMiOiJLREVOIn19';
+    const fetchImpl = stubFetch();
+
+    await clientWith(fetchImpl).listAirports({
+      limit: 50,
+      nextToken: token,
+      weatherRisk: 'HIGH',
+      weatherImpact: 'WEATHER_IMPACTED',
+    });
+
+    const url = requestedUrl(fetchImpl);
+
+    expect(url).toContain('/airports');
+    expect(url).toContain('limit=50');
+    expect(url).toContain('weatherRisk=HIGH');
+    expect(url).toContain('weatherImpact=WEATHER_IMPACTED');
+    expect(url).toContain(`nextToken=${encodeURIComponent(token)}`);
+  });
+
+  it('returns the airport-detail envelope without reshaping fields', async () => {
+    const body = {
+      airport: { airport_id: 'KDEN', weather_impact_status: 'NORMAL' },
+      metar: { station_id: 'KDEN', flight_category: 'VFR' },
+      taf: { station_id: 'KDEN', forecast_period_count: 2 },
+      tafForecastPeriods: [{ period_id: 'p1', change_type: 'BASE' }],
+      recentAssessments: [{ airport_assessment_id: 'aa#1' }],
+    };
+    const fetchImpl = vi.fn(
+      async () =>
+        new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { 'content-type': 'application/json' },
+        }),
+    );
+
+    const result = await clientWith(fetchImpl).getAirport('kden');
+
+    expect(requestedUrl(fetchImpl)).toBe(
+      'https://api.example.test/airports/kden',
+    );
+    expect(result).toEqual(body);
+  });
+
   it('forwards aircraft filters as query parameters', async () => {
     const fetchImpl = stubFetch();
 
@@ -144,6 +189,42 @@ describe('OperationalApiClient guard rails', () => {
     await expect(client.listAircraft({ limit: 2.5 })).rejects.toThrow(
       RangeError,
     );
+  });
+
+  it('forwards an opaque nextToken unchanged on current list routes', async () => {
+    const token = 'eyJvZmZzZXQiOnsiTiI6IjIifX0=';
+    const fetchImpl = stubFetch();
+
+    await clientWith(fetchImpl).listActiveEncounters({
+      limit: 50,
+      nextToken: token,
+    });
+    await clientWith(fetchImpl).listActiveAlerts({
+      limit: 100,
+      nextToken: token,
+    });
+    await clientWith(fetchImpl).listActiveRecommendations({
+      limit: 100,
+      nextToken: token,
+    });
+
+    expect(fetchImpl.mock.calls[0]![0]).toContain(
+      `nextToken=${encodeURIComponent(token)}`,
+    );
+    expect(fetchImpl.mock.calls[1]![0]).toContain(
+      `nextToken=${encodeURIComponent(token)}`,
+    );
+    expect(fetchImpl.mock.calls[2]![0]).toContain(
+      `nextToken=${encodeURIComponent(token)}`,
+    );
+  });
+
+  it('omits nextToken when the caller has no cursor', async () => {
+    const fetchImpl = stubFetch();
+
+    await clientWith(fetchImpl).listActiveAlerts({ nextToken: null });
+
+    expect(requestedUrl(fetchImpl)).not.toContain('nextToken');
   });
 
   it('accepts a limit at the ceiling', async () => {

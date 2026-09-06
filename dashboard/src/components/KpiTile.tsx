@@ -18,6 +18,9 @@ export interface KpiTileProps {
   problem?: ReactNode;
   /** Marks the value as carried over from an earlier successful refresh. */
   stale?: boolean;
+  /** When set, the tile is a quick-filter control. */
+  active?: boolean;
+  onSelect?: () => void;
 }
 
 /**
@@ -33,9 +36,19 @@ export function KpiTile({
   breakdown,
   problem,
   stale = false,
+  active = false,
+  onSelect,
 }: KpiTileProps) {
-  return (
-    <div className={styles.tile}>
+  const className = [
+    styles.tile,
+    onSelect ? styles.interactive : '',
+    active ? styles.active : '',
+  ]
+    .filter((part) => part.length > 0)
+    .join(' ');
+
+  const body = (
+    <>
       <p className={styles.label}>{label}</p>
 
       {problem ? (
@@ -68,6 +81,21 @@ export function KpiTile({
           ))}
         </dl>
       ) : null}
-    </div>
+    </>
   );
+
+  if (onSelect) {
+    return (
+      <button
+        type="button"
+        className={className}
+        aria-pressed={active}
+        onClick={onSelect}
+      >
+        {body}
+      </button>
+    );
+  }
+
+  return <div className={className}>{body}</div>;
 }

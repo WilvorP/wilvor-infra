@@ -13,6 +13,8 @@ import boto3
 from boto3.dynamodb.conditions import Attr, Key
 from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
 
+import current_set
+
 
 DDB = boto3.resource("dynamodb")
 
@@ -174,6 +176,8 @@ ACTIVE_ALERT_STATES = [
     "ESCALATED",
     "UPDATED",
 ]
+
+CURRENT_ENCOUNTER_CACHE_TTL_SECONDS = 15
 
 
 # ---------------------------------------------------------------------
@@ -443,6 +447,88 @@ def _cached(
     }
 
     return value
+
+
+def _load_current_indexes(now_epoch):
+    projections = _scan_all(
+        PROJECTIONS,
+        FilterExpression=(
+            Attr("projection_status").eq("READY")
+            & Attr("valid_until_epoch").gt(now_epoch)
+        ),
+        ProjectionExpression=(
+            "aircraft_id,"
+            "projection_id,"
+            "generated_at_epoch,"
+            "valid_until_epoch,"
+            "projection_status"
+        ),
+    )
+
+    hazards = _scan_all(
+        HAZARDS,
+        FilterExpression=(
+            Attr("status").eq("ACTIVE")
+            & Attr("materialization_status").eq("READY")
+            & Attr("valid_to_epoch").gte(now_epoch)
+        ),
+        ProjectionExpression=(
+            "hazard_id,"
+            "source_version,"
+            "#hazard_status,"
+            "materialization_status,"
+            "valid_to_epoch"
+        ),
+        ExpressionAttributeNames={
+            "#hazard_status": "status",
+        },
+    )
+
+    return (
+        current_set.index_current_projections(
+            projections,
+            now_epoch,
+        ),
+        current_set.index_current_hazard_versions(
+            hazards,
+            now_epoch,
+        ),
+    )
+
+
+def _current_encounter_snapshot():
+    def _load():
+        now_epoch = int(time.time())
+        projection_ids, hazard_versions = _load_current_indexes(
+            now_epoch
+        )
+        items = _scan_all(
+            ENCOUNTERS,
+            FilterExpression=Attr("encounter_state").is_in(
+                list(current_set.CURRENT_ENCOUNTER_STATES)
+            ),
+        )
+        current_items = [
+            item
+            for item in items
+            if current_set.is_current_encounter(
+                item,
+                current_projection_ids=projection_ids,
+                current_hazard_versions=hazard_versions,
+            )
+        ]
+        return {
+            "now_epoch": now_epoch,
+            "items": current_items,
+            "projection_ids": projection_ids,
+            "hazard_versions": hazard_versions,
+        }
+
+    return _cached(
+        "current_encounters",
+        CURRENT_ENCOUNTER_CACHE_TTL_SECONDS,
+        _load,
+    )
 
 
 def _parse_iso_epoch(
@@ -1122,29 +1208,25 @@ def get_aircraft_detail(aircraft_id):
     # -------------------------------------------------------------
     # Latest projection
     # -------------------------------------------------------------
+    now_epoch = int(time.time())
+
     projections = _query_latest(
         PROJECTIONS,
         IDX_PROJECTION_AIRCRAFT_TIME,
         "aircraft_id",
         aircraft_id,
-        limit=1,
+        limit=10,
     )
 
-    projection = (
-        projections[0]
-        if projections
-        else None
-    )
+    projection = None
 
-    # Do not return an already-expired path as "current".
-    if (
-        projection
-        and projection.get("valid_until_epoch")
-        and int(
-            projection["valid_until_epoch"]
-        ) <= int(time.time())
-    ):
-        projection = None
+    for candidate in projections:
+        if current_set.is_current_projection(
+            candidate,
+            now_epoch,
+        ):
+            projection = candidate
+            break
 
     # -------------------------------------------------------------
     # Projection points
@@ -1178,7 +1260,7 @@ def get_aircraft_detail(aircraft_id):
         IDX_ENCOUNTER_AIRCRAFT_TIME,
         "aircraft_id",
         aircraft_id,
-        limit=20,
+        limit=50,
     )
 
     risks = _query_latest(
@@ -1186,7 +1268,7 @@ def get_aircraft_detail(aircraft_id):
         IDX_RISK_AIRCRAFT_TIME,
         "aircraft_id",
         aircraft_id,
-        limit=20,
+        limit=50,
     )
 
     recommendations = _query_latest(
@@ -1194,7 +1276,7 @@ def get_aircraft_detail(aircraft_id):
         IDX_RECOMMENDATION_AIRCRAFT_TIME,
         "aircraft_id",
         aircraft_id,
-        limit=20,
+        limit=50,
     )
 
     alerts = _query_latest(
@@ -1202,18 +1284,139 @@ def get_aircraft_detail(aircraft_id):
         IDX_ALERT_AIRCRAFT_TIME,
         "aircraft_id",
         aircraft_id,
-        limit=20,
+        limit=50,
+    )
+
+    current_projection_ids = {}
+
+    if (
+        projection
+        and projection.get("projection_id")
+    ):
+        current_projection_ids[aircraft_id] = str(
+            projection["projection_id"]
+        )
+
+    _projection_ids, current_hazard_versions = _load_current_indexes(
+        now_epoch
+    )
+
+    if aircraft_id in _projection_ids:
+        current_projection_ids[aircraft_id] = _projection_ids[
+            aircraft_id
+        ]
+
+    current_encounters = [
+        item
+        for item in encounters
+        if current_set.is_current_encounter(
+            item,
+            current_projection_ids=current_projection_ids,
+            current_hazard_versions=current_hazard_versions,
+        )
+    ]
+
+    current_contexts = _join_current_contexts(
+        current_encounters,
+        risks,
+        recommendations,
+        alerts,
     )
 
     return {
         "aircraft": current,
         "projection": projection,
         "projectionPoints": projection_points,
-        "recentEncounters": encounters,
-        "recentRisks": risks,
-        "recentRecommendations": recommendations,
-        "recentAlerts": alerts,
+        "currentContexts": current_contexts,
+        "recentEncounters": encounters[:20],
+        "recentRisks": risks[:20],
+        "recentRecommendations": recommendations[:20],
+        "recentAlerts": alerts[:20],
     }
+
+
+def _first_by_key(items, key_name):
+    indexed = {}
+
+    for item in items:
+        key = item.get(key_name)
+
+        if not key or key in indexed:
+            continue
+
+        indexed[key] = item
+
+    return indexed
+
+
+def _join_current_contexts(
+    encounters,
+    risks,
+    recommendations,
+    alerts,
+):
+    risk_by_encounter = _first_by_key(
+        risks,
+        "encounter_id",
+    )
+    recommendation_by_risk = _first_by_key(
+        recommendations,
+        "risk_id",
+    )
+    alert_by_risk = {}
+    alert_by_recommendation = {}
+
+    for alert in alerts:
+        state = str(
+            alert.get("alert_state") or ""
+        ).upper()
+
+        if state not in current_set.CURRENT_ALERT_STATES:
+            continue
+
+        risk_id = alert.get("risk_id")
+        recommendation_id = alert.get("recommendation_id")
+
+        if risk_id and risk_id not in alert_by_risk:
+            alert_by_risk[risk_id] = alert
+
+        if (
+            recommendation_id
+            and recommendation_id not in alert_by_recommendation
+        ):
+            alert_by_recommendation[recommendation_id] = alert
+
+    contexts = []
+
+    for encounter in encounters:
+        encounter_id = encounter.get("encounter_id")
+        risk = risk_by_encounter.get(encounter_id)
+        recommendation = None
+        alert = None
+
+        if risk:
+            recommendation = recommendation_by_risk.get(
+                risk.get("risk_id")
+            )
+
+        if recommendation:
+            alert = alert_by_recommendation.get(
+                recommendation.get("recommendation_id")
+            )
+
+        if alert is None and risk:
+            alert = alert_by_risk.get(risk.get("risk_id"))
+
+        contexts.append(
+            {
+                "encounter": encounter,
+                "risk": risk,
+                "recommendation": recommendation,
+                "alert": alert,
+            }
+        )
+
+    return contexts
 
 
 # ---------------------------------------------------------------------
@@ -1274,48 +1477,36 @@ def list_active_encounters(
     limit,
     next_token=None,
 ):
-    now = int(
-        time.time()
-    )
-
-    kwargs = {
-        "FilterExpression": (
-            Attr(
-                "encounter_state"
-            ).is_in(
-                [
-                    "DETECTED",
-                    "MONITORING",
-                ]
-            )
-            & Attr(
-                "expires_at_epoch"
-            ).gt(now)
+    snapshot = _current_encounter_snapshot()
+    items = sorted(
+        snapshot["items"],
+        key=lambda item: int(
+            item.get("detected_at_epoch") or 0
         ),
-        "Limit": limit,
-    }
-
-    _with_start_key(
-        kwargs,
-        next_token,
+        reverse=True,
     )
 
-    response = ENCOUNTERS.scan(
-        **kwargs
-    )
+    offset = 0
+
+    if next_token:
+        start = _decode_token(next_token)
+        offset = int(start.get("offset") or 0)
+
+    page = items[offset:offset + limit]
+    next_offset = offset + len(page)
+    next_page_token = None
+
+    if next_offset < len(items):
+        next_page_token = _encode_token(
+            {
+                "offset": next_offset,
+            }
+        )
 
     enriched = []
 
-    for encounter in response.get(
-        "Items",
-        [],
-    ):
-        encounter_id = (
-            encounter.get(
-                "encounter_id"
-            )
-        )
-
+    for encounter in page:
+        encounter_id = encounter.get("encounter_id")
         risk = None
 
         if encounter_id:
@@ -1332,17 +1523,16 @@ def list_active_encounters(
 
         enriched.append(
             {
-                "encounter": (
-                    encounter
-                ),
+                "encounter": encounter,
                 "risk": risk,
             }
         )
 
-    return _page_with_items(
-        response,
-        enriched,
-    )
+    return {
+        "items": enriched,
+        "count": len(enriched),
+        "nextToken": next_page_token,
+    }
 
 
 # ---------------------------------------------------------------------
@@ -1543,60 +1733,232 @@ def get_airport_detail(airport_id):
 # Recommendations
 # ---------------------------------------------------------------------
 
+def _current_recommendation_snapshot():
+    def _load():
+        current_risk_ids, _current_recommendation_ids = (
+            _current_risk_and_recommendation_ids()
+        )
+        now_iso = _now_iso()
+        recommendations = _scan_all(
+            RECOMMENDATIONS,
+            FilterExpression=(
+                Attr("recommendation_status").eq("ACTIVE")
+                & Attr("valid_until_utc").gt(now_iso)
+            ),
+        )
+        current_items = [
+            item
+            for item in recommendations
+            if current_set.is_current_recommendation(
+                item,
+                current_risk_ids=current_risk_ids,
+            )
+            and _is_future_iso(item.get("valid_until_utc"))
+        ]
+        return {"items": current_items}
+
+    return _cached(
+        "current_recommendations",
+        CURRENT_ENCOUNTER_CACHE_TTL_SECONDS,
+        _load,
+    )
+
+
 def list_active_recommendations(
     limit,
     next_token=None,
 ):
-    kwargs = {
-        "IndexName": IDX_RECOMMENDATION_STATUS_TIME,
-        "KeyConditionExpression": Key(
-            "recommendation_status"
-        ).eq("ACTIVE"),
-        "FilterExpression": Attr(
-            "valid_until_utc"
-        ).gt(_now_iso()),
-        "ScanIndexForward": False,
-        "Limit": limit,
+    snapshot = _current_recommendation_snapshot()
+    items = sorted(
+        snapshot["items"],
+        key=lambda item: int(
+            item.get("created_at_epoch") or 0
+        ),
+        reverse=True,
+    )
+
+    offset = 0
+
+    if next_token:
+        start = _decode_token(next_token)
+        offset = int(start.get("offset") or 0)
+
+    page = items[offset:offset + limit]
+    next_offset = offset + len(page)
+    next_page_token = None
+
+    if next_offset < len(items):
+        next_page_token = _encode_token(
+            {
+                "offset": next_offset,
+            }
+        )
+
+    return {
+        "items": page,
+        "count": len(page),
+        "nextToken": next_page_token,
     }
-
-    _with_start_key(
-        kwargs,
-        next_token,
-    )
-
-    return _page(
-        RECOMMENDATIONS.query(**kwargs)
-    )
 
 
 # ---------------------------------------------------------------------
 # Alerts
 # ---------------------------------------------------------------------
 
+def _current_risk_and_recommendation_ids():
+    """
+    Current decision-chain IDs used to decide whether an alert is current.
+
+    Same join keys as overview.alerts.currentCount: latest unexpired risk on a
+    current encounter, then ACTIVE recommendations on those risk IDs.
+    """
+
+    snapshot = _current_encounter_snapshot()
+    current_encounter_ids = {
+        item.get("encounter_id")
+        for item in snapshot["items"]
+        if item.get("encounter_id")
+    }
+
+    risks = _scan_all(
+        RISKS,
+        ProjectionExpression=(
+            "risk_id,"
+            "encounter_id,"
+            "generated_at_epoch,"
+            "valid_until_utc"
+        ),
+    )
+
+    latest_by_encounter = {}
+
+    for risk in risks:
+        encounter_id = risk.get("encounter_id")
+
+        if (
+            not encounter_id
+            or encounter_id not in current_encounter_ids
+        ):
+            continue
+
+        valid_until = risk.get("valid_until_utc")
+
+        if valid_until and not _is_future_iso(valid_until):
+            continue
+
+        current_epoch = int(
+            risk.get("generated_at_epoch") or 0
+        )
+        existing = latest_by_encounter.get(encounter_id)
+        existing_epoch = int(
+            (existing or {}).get("generated_at_epoch") or 0
+        )
+
+        if existing is None or current_epoch > existing_epoch:
+            latest_by_encounter[encounter_id] = risk
+
+    current_risk_ids = {
+        item.get("risk_id")
+        for item in latest_by_encounter.values()
+        if item.get("risk_id")
+    }
+
+    now_iso = _now_iso()
+    recommendation_items = _scan_all(
+        RECOMMENDATIONS,
+        FilterExpression=(
+            Attr("recommendation_status").eq("ACTIVE")
+            & Attr("valid_until_utc").gt(now_iso)
+        ),
+        ProjectionExpression=(
+            "recommendation_id,"
+            "risk_id,"
+            "recommendation_status"
+        ),
+    )
+
+    current_recommendation_ids = {
+        item.get("recommendation_id")
+        for item in recommendation_items
+        if current_set.is_current_recommendation(
+            item,
+            current_risk_ids=current_risk_ids,
+        )
+        and item.get("recommendation_id")
+    }
+
+    return current_risk_ids, current_recommendation_ids
+
+
+def _current_alert_snapshot():
+    def _load():
+        current_risk_ids, current_recommendation_ids = (
+            _current_risk_and_recommendation_ids()
+        )
+        now_iso = _now_iso()
+        alerts = _scan_all(
+            ALERTS,
+            FilterExpression=(
+                Attr("alert_state").is_in(
+                    list(current_set.CURRENT_ALERT_STATES)
+                )
+                & Attr("valid_until_utc").gt(now_iso)
+            ),
+        )
+        current_items = [
+            item
+            for item in alerts
+            if current_set.is_current_alert(
+                item,
+                current_risk_ids=current_risk_ids,
+                current_recommendation_ids=current_recommendation_ids,
+            )
+            and _is_future_iso(item.get("valid_until_utc"))
+        ]
+        return {"items": current_items}
+
+    return _cached(
+        "current_alerts",
+        CURRENT_ENCOUNTER_CACHE_TTL_SECONDS,
+        _load,
+    )
+
+
 def list_active_alerts(
     limit,
     next_token=None,
 ):
-    kwargs = {
-        "FilterExpression": (
-            Attr("alert_state").is_in(
-                ACTIVE_ALERT_STATES
-            )
-            & Attr(
-                "valid_until_utc"
-            ).gt(_now_iso())
+    snapshot = _current_alert_snapshot()
+    items = sorted(
+        snapshot["items"],
+        key=lambda item: int(
+            item.get("updated_at_epoch") or 0
         ),
-        "Limit": limit,
+        reverse=True,
+    )
+
+    offset = 0
+
+    if next_token:
+        start = _decode_token(next_token)
+        offset = int(start.get("offset") or 0)
+
+    page = items[offset:offset + limit]
+    next_offset = offset + len(page)
+    next_page_token = None
+
+    if next_offset < len(items):
+        next_page_token = _encode_token(
+            {
+                "offset": next_offset,
+            }
+        )
+
+    return {
+        "items": page,
+        "count": len(page),
+        "nextToken": next_page_token,
     }
-
-    _with_start_key(
-        kwargs,
-        next_token,
-    )
-
-    return _page(
-        ALERTS.scan(**kwargs)
-    )
 
 # =====================================================================
 # DATA FRESHNESS
@@ -1854,27 +2216,13 @@ def get_overview():
         # Those made the original overview unnecessarily expensive.
         # =============================================================
 
-        encounters = _scan_all(
-            ENCOUNTERS,
-            FilterExpression=(
-                Attr(
-                    "encounter_state"
-                ).is_in(
-                    [
-                        "DETECTED",
-                        "MONITORING",
-                    ]
-                )
-                & Attr(
-                    "expires_at_epoch"
-                ).gt(
-                    now_epoch
-                )
-            ),
-            ProjectionExpression=(
-                "encounter_id"
-            ),
+        current_snapshot = (
+            _current_encounter_snapshot()
         )
+
+        encounters = current_snapshot[
+            "items"
+        ]
 
         encounter_count = len(
             encounters
@@ -1982,6 +2330,12 @@ def get_overview():
             .values()
         )
 
+        current_risk_ids = {
+            item.get("risk_id")
+            for item in latest_risks
+            if item.get("risk_id")
+        }
+
         risk_counts = Counter(
             str(
                 risk.get(
@@ -2021,28 +2375,38 @@ def get_overview():
         # five complete recommendation records for the dashboard.
         # =============================================================
 
-        recommendation_count = (
-            _query_count(
-                RECOMMENDATIONS,
-                IndexName=(
-                    IDX_RECOMMENDATION_STATUS_TIME
-                ),
-                KeyConditionExpression=(
-                    Key(
-                        "recommendation_status"
-                    ).eq(
-                        "ACTIVE"
-                    )
-                ),
-                FilterExpression=(
-                    Attr(
-                        "valid_until_utc"
-                    ).gt(
-                        now_iso
-                    )
-                ),
-            )
+        recommendation_items = _scan_all(
+            RECOMMENDATIONS,
+            FilterExpression=(
+                Attr("recommendation_status").eq("ACTIVE")
+                & Attr("valid_until_utc").gt(now_iso)
+            ),
+            ProjectionExpression=(
+                "recommendation_id,"
+                "risk_id,"
+                "recommendation_status,"
+                "valid_until_utc"
+            ),
         )
+
+        recommendation_count = len(
+            recommendation_items
+        )
+
+        current_recommendation_items = [
+            item
+            for item in recommendation_items
+            if current_set.is_current_recommendation(
+                item,
+                current_risk_ids=current_risk_ids,
+            )
+        ]
+
+        current_recommendation_ids = {
+            item.get("recommendation_id")
+            for item in current_recommendation_items
+            if item.get("recommendation_id")
+        }
 
         recommendation_page = (
             list_active_recommendations(
@@ -2115,9 +2479,21 @@ def get_overview():
                 )
             ),
             ProjectionExpression=(
-                "alert_state"
+                "alert_state,"
+                "risk_id,"
+                "recommendation_id"
             ),
         )
+
+        current_alerts = [
+            item
+            for item in alerts
+            if current_set.is_current_alert(
+                item,
+                current_risk_ids=current_risk_ids,
+                current_recommendation_ids=current_recommendation_ids,
+            )
+        ]
 
         alert_counts = Counter(
             str(
@@ -2307,6 +2683,12 @@ def get_overview():
                     recommendation_count
                 ),
 
+                "currentCount": (
+                    len(
+                        current_recommendation_items
+                    )
+                ),
+
                 "latest": (
                     latest_recommendations
                 ),
@@ -2315,6 +2697,12 @@ def get_overview():
             "alerts": {
                 "activeCount": (
                     alert_count
+                ),
+
+                "currentCount": (
+                    len(
+                        current_alerts
+                    )
                 ),
 
                 "byState": dict(

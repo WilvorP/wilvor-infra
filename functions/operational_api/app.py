@@ -467,7 +467,10 @@ def lambda_handler(
             )
 
         # =============================================================
-        # ACTIVE RECOMMENDATIONS
+        # CURRENT RECOMMENDATIONS
+        #
+        # Same current-set as overview.recommendations.currentCount.
+        # Retained ACTIVE+valid_until rows stay on overview.activeCount.
         # =============================================================
 
         if (
@@ -498,7 +501,10 @@ def lambda_handler(
             )
 
         # =============================================================
-        # ACTIVE ALERTS
+        # CURRENT ALERTS
+        #
+        # Same current-set as overview.alerts.currentCount.
+        # Retained ACTIVE+valid_until rows stay on overview.activeCount.
         # =============================================================
 
         if path == "/alerts/active":

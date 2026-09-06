@@ -22,8 +22,10 @@ export interface AircraftLayerData {
  * and the drawer's values advance with each poll instead of freezing at the
  * moment of selection.
  */
-export function useAircraftLayerData(): AircraftLayerData {
-  const query = useMapAircraft();
+export function useAircraftLayerData(
+  options: { enabled?: boolean } = {},
+): AircraftLayerData {
+  const query = useMapAircraft(options);
 
   const result = useMemo(() => decodeMapAircraft(query.data), [query.data]);
 

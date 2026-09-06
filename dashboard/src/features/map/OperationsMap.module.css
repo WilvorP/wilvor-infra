@@ -165,6 +165,12 @@
   background-color: #5cc3f2;
 }
 
+.swatchAirport {
+  background-color: var(--wv-risk-medium);
+  border: 1px solid var(--wv-risk-medium);
+  border-radius: 50%;
+}
+
 .swatchPending {
   background-color: transparent;
   border: 1px dashed var(--wv-border-strong);

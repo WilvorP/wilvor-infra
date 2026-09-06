@@ -54,6 +54,8 @@ export const REFRESH = {
   systemHealth: policy(60),
   /** Currently selected aircraft investigation detail. */
   aircraftDetail: policy(12),
+  /** Currently selected airport investigation detail. */
+  airportDetail: policy(20),
 } as const satisfies Record<string, RefreshPolicy>;
 
 export type RefreshKey = keyof typeof REFRESH;

@@ -29,7 +29,7 @@ export const ROUTES: readonly RouteDefinition[] = [
     title: 'Aircraft Investigation',
     description:
       'Per-aircraft current state, projected trajectory, hazard encounters, risk evaluation and advisory recommendation.',
-    implemented: false,
+    implemented: true,
   },
   {
     path: '/airports',
@@ -37,23 +37,23 @@ export const ROUTES: readonly RouteDefinition[] = [
     title: 'Airport Intelligence',
     description:
       'Airport operational status, current METAR, TAF forecast periods and diversion assessments.',
-    implemented: false,
+    implemented: true,
   },
   {
     path: '/encounters',
     navLabel: 'Encounters',
-    title: 'Active Encounters',
+    title: 'Current Encounters',
     description:
-      'Aircraft/hazard encounters currently detected or monitored, with their latest risk evaluation.',
-    implemented: false,
+      'Aircraft-hazard interactions currently requiring operational awareness, with stored risk and evidence.',
+    implemented: true,
   },
   {
     path: '/recommendations',
     navLabel: 'Recommendations',
-    title: 'Recommendations',
+    title: 'Current Recommendations',
     description:
-      'Active advisory recommendations with candidate airports and supporting rationale.',
-    implemented: false,
+      'What Wilvor is recommending now, for which operational context, and why.',
+    implemented: true,
   },
   {
     path: '/alerts',

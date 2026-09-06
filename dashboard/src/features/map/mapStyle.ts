@@ -76,4 +76,8 @@ export const MAP_IDS = {
   trajectorySource: 'wilvor-projection',
   trajectoryLine: 'wilvor-projection-line',
   trajectoryPoints: 'wilvor-projection-points',
+
+  airportSource: 'wilvor-airports',
+  airportHalo: 'wilvor-airports-halo',
+  airportCircle: 'wilvor-airports-circle',
 } as const;

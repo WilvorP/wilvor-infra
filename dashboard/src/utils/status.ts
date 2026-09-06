@@ -1,4 +1,4 @@
-import { asString } from './coerce';
+import { asBoolean, asString } from './coerce';
 import { humaniseToken } from './format';
 
 /**
@@ -120,9 +120,64 @@ export function presentOverlapStatus(value: unknown): StatusPresentation {
       return { tone: 'neutral', label: 'No', glyph: '○' };
     case 'UNKNOWN':
       return UNKNOWN_PRESENTATION;
+    case 'INSIDE_NOW':
+      return { tone: 'high', label: 'Inside hazard now', glyph: '▲' };
+    case 'OVERLAP':
+      return { tone: 'high', label: 'Overlap', glyph: '◆' };
+    case 'NO_OVERLAP':
+      return { tone: 'neutral', label: 'No overlap', glyph: '○' };
     default:
-      // Persisted tokens such as INSIDE_NOW / OVERLAP are shown as stored.
+      // Other persisted tokens (e.g. CORRIDOR_ONLY_INTERSECTION) stay literal.
       return { tone: 'neutral', label: humaniseToken(raw), glyph: '◆' };
+  }
+}
+
+/**
+ * `inside_now` is a stored boolean, distinct from geometry overlap tokens.
+ *
+ * Missing stays not-reported. This never treats UNKNOWN as Yes or No because
+ * that token is not a boolean value.
+ */
+export function presentInsideNow(value: unknown): StatusPresentation {
+  const flag = asBoolean(value);
+
+  if (flag === true) {
+    return { tone: 'high', label: 'Inside hazard now', glyph: '▲' };
+  }
+
+  if (flag === false) {
+    return { tone: 'neutral', label: 'Not inside now', glyph: '○' };
+  }
+
+  return { tone: 'unknown', label: '—', glyph: '?' };
+}
+
+/** Stored recommendation action token. Does not invent an instruction. */
+export function presentRecommendationAction(value: unknown): StatusPresentation {
+  const token = asString(value);
+
+  if (token == null) {
+    return UNKNOWN_PRESENTATION;
+  }
+
+  return { tone: 'neutral', label: humaniseToken(token), glyph: '▸' };
+}
+
+/** Encounter lifecycle states written by the encounter processor. */
+export function presentEncounterState(value: unknown): StatusPresentation {
+  switch (asString(value)?.toUpperCase()) {
+    case 'DETECTED':
+      return { tone: 'medium', label: 'Detected', glyph: '◆' };
+    case 'MONITORING':
+      return { tone: 'neutral', label: 'Monitoring', glyph: '◉' };
+    case 'RESOLVED':
+      return { tone: 'positive', label: 'Resolved', glyph: '✓' };
+    case 'SUPERSEDED':
+      return { tone: 'unknown', label: 'Superseded', glyph: '○' };
+    case 'EXPIRED':
+      return { tone: 'unknown', label: 'Expired', glyph: '○' };
+    default:
+      return UNKNOWN_PRESENTATION;
   }
 }
 
@@ -195,6 +250,58 @@ export function presentHazardSeverity(value: unknown): StatusPresentation {
     ...presentRiskLevel(hazardSeverityToRiskLevel(raw)),
     label: raw.charAt(0).toUpperCase() + raw.slice(1).toLowerCase(),
   };
+}
+
+/** METAR / TAF flight category as stored. Not a risk score. */
+export function presentFlightCategory(value: unknown): StatusPresentation {
+  switch (asString(value)?.toUpperCase()) {
+    case 'LIFR':
+      return { tone: 'high', label: 'LIFR', glyph: '▲' };
+    case 'IFR':
+      return { tone: 'high', label: 'IFR', glyph: '▲' };
+    case 'MVFR':
+      return { tone: 'medium', label: 'MVFR', glyph: '◆' };
+    case 'VFR':
+      return { tone: 'positive', label: 'VFR', glyph: '●' };
+    default:
+      return UNKNOWN_PRESENTATION;
+  }
+}
+
+/**
+ * AirportStatus.assessment_status and AirportAssessment.assessment_status.
+ * These are different vocabularies that happen to share a field name.
+ */
+export function presentAssessmentStatus(value: unknown): StatusPresentation {
+  switch (asString(value)?.toUpperCase()) {
+    case 'EVALUATED':
+      return { tone: 'positive', label: 'Evaluated', glyph: '●' };
+    case 'PARTIALLY_EVALUATED':
+      return { tone: 'medium', label: 'Partially evaluated', glyph: '◐' };
+    case 'WEATHER_PENDING':
+      return { tone: 'unknown', label: 'Weather pending', glyph: '?' };
+    case 'COMPLETE':
+      return { tone: 'positive', label: 'Complete', glyph: '●' };
+    case 'WAITING_FOR_WEATHER':
+      return { tone: 'unknown', label: 'Waiting for weather', glyph: '?' };
+    default:
+      return UNKNOWN_PRESENTATION;
+  }
+}
+
+/** Weather-impact ordering for loaded-page sorts. */
+export function weatherImpactRank(value: unknown): number {
+  switch (asString(value)?.toUpperCase()) {
+    case 'WEATHER_IMPACTED':
+    case 'IMPACTED':
+      return 3;
+    case 'UNKNOWN':
+      return 2;
+    case 'NORMAL':
+      return 1;
+    default:
+      return 0;
+  }
 }
 
 /** Ordering helper for lists that should surface the worst case first. */

@@ -289,7 +289,12 @@ export interface ActiveHazard {
   expires_at_epoch?: number;
 }
 
-export type EncounterState = 'DETECTED' | 'MONITORING';
+export type EncounterState =
+  | 'DETECTED'
+  | 'MONITORING'
+  | 'RESOLVED'
+  | 'SUPERSEDED'
+  | 'EXPIRED';
 
 /** `AircraftHazardEncounter` item. */
 export interface AircraftHazardEncounter {
@@ -304,8 +309,11 @@ export interface AircraftHazardEncounter {
   encounter_state?: EncounterState | string;
   geometry_overlap_status?: string;
   time_overlap_status?: string;
-  /** Currently always `UNKNOWN`; altitude overlap is not yet evaluated. */
+  /** OVERLAP, NO_OVERLAP, or UNKNOWN when altitude evidence is missing. */
   altitude_overlap_status?: string;
+  resolution_reason?: string;
+  resolved_at_utc?: string;
+  freshness_status?: string;
 
   corridor_intersects?: boolean;
   centerline_intersects?: boolean;
@@ -366,9 +374,14 @@ export interface AirportStatus {
   latitude?: number;
   longitude?: number;
   elevation_m?: number;
+  faa_lid?: string;
+  station_type?: string;
+  is_airport?: boolean;
 
   has_metar?: boolean;
   has_taf?: boolean;
+  metar_fetch_status?: string;
+  taf_fetch_status?: string;
   metar_freshness_status?: FreshnessStatus | string;
   taf_freshness_status?: FreshnessStatus | string;
   metar_age_seconds?: number;
@@ -395,6 +408,13 @@ export interface AirportStatus {
   known_limitations?: string[];
 
   observed_time_utc?: string;
+  observed_time_epoch?: number;
+  issued_at_utc?: string;
+  issued_at_epoch?: number;
+  valid_from_utc?: string;
+  valid_to_utc?: string;
+  forecast_period_count?: number;
+  period_materialization_status?: string;
   updated_at_epoch?: number;
   updated_at_utc?: string;
   expires_at_epoch?: number;
@@ -540,7 +560,13 @@ export interface RecommendationEvidenceReference {
   airport_id?: string;
 }
 
-/** `Recommendations` item. Note: there is no `encounter_id` attribute. */
+/**
+ * `Recommendations` item. Note: there is no `encounter_id` attribute.
+ *
+ * `GET /recommendations/active` returns the current operational set (same
+ * definition as `overview.recommendations.currentCount`), not every retained
+ * ACTIVE+valid_until row.
+ */
 export interface Recommendation {
   recommendation_id?: string;
   recommendation_status?: 'ACTIVE' | string;
@@ -591,7 +617,12 @@ export type AlertState =
   | 'UPDATED'
   | 'RESOLVED';
 
-/** `ActiveAlerts` item. The table hash key is `fingerprint`, not `alert_id`. */
+/**
+ * `ActiveAlerts` item. The table hash key is `fingerprint`, not `alert_id`.
+ *
+ * `GET /alerts/active` returns the current operational set (same definition as
+ * `overview.alerts.currentCount`), not every retained non-resolved row.
+ */
 export interface ActiveAlert {
   fingerprint?: string;
   alert_id?: string;
@@ -625,11 +656,23 @@ export interface ActiveAlert {
 /* Composite endpoint responses                                        */
 /* ------------------------------------------------------------------ */
 
+/**
+ * One current aircraft-hazard decision chain.
+ * Members are joined by stored IDs, not by latest timestamp.
+ */
+export interface AircraftOperationalContext {
+  encounter?: AircraftHazardEncounter | null;
+  risk?: RiskResult | null;
+  recommendation?: Recommendation | null;
+  alert?: ActiveAlert | null;
+}
+
 /** `GET /aircraft/{aircraftId}` */
 export interface AircraftDetailResponse {
   aircraft?: AircraftCurrentState | null;
   projection?: AircraftProjection | null;
   projectionPoints?: AircraftProjectionPoint[] | null;
+  currentContexts?: AircraftOperationalContext[] | null;
   recentEncounters?: AircraftHazardEncounter[] | null;
   recentRisks?: RiskResult[] | null;
   recentRecommendations?: Recommendation[] | null;
@@ -687,12 +730,18 @@ export interface OverviewResponse {
   } | null;
 
   recommendations?: {
+    /** ACTIVE rows that have not reached valid_until. Not the current-set. */
     activeCount?: number | null;
+    /** Recommendations whose supporting risk/encounter is currently current. */
+    currentCount?: number | null;
     latest?: OverviewRecommendationSummary[] | null;
   } | null;
 
   alerts?: {
+    /** Non-resolved alerts that have not reached valid_until. */
     activeCount?: number | null;
+    /** Alerts whose supporting current risk/recommendation is current. */
+    currentCount?: number | null;
     byState?: Record<string, number> | null;
   } | null;
 

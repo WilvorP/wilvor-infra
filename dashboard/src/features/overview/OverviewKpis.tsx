@@ -1,6 +1,6 @@
 import { KpiTile, type KpiBreakdownEntry } from '@/components/KpiTile';
 import type { OverviewResponse } from '@/types/api';
-import { asCountMap, asNumber } from '@/utils/coerce';
+import { asNumber } from '@/utils/coerce';
 import { formatCount } from '@/utils/format';
 
 import styles from './OverviewKpis.module.css';
@@ -34,8 +34,6 @@ export function OverviewKpis({ data, problem, stale }: OverviewKpisProps) {
   const alerts = data?.alerts;
   const airports = data?.airports;
 
-  const alertStates = asCountMap(alerts?.byState);
-
   const encounterBreakdown: KpiBreakdownEntry[] = [
     {
       label: 'High',
@@ -49,14 +47,6 @@ export function OverviewKpis({ data, problem, stale }: OverviewKpisProps) {
     },
     { label: 'Low', value: count(encounters?.lowRiskCount), tone: 'low' },
   ];
-
-  const alertBreakdown: KpiBreakdownEntry[] = Object.entries(alertStates)
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([state, value]) => ({
-      label: state.slice(0, 4),
-      value: formatCount(value),
-      tone: state === 'NEW' || state === 'ESCALATED' ? 'high' : 'muted',
-    }));
 
   return (
     <div className={styles.grid}>
@@ -77,26 +67,26 @@ export function OverviewKpis({ data, problem, stale }: OverviewKpisProps) {
       />
 
       <KpiTile
-        label="Encounters"
+        label="Current Encounters"
         value={count(encounters?.activeCount)}
-        unit="active"
+        unit="current"
         breakdown={problem ? undefined : encounterBreakdown}
         problem={problem}
         stale={stale}
       />
 
       <KpiTile
-        label="Recommendations"
-        value={count(data?.recommendations?.activeCount)}
-        unit="active"
+        label="Current Recommendations"
+        value={count(data?.recommendations?.currentCount)}
+        unit="current"
         problem={problem}
         stale={stale}
       />
 
       <KpiTile
-        label="Active alerts"
-        value={count(alerts?.activeCount)}
-        breakdown={problem ? undefined : alertBreakdown}
+        label="Current Alerts"
+        value={count(alerts?.currentCount)}
+        unit="current"
         problem={problem}
         stale={stale}
       />

@@ -1,6 +1,10 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 
+import { AircraftPage } from '@/features/aircraft/AircraftPage';
+import { AirportsPage } from '@/features/airports/AirportsPage';
+import { EncountersPage } from '@/features/encounters/EncountersPage';
 import { OverviewPage } from '@/features/overview/OverviewPage';
+import { RecommendationsPage } from '@/features/recommendations/RecommendationsPage';
 import { AppShell } from '@/layouts/AppShell';
 
 import { PlaceholderPage } from './PlaceholderPage';
@@ -11,10 +15,6 @@ import { ROUTES } from './routeDefinitions';
  * placeholder pages document the intended API dependency rather than guessing.
  */
 const PLANNED_ENDPOINTS: Record<string, readonly string[]> = {
-  '/aircraft': ['/aircraft', '/aircraft/{aircraftId}'],
-  '/airports': ['/airports', '/airports/{airportId}'],
-  '/encounters': ['/encounters/active'],
-  '/recommendations': ['/recommendations/active'],
   '/alerts': ['/alerts/active'],
   '/health': ['/system-health', '/freshness', '/health'],
 };
@@ -28,6 +28,22 @@ export function AppRoutes({ mapStyleUrl }: AppRoutesProps) {
     <Routes>
       <Route element={<AppShell />}>
         <Route index element={<OverviewPage mapStyleUrl={mapStyleUrl} />} />
+        <Route
+          path="/aircraft/:aircraftId?"
+          element={<AircraftPage mapStyleUrl={mapStyleUrl} />}
+        />
+        <Route
+          path="/airports/:airportId?"
+          element={<AirportsPage mapStyleUrl={mapStyleUrl} />}
+        />
+        <Route
+          path="/encounters"
+          element={<EncountersPage mapStyleUrl={mapStyleUrl} />}
+        />
+        <Route
+          path="/recommendations"
+          element={<RecommendationsPage mapStyleUrl={mapStyleUrl} />}
+        />
 
         {ROUTES.filter((route) => !route.implemented).map((route) => (
           <Route

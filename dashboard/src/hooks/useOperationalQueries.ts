@@ -1,4 +1,4 @@
-import { useQuery, type UseQueryResult } from '@tanstack/react-query';
+import { useInfiniteQuery, useQuery, type UseQueryResult } from '@tanstack/react-query';
 
 import { useApiClient } from '@/api/apiClientContext';
 import { LIMITS } from '@/api/operationalApi';
@@ -7,6 +7,7 @@ import { REFRESH, type RefreshPolicy } from '@/config/refresh';
 import type {
   ActiveHazard,
   AircraftDetailResponse,
+  AirportDetailResponse,
   FreshnessResponse,
   MapAircraftResponse,
   OverviewResponse,
@@ -100,12 +101,47 @@ export function useActiveHazards(
  * The raw response is returned rather than a decoded one so decoding stays a
  * pure, separately testable step in `features/map/aircraftGeoJson.ts`.
  */
-export function useMapAircraft(): UseQueryResult<MapAircraftResponse> {
+/**
+ * Current aircraft listing (`GET /aircraft`).
+ *
+ * Unfiltered pages are a current-state scan. `callsign` is an exact GSI match.
+ * `h3Cell` is mutually exclusive with callsign. Pages are walked only when
+ * the operator asks for more.
+ */
+export function useAircraftList(filters: {
+  callsign?: string;
+  h3Cell?: string;
+} = {}) {
+  const client = useApiClient();
+  const limit = LIMITS.aircraft.max;
+  const callsign = asString(filters.callsign)?.toUpperCase() ?? undefined;
+  const h3Cell = asString(filters.h3Cell) ?? undefined;
+
+  return useInfiniteQuery({
+    queryKey: queryKeys.aircraftList({ limit, callsign, h3Cell }),
+    queryFn: ({ pageParam, signal }) =>
+      client.listAircraft({
+        limit,
+        nextToken: pageParam,
+        callsign,
+        h3Cell,
+        signal,
+      }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.nextToken ?? undefined,
+    ...withPolicy(REFRESH.aircraftMap),
+  });
+}
+
+export function useMapAircraft(
+  options: { enabled?: boolean } = {},
+): UseQueryResult<MapAircraftResponse> {
   const client = useApiClient();
 
   return useQuery({
     queryKey: queryKeys.mapAircraft(),
     queryFn: ({ signal }) => client.mapAircraft({ signal }),
+    enabled: options.enabled ?? true,
     ...withPolicy(REFRESH.aircraftMap),
   });
 }
@@ -159,5 +195,155 @@ export function useAircraftDetail(
     ...withPolicy(REFRESH.aircraftDetail),
     placeholderData: (previousData, previousQuery) =>
       retainAircraftDetailPlaceholder(id, previousData, previousQuery),
+  });
+}
+
+export function retainAirportDetailPlaceholder(
+  selectedId: string | null,
+  previousData: AirportDetailResponse | undefined,
+  previousQuery: { queryKey: readonly unknown[] } | undefined,
+): AirportDetailResponse | undefined {
+  const previousId = previousQuery?.queryKey[3];
+
+  if (selectedId !== null && previousId === selectedId) {
+    return previousData;
+  }
+
+  return undefined;
+}
+
+/**
+ * Current airport listing (`GET /airports`).
+ *
+ * Unfiltered pages are an unexpired `AirportStatus` scan. `weatherRisk` and
+ * `weatherImpact` are exact GSI matches. Pages are walked only when the
+ * operator asks for more.
+ */
+export function useAirportList(
+  filters: {
+    weatherRisk?: string;
+    weatherImpact?: string;
+  } = {},
+) {
+  const client = useApiClient();
+  const limit = LIMITS.airports.max;
+  const weatherRisk = asString(filters.weatherRisk)?.toUpperCase() ?? undefined;
+  const weatherImpact =
+    asString(filters.weatherImpact)?.toUpperCase() ?? undefined;
+
+  return useInfiniteQuery({
+    queryKey: queryKeys.airportList({ limit, weatherRisk, weatherImpact }),
+    queryFn: ({ pageParam, signal }) =>
+      client.listAirports({
+        limit,
+        nextToken: pageParam,
+        weatherRisk,
+        weatherImpact,
+        signal,
+      }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.nextToken ?? undefined,
+    ...withPolicy(REFRESH.airports),
+  });
+}
+
+/**
+ * Investigation payload for the currently selected airport.
+ *
+ * Disabled when nothing is selected. Detail is not fetched for worklist rows.
+ */
+export function useAirportDetail(
+  airportId: string | null,
+): UseQueryResult<AirportDetailResponse> {
+  const client = useApiClient();
+  const id = asString(airportId)?.toUpperCase() ?? null;
+
+  return useQuery({
+    queryKey: queryKeys.airportDetail(id ?? ''),
+    queryFn: ({ signal }) => {
+      if (id === null) {
+        throw new Error('Airport detail queried without a selection.');
+      }
+
+      return client.getAirport(id, { signal });
+    },
+    enabled: id !== null,
+    ...withPolicy(REFRESH.airportDetail),
+    placeholderData: (previousData, previousQuery) =>
+      retainAirportDetailPlaceholder(id, previousData, previousQuery),
+  });
+}
+
+/**
+ * Current encounters (`GET /encounters/active`).
+ *
+ * The endpoint already applies the current-set definition. Pages are walked
+ * only when the operator asks for more; the API caps each page at 50.
+ */
+export function useCurrentEncounters() {
+  const client = useApiClient();
+  const limit = LIMITS.encounters.max;
+
+  return useInfiniteQuery({
+    queryKey: queryKeys.activeEncounters({ limit }),
+    queryFn: ({ pageParam, signal }) =>
+      client.listActiveEncounters({
+        limit,
+        nextToken: pageParam,
+        signal,
+      }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.nextToken ?? undefined,
+    ...withPolicy(REFRESH.encounters),
+  });
+}
+
+/**
+ * Current alerts (`GET /alerts/active`).
+ *
+ * After the current-set contract change this is the same population as
+ * `overview.alerts.currentCount`, not retained ACTIVE+valid_until rows.
+ */
+export function useCurrentAlerts() {
+  const client = useApiClient();
+  const limit = LIMITS.alerts.max;
+
+  return useInfiniteQuery({
+    queryKey: queryKeys.activeAlerts({ limit }),
+    queryFn: ({ pageParam, signal }) =>
+      client.listActiveAlerts({
+        limit,
+        nextToken: pageParam,
+        signal,
+      }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.nextToken ?? undefined,
+    ...withPolicy(REFRESH.alerts),
+  });
+}
+
+/**
+ * Current recommendations (`GET /recommendations/active`).
+ *
+ * Same population as `overview.recommendations.currentCount`. Disabled until
+ * the operator opens the Recommendations tab so Overview mount does not add
+ * another current-set scan beside encounters and alerts.
+ */
+export function useCurrentRecommendations(options: { enabled?: boolean } = {}) {
+  const client = useApiClient();
+  const limit = LIMITS.recommendations.max;
+
+  return useInfiniteQuery({
+    queryKey: queryKeys.activeRecommendations({ limit }),
+    queryFn: ({ pageParam, signal }) =>
+      client.listActiveRecommendations({
+        limit,
+        nextToken: pageParam,
+        signal,
+      }),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.nextToken ?? undefined,
+    enabled: options.enabled ?? true,
+    ...withPolicy(REFRESH.recommendations),
   });
 }

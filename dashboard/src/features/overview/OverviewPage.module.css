@@ -41,10 +41,19 @@
   flex: 0 0 auto;
 }
 
+.worklist {
+  flex: 0 0 auto;
+  min-height: 0;
+}
+
 .drawer {
   flex: 0 0 auto;
   height: var(--wv-drawer-height);
   min-height: 0;
+}
+
+.drawerCompact {
+  height: auto;
 }
 
 @media (max-width: 1280px) {
@@ -67,5 +76,9 @@
   .drawer {
     height: auto;
     min-height: var(--wv-drawer-height);
+  }
+
+  .drawerCompact {
+    min-height: 0;
   }
 }

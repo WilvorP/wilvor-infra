@@ -53,6 +53,10 @@ Copy-Item `
     "$FunctionDir\repository.py" `
     "$BuildDir\repository.py"
 
+Copy-Item `
+    "$FunctionDir\current_set.py" `
+    "$BuildDir\current_set.py"
+
 Compress-Archive `
     -Path "$BuildDir\*" `
     -DestinationPath $ZipPath `
