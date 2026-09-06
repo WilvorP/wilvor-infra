@@ -1,0 +1,108 @@
+.viewer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wv-space-3);
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  padding: var(--wv-space-4);
+  background-color: var(--wv-surface-1);
+  border: 1px solid var(--wv-border);
+  border-radius: var(--wv-radius-md);
+  overflow: auto;
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--wv-space-4);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--wv-text-sm);
+  font-weight: var(--wv-weight-semibold);
+}
+
+.name,
+.description,
+.note {
+  margin: var(--wv-space-1) 0 0;
+  font-size: var(--wv-text-2xs);
+  color: var(--wv-text-secondary);
+}
+
+.note {
+  color: var(--wv-risk-medium);
+}
+
+.controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--wv-space-2);
+}
+
+.ranges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wv-space-1);
+}
+
+.range,
+.refresh,
+.open {
+  padding: var(--wv-space-2) var(--wv-space-3);
+  font-size: var(--wv-text-2xs);
+  font-weight: var(--wv-weight-semibold);
+  letter-spacing: var(--wv-tracking-wide);
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--wv-text-secondary);
+  background: transparent;
+  border: 1px solid var(--wv-border-strong);
+  border-radius: var(--wv-radius-sm);
+  white-space: nowrap;
+}
+
+.range:hover,
+.refresh:hover,
+.open:hover,
+.range:focus-visible,
+.refresh:focus-visible,
+.open:focus-visible {
+  background-color: var(--wv-surface-2);
+  color: var(--wv-text-primary);
+}
+
+.rangeActive,
+.open {
+  color: var(--wv-text-primary);
+  background-color: var(--wv-accent-dim);
+  border-color: var(--wv-accent);
+}
+
+.grid {
+  display: grid;
+  grid-auto-rows: 36px;
+  gap: 8px;
+  width: 100%;
+}
+
+@media (max-width: 1100px) {
+  .header {
+    flex-direction: column;
+  }
+
+  .grid {
+    grid-template-columns: minmax(0, 1fr) !important;
+    grid-auto-rows: minmax(160px, auto);
+  }
+
+  .grid > * {
+    grid-column: 1 / -1 !important;
+    grid-row: auto !important;
+  }
+}

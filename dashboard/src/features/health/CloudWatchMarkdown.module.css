@@ -1,0 +1,27 @@
+.markdown {
+  height: 100%;
+  padding: var(--wv-space-3) var(--wv-space-4);
+  overflow: auto;
+}
+
+.markdown h3,
+.markdown h4,
+.markdown p {
+  margin: 0 0 var(--wv-space-1);
+  color: var(--wv-text-primary);
+}
+
+.markdown h3 {
+  font-size: var(--wv-text-sm);
+  font-weight: var(--wv-weight-semibold);
+}
+
+.markdown h4 {
+  font-size: var(--wv-text-xs);
+  font-weight: var(--wv-weight-semibold);
+}
+
+.markdown p {
+  font-size: var(--wv-text-2xs);
+  color: var(--wv-text-secondary);
+}

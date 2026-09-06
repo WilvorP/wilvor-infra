@@ -1,0 +1,98 @@
+.strip {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: var(--wv-space-4);
+  padding: var(--wv-space-3) var(--wv-space-5);
+  background-color: var(--wv-surface-1);
+  border: 1px solid var(--wv-border);
+  border-radius: var(--wv-radius-md);
+}
+
+.block {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wv-space-2);
+  min-width: 0;
+}
+
+.heading {
+  margin: 0;
+  font-size: var(--wv-text-2xs);
+  font-weight: var(--wv-weight-semibold);
+  letter-spacing: var(--wv-tracking-wide);
+  text-transform: uppercase;
+  color: var(--wv-text-tertiary);
+}
+
+.identity {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--wv-space-2);
+  margin: 0;
+}
+
+.callsign {
+  font-family: var(--wv-font-mono);
+  font-weight: var(--wv-weight-semibold);
+  color: var(--wv-text-primary);
+}
+
+.muted,
+.line,
+.note {
+  margin: 0;
+  font-size: var(--wv-text-xs);
+  color: var(--wv-text-secondary);
+}
+
+.reasons {
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: var(--wv-text-2xs);
+  color: var(--wv-text-secondary);
+}
+
+.warning {
+  margin: 0;
+  font-size: var(--wv-text-xs);
+  color: var(--wv-risk-medium);
+}
+
+.action {
+  align-items: flex-start;
+}
+
+.open {
+  padding: var(--wv-space-2) var(--wv-space-4);
+  font-size: var(--wv-text-2xs);
+  font-weight: var(--wv-weight-semibold);
+  letter-spacing: var(--wv-tracking-wide);
+  text-transform: uppercase;
+  text-decoration: none;
+  color: var(--wv-text-primary);
+  background-color: var(--wv-accent-dim);
+  border: 1px solid var(--wv-accent);
+  border-radius: var(--wv-radius-sm);
+}
+
+.open:hover {
+  background-color: var(--wv-surface-raised);
+}
+
+.clear {
+  padding: var(--wv-space-2) var(--wv-space-4);
+  font-size: var(--wv-text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--wv-tracking-wide);
+  color: var(--wv-text-secondary);
+  background: transparent;
+  border: 1px solid var(--wv-border-strong);
+  border-radius: var(--wv-radius-sm);
+}
+
+@media (max-width: 1280px) {
+  .strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

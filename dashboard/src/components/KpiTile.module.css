@@ -1,0 +1,112 @@
+.tile {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wv-space-2);
+  padding: var(--wv-space-5) var(--wv-space-6);
+  background-color: var(--wv-surface-1);
+  border: 1px solid var(--wv-border);
+  border-radius: var(--wv-radius-md);
+  min-width: 0;
+}
+
+.interactive {
+  width: 100%;
+  margin: 0;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  color: inherit;
+}
+
+.interactive:hover:not(.active) {
+  background-color: var(--wv-surface-2);
+}
+
+.active {
+  border-color: var(--wv-accent);
+  background-color: var(--wv-accent-dim);
+  box-shadow: inset 0 0 0 1px var(--wv-accent);
+}
+
+.label {
+  font-size: var(--wv-text-2xs);
+  font-weight: var(--wv-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: var(--wv-tracking-wider);
+  color: var(--wv-text-tertiary);
+}
+
+.valueRow {
+  display: flex;
+  align-items: baseline;
+  gap: var(--wv-space-3);
+  min-width: 0;
+}
+
+.value {
+  font-size: var(--wv-text-2xl);
+  font-weight: var(--wv-weight-semibold);
+  line-height: var(--wv-leading-tight);
+  color: var(--wv-text-primary);
+}
+
+.unit {
+  font-size: var(--wv-text-xs);
+  color: var(--wv-text-tertiary);
+}
+
+.stale {
+  margin-left: auto;
+  font-size: var(--wv-text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--wv-tracking-wide);
+  color: var(--wv-acceptable);
+}
+
+.problem {
+  font-size: var(--wv-text-xs);
+  color: var(--wv-risk-high);
+  line-height: var(--wv-leading-normal);
+}
+
+.breakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wv-space-2) var(--wv-space-5);
+  margin: var(--wv-space-2) 0 0;
+}
+
+.breakdownEntry {
+  display: flex;
+  align-items: baseline;
+  gap: var(--wv-space-3);
+}
+
+.breakdownLabel {
+  font-size: var(--wv-text-2xs);
+  color: var(--wv-text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: var(--wv-tracking-wide);
+}
+
+.breakdownValue {
+  font-size: var(--wv-text-xs);
+  font-weight: var(--wv-weight-medium);
+  color: var(--wv-text-secondary);
+}
+
+.high {
+  color: var(--wv-risk-high);
+}
+
+.medium {
+  color: var(--wv-risk-medium);
+}
+
+.low {
+  color: var(--wv-risk-low);
+}
+
+.muted {
+  color: var(--wv-text-tertiary);
+}

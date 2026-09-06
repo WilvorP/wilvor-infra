@@ -31,11 +31,13 @@ data "aws_iam_policy_document" "encounter_processor" {
     sid = "ReadAircraftProjection"
 
     actions = [
-      "dynamodb:GetItem"
+      "dynamodb:GetItem",
+      "dynamodb:Query"
     ]
 
     resources = [
-      var.aircraft_projection_table_arn
+      var.aircraft_projection_table_arn,
+      "${var.aircraft_projection_table_arn}/index/aircraft_id-generated_at_epoch-index"
     ]
   }
 
@@ -94,12 +96,14 @@ data "aws_iam_policy_document" "encounter_processor" {
 
     actions = [
       "dynamodb:PutItem",
+      "dynamodb:UpdateItem",
       "dynamodb:Query"
     ]
 
     resources = [
       aws_dynamodb_table.aircraft_hazard_encounter.arn,
-      "${aws_dynamodb_table.aircraft_hazard_encounter.arn}/index/projection_id-hazard_version_key-index"
+      "${aws_dynamodb_table.aircraft_hazard_encounter.arn}/index/projection_id-hazard_version_key-index",
+      "${aws_dynamodb_table.aircraft_hazard_encounter.arn}/index/aircraft_id-detected_at_epoch-index"
     ]
   }
 

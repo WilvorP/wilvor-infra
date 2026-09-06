@@ -94,10 +94,19 @@ def get_assessments(evaluation_id: str) -> list[dict[str, Any]]:
         kwargs["ExclusiveStartKey"] = last
 
 
-def action_for(level: str) -> str:
-    if level == "HIGH":
+def action_for(
+    level: str,
+    assessments: list[dict[str, Any]] | None = None,
+) -> str:
+    complete = [
+        item
+        for item in (assessments or [])
+        if item.get("assessment_status") == "COMPLETE"
+    ]
+
+    if level == "HIGH" and complete:
         return "EVALUATE_DIVERSION"
-    if level == "MEDIUM":
+    if level in {"HIGH", "MEDIUM"}:
         return "MONITOR_AND_PREPARE_OPTIONS"
     return "MONITOR"
 
@@ -110,7 +119,7 @@ def build_recommendation(
     now = now_utc()
     epoch = int(now.timestamp())
     level = str(risk.get("risk_level", "UNKNOWN")).upper()
-    action = action_for(level)
+    action = action_for(level, assessments)
 
     complete = [x for x in assessments if x.get("assessment_status") == "COMPLETE"]
     complete.sort(
@@ -158,12 +167,23 @@ def build_recommendation(
             "candidate_count": len(top),
             "requires_human_review": True,
         }
+        if "Evaluate diversion using ranked airport evidence." not in reasons:
+            reasons.append(
+                "Evaluate diversion using ranked airport evidence."
+            )
     elif action == "MONITOR_AND_PREPARE_OPTIONS":
         primary_details = {
             "advisory": "Continue monitoring and prepare operational alternatives.",
             "candidate_count": len(top),
             "requires_human_review": True,
         }
+        if level == "HIGH":
+            note = (
+                "HIGH risk is present but diversion is not proposed without "
+                "COMPLETE airport assessment evidence."
+            )
+            if note not in reasons:
+                reasons.append(note)
     else:
         primary_details = {
             "advisory": "Continue monitoring the aircraft-hazard condition.",

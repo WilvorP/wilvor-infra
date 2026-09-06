@@ -1,0 +1,120 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--wv-bg-base);
+  color: var(--wv-text-primary);
+  font-family: var(--wv-font-sans);
+  font-size: var(--wv-text-sm);
+  line-height: var(--wv-leading-normal);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+h1,
+h2,
+h3,
+h4,
+p,
+figure {
+  margin: 0;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  padding: 0;
+  cursor: pointer;
+}
+
+a {
+  color: var(--wv-accent-strong);
+  text-decoration: none;
+}
+
+a:hover {
+  text-decoration: underline;
+}
+
+/*
+ * Operational numerals must not shift width as values update on each poll,
+ * which would make columns of figures jitter every refresh cycle.
+ */
+.wv-numeric {
+  font-family: var(--wv-font-mono);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: 'tnum' 1;
+}
+
+/* Visible focus is required: this console is keyboard navigable. */
+:focus-visible {
+  outline: 2px solid var(--wv-accent-strong);
+  outline-offset: 1px;
+  border-radius: var(--wv-radius-xs);
+}
+
+.wv-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.wv-skip-link {
+  position: absolute;
+  top: var(--wv-space-2);
+  left: var(--wv-space-2);
+  z-index: calc(var(--wv-z-header) + 1);
+  padding: var(--wv-space-3) var(--wv-space-5);
+  background-color: var(--wv-surface-raised);
+  border: 1px solid var(--wv-border-strong);
+  border-radius: var(--wv-radius-md);
+  transform: translateY(-200%);
+}
+
+.wv-skip-link:focus {
+  transform: translateY(0);
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--wv-surface-1);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--wv-border-strong);
+  border: 2px solid var(--wv-surface-1);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--wv-text-tertiary);
+}

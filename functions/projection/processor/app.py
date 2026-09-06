@@ -1396,6 +1396,29 @@ def build_projection_parent(
         ),
     }
 
+    altitude_ft = current_altitude_ft(
+        state
+    )
+
+    if altitude_ft is not None:
+        # DynamoDB rejects Python float. Points already use
+        # decimal_number; the parent must do the same.
+        parent["current_altitude_ft"] = (
+            decimal_number(
+                altitude_ft,
+                places=2,
+            )
+        )
+
+    freshness_status = state.get(
+        "freshness_status"
+    )
+
+    if freshness_status:
+        parent["freshness_status"] = (
+            freshness_status
+        )
+
     return parent
 
 def get_projection_parent(

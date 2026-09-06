@@ -725,11 +725,11 @@ module "operational_api" {
     "http://localhost:5173",
   ]
 
-  lambda_reserved_concurrency = 2
+  lambda_reserved_concurrency = 5
 
   log_retention_days = 3
 
-  lambda_memory_size = 512
+  lambda_memory_size = 1024
 
   lambda_timeout_seconds = 30
 

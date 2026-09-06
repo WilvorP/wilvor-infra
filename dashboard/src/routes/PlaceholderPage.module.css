@@ -1,0 +1,35 @@
+.page {
+  padding: var(--wv-space-6);
+  height: 100%;
+  overflow: auto;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wv-space-6);
+  max-width: 70ch;
+}
+
+.description {
+  font-size: var(--wv-text-sm);
+  color: var(--wv-text-secondary);
+  line-height: var(--wv-leading-normal);
+}
+
+.subheading {
+  font-size: var(--wv-text-2xs);
+  font-weight: var(--wv-weight-semibold);
+  text-transform: uppercase;
+  letter-spacing: var(--wv-tracking-wider);
+  color: var(--wv-text-tertiary);
+  margin-bottom: var(--wv-space-3);
+}
+
+.endpoints {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wv-space-2);
+  font-size: var(--wv-text-xs);
+  color: var(--wv-text-secondary);
+}

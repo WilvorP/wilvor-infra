@@ -1,0 +1,17 @@
+node_modules/
+dist/
+coverage/
+.vite/
+
+.env
+.env.local
+.env.*.local
+
+*.log
+npm-debug.log*
+
+# The repository root .gitignore excludes "*.json" for Terraform/AWS artifacts.
+# The dashboard's manifests and lockfile must stay tracked, so re-include JSON
+# here. Directories excluded above (node_modules/, dist/) are not traversed by
+# git, so this negation cannot accidentally re-add build output or dependencies.
+!*.json

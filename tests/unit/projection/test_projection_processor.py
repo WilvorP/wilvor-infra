@@ -1,5 +1,6 @@
 import importlib.util
 import os
+from decimal import Decimal
 from pathlib import Path
 
 
@@ -292,3 +293,29 @@ def test_ground_aircraft_is_not_eligible(monkeypatch):
 
     assert result["eligible"] is False
     assert result["reason"] == "AIRCRAFT_ON_GROUND"
+
+
+def test_projection_parent_stores_altitude_as_decimal():
+    state = aircraft_state()
+    state["baro_altitude_ft"] = 35000.4
+
+    parent = app.build_projection_parent(
+        state=state,
+        eligibility={
+            "eligibility_checked_at_utc": "2023-11-14T22:13:20Z",
+            "matched_impact_cells": ["8428309ffffffff"],
+            "trigger_hazard_ids": ["hazard-1"],
+            "projection_trigger_reason": "CURRENT_IMPACT_MATCH",
+            "correlation_id": "corr-1",
+        },
+        projection_id="proj-1",
+        idempotency_key="idemp-1",
+        generated_at_epoch=NOW,
+        points=[{"confidence": "HIGH"}],
+        corridor_cells=["8428309ffffffff"],
+    )
+
+    assert isinstance(parent["current_altitude_ft"], Decimal)
+    assert not isinstance(parent["current_altitude_ft"], float)
+    assert parent["current_altitude_ft"] == Decimal("35000.4")
+    assert parent["freshness_status"] == "FRESH"

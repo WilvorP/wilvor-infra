@@ -1,0 +1,110 @@
+.chooser {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wv-space-3);
+  padding: var(--wv-space-3) var(--wv-space-5);
+  background-color: var(--wv-surface-1);
+  border: 1px solid var(--wv-border);
+  border-radius: var(--wv-radius-md);
+}
+
+.header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--wv-space-4);
+}
+
+.title {
+  margin: 0;
+  font-size: var(--wv-text-2xs);
+  font-weight: var(--wv-weight-semibold);
+  letter-spacing: var(--wv-tracking-wide);
+  text-transform: uppercase;
+  color: var(--wv-text-tertiary);
+}
+
+.meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: var(--wv-space-3);
+  margin: var(--wv-space-1) 0 0;
+  font-size: var(--wv-text-xs);
+  color: var(--wv-text-secondary);
+}
+
+.callsign {
+  font-family: var(--wv-font-mono);
+  font-weight: var(--wv-weight-semibold);
+  color: var(--wv-text-primary);
+}
+
+.id {
+  color: var(--wv-text-tertiary);
+}
+
+.dismiss {
+  padding: var(--wv-space-2) var(--wv-space-4);
+  font-size: var(--wv-text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--wv-tracking-wide);
+  color: var(--wv-text-secondary);
+  background: transparent;
+  border: 1px solid var(--wv-border-strong);
+  border-radius: var(--wv-radius-sm);
+}
+
+.list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wv-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--wv-space-3);
+  padding: var(--wv-space-2) var(--wv-space-3);
+  text-align: left;
+  color: inherit;
+  background-color: var(--wv-surface-2);
+  border: 1px solid var(--wv-border);
+  border-radius: var(--wv-radius-sm);
+}
+
+.row:hover:not(:disabled) {
+  background-color: var(--wv-surface-raised);
+}
+
+.rowSelected {
+  background-color: var(--wv-accent-dim);
+  border-color: var(--wv-accent);
+}
+
+.hazard {
+  font-family: var(--wv-font-mono);
+  font-size: var(--wv-text-xs);
+  color: var(--wv-text-primary);
+}
+
+.type {
+  font-size: var(--wv-text-xs);
+  color: var(--wv-text-secondary);
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.selectedMark {
+  font-size: var(--wv-text-2xs);
+  font-weight: var(--wv-weight-semibold);
+  letter-spacing: var(--wv-tracking-wide);
+  text-transform: uppercase;
+  color: var(--wv-accent-strong);
+}
