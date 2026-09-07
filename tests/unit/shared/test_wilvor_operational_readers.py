@@ -83,6 +83,38 @@ def test_exact_getters_preserve_retained_rows_and_return_none_when_missing():
     assert taf.calls[0][1]["Key"] == {"station_id": "KSEA"}
 
 
+def test_hydration_getters_use_exact_primary_keys_and_consistent_reads():
+    projection = {"projection_id": "proj-1", "point_count": 12}
+    hazard = {"hazard_id": "hazard-1", "source_version": "v1"}
+    risk = {"risk_id": "risk-1", "encounter_id": "enc-1"}
+    encounter = {"encounter_id": "enc-1", "matched_h3_cells": ["cell"]}
+    projections = RecordingTable([{"Item": projection}])
+    hazards = RecordingTable([{}])
+    risks = RecordingTable([{"Item": risk}])
+    encounters = RecordingTable([{"Item": encounter}])
+
+    assert readers.get_projection_record(projections, "proj-1") is projection
+    assert readers.get_hazard_record(hazards, "hazard-1") is None
+    assert readers.get_risk_record(risks, "risk-1") is risk
+    assert readers.get_encounter_record(encounters, "enc-1") is encounter
+    assert projections.calls[0][1] == {
+        "Key": {"projection_id": "proj-1"},
+        "ConsistentRead": True,
+    }
+    assert hazards.calls[0][1] == {
+        "Key": {"hazard_id": "hazard-1"},
+        "ConsistentRead": True,
+    }
+    assert risks.calls[0][1] == {
+        "Key": {"risk_id": "risk-1"},
+        "ConsistentRead": True,
+    }
+    assert encounters.calls[0][1] == {
+        "Key": {"encounter_id": "enc-1"},
+        "ConsistentRead": True,
+    }
+
+
 def test_aircraft_candidate_pages_match_established_indexes_and_filters():
     table = RecordingTable([{"Items": []}, {"Items": []}, {"Items": []}])
 

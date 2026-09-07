@@ -196,6 +196,38 @@ def get_taf_record(table, station_id, *, consistent_read=True):
     )
 
 
+def get_projection_record(table, projection_id, *, consistent_read=True):
+    return access.get_item(
+        table,
+        {"projection_id": projection_id},
+        consistent_read=consistent_read,
+    )
+
+
+def get_hazard_record(table, hazard_id, *, consistent_read=True):
+    return access.get_item(
+        table,
+        {"hazard_id": hazard_id},
+        consistent_read=consistent_read,
+    )
+
+
+def get_risk_record(table, risk_id, *, consistent_read=True):
+    return access.get_item(
+        table,
+        {"risk_id": risk_id},
+        consistent_read=consistent_read,
+    )
+
+
+def get_encounter_record(table, encounter_id, *, consistent_read=True):
+    return access.get_item(
+        table,
+        {"encounter_id": encounter_id},
+        consistent_read=consistent_read,
+    )
+
+
 def query_aircraft_by_callsign_page(
     table,
     *,

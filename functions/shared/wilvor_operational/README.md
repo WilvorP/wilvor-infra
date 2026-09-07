@@ -23,9 +23,11 @@ wilvor_operational.current_set          wilvor_operational.access
         |                                        |
         |                               wilvor_operational.readers
         |                                        ^
-        +----------------+-----------------------+
-                         |
-            operational_api.repository
+        +-- wilvor_operational.linking           |
+                    ^                            |
+                    +------ wilvor_operational.context
+                                     ^
+            operational_api.repository (unchanged in 1C.1)
                          ^
                          |
             operational_api.current_set facade
@@ -255,7 +257,10 @@ separately authorized behavior change.
 
 - **Phase 1A:** defines and shares what counts as current or active.
 - **Phase 1B:** retrieves exact stored records and DynamoDB-narrowed candidates.
-- **Phase 1C:** may join records into aircraft, hazard, and airport contexts.
+- **Phase 1C.1:** joins observed current aircraft/encounter records into
+  operational contexts after exact PK hydration.
+- **Phase 1C.2:** deferred hazard-impact context.
+- **Phase 1C.3:** deferred airport operational context.
 - **Phase 1D:** may search/filter contexts, including geospatial concerns.
 - **Phase 1E:** may expose deterministic queries through Phase 0 AI contracts.
 
@@ -342,7 +347,8 @@ envelopes, overview/map/freshness/health, `_scan_count` / `_query_count`,
 
 ### Retrieval inventory used by Phase 1B
 
-Exact: aircraft, AirportStatus, METAR, TAF.
+Exact: aircraft, AirportStatus, METAR, TAF, projection, hazard, risk,
+encounter.
 
 Pages: aircraft callsign/H3/scan; airport impact/risk/scan; active-hazard GSI.
 
@@ -371,8 +377,8 @@ These are compatibility behaviors, not Phase 1B repairs:
 
 ### Future Phase 1C boundary
 
-Phase 1C may compose `readers` + `current_set` into aircraft, hazard, and
-airport contexts. Phase 1B stops at stored/candidate records.
+Phase 1B stops at stored/candidate records. Phase 1C.1 now composes those
+records into aircraft and encounter operational contexts as described below.
 
 ### Phase 1B pre-refactor characterization baseline
 
@@ -395,3 +401,137 @@ airport contexts. Phase 1B stops at stored/candidate records.
 The read-access characterization suite ran against the pre-extraction
 Operational API repository. The identical assertions must pass after
 delegation.
+
+## Phase 1C.1 linked operational context
+
+Phase 1C.1 answers: given a known `aircraft_id`, how are observed
+authoritative current records related?
+
+```text
+candidate retrieval (readers)
+        |
+        v
+Phase 1A semantic selection (current_set)
+        |
+        v
+selected identity
+        |
+        v
+exact PK hydration (readers)
+        |
+        v
+hydration integrity (linking)
+        |
+        v
+AircraftOperationalContext / EncounterOperationalContext
+```
+
+`wilvor_operational.linking` is stdlib + `current_set` only. It does not
+import `readers`, `access`, boto3, `operational_api`, or `wilvor_ai`.
+`wilvor_operational.context` orchestrates readers + current_set + linking.
+Neither module caches, reads the wall clock, or constructs AWS clients.
+
+### Context types
+
+- `AircraftOperationalContext` holds the exact aircraft root, whether that
+  root is current, the hydrated selected projection, encounter contexts, the
+  projection link, and retrieval observations.
+- `EncounterOperationalContext` holds the hydrated encounter, whether it is
+  current, the selected matching hazard version, the current risk, **all**
+  current recommendations, **all** current OR-lineage alerts, and per-link
+  integrity.
+
+Names are intentionally not `*CurrentContext` because a retained expired
+aircraft root is a valid input and yields `aircraft_is_current = False`.
+
+If `get_aircraft_record` returns `None`, `build_aircraft_operational_context`
+returns `None` and does not scan descendants. That is not an AI `NOT_FOUND`
+status.
+
+### Lineage used in 1C.1
+
+- Aircraft -> projection: Phase 1A `index_current_projections` over the
+  observed READY/unexpired projection scan, then `get_projection_record`.
+  `aircraft_state_version` is not revalidated against the live aircraft row.
+- Projection -> encounter: exact `projection_id` plus Phase 1A
+  `is_current_encounter`.
+- Hazard -> encounter: `hazard_id` + selected `source_version`. Authoritative
+  encounter version field remains `hazard_source_version`.
+- Encounter -> risk: exact `encounter_id`. Copied projection/hazard fields on
+  the risk are not revalidated. Missing `valid_until_utc` remains accepted.
+  Equal `generated_at_epoch` keeps the first observed candidate.
+- Risk -> recommendations: exact `risk_id`. Every Phase 1A current
+  recommendation is kept. The Operational API first-seen collapse is a
+  separate compatibility dialect.
+- Risk/recommendation -> alerts: Phase 1A OR-lineage. Every matching current
+  alert is kept.
+
+Airport assessment, TAF-period version binding, and Risk -> evaluation joins
+remain out of 1C.1.
+
+### Hazard version race
+
+ActiveHazards overwrites one row per `hazard_id`. Selection may establish
+`(H, V1)` while `get_hazard_record(H)` returns `V2`. Phase 1C.1 then sets
+`HYDRATION_VERSION_MISMATCH`, keeps selected identity `H/V1`, records
+observed `V2`, and does **not** place V2 in the selected-hazard slot or
+rewrite encounter lineage.
+
+Projection and risk IDs are content-addressed and do not change identity
+under the same PK. Their hydration checks are missing row, parent-id
+mismatch, and no-longer-current at the same `now_epoch`. A mismatch never
+substitutes a different identity.
+
+### RetrievalObservation
+
+Each read strategy is recorded as `source`, `coverage` (`FULL_SCAN`,
+`BOUNDED_QUERY`, `EXACT_PK`), `consistency` (`EVENTUAL`, `CONSISTENT`),
+optional `limit`, and `limitations`.
+
+There is no `complete_for_current_membership` flag. A drained scan may say
+`coverage=FULL_SCAN` and `consistency=EVENTUAL` with the limitation
+"A recently written record may not yet be visible." That is deterministic
+selection over the **observed** candidate set, not a guarantee that every
+real-world current record is present.
+
+Recommendation and alert scans additionally compare `valid_until_utc` as
+ISO strings and cannot prove global absence.
+
+### Three Operational API dialects remain unchanged
+
+Phase 1C.1 does **not** delegate `get_aircraft_detail`,
+`_join_current_contexts`, list snapshots, or airport detail.
+
+The existing API still has three join dialects:
+
+1. Phase 1A / overview current-risk selection over a full scan, with the
+   per-risk clock quirk in `_latest_current_risks`.
+2. Aircraft detail `currentContexts`: first-seen join on newest-50 GSI
+   rows; one recommendation; one alert; no current-risk filter.
+3. `/encounters/active`: newest GSI risk, even if expired.
+
+Shared context follows dialect 1's Phase 1A membership rules with a single
+caller-supplied `now_epoch`, then hydrates selected identities. API JSON,
+caches, recent lists, and clock acquisition stay in the repository.
+
+### Correctness path, not a performance claim
+
+1C.1 may drain existing full candidate scans so selection can see the
+observed set. That can be expensive. Phase 1C.1 makes **no** production
+latency or cost guarantee. It is an authoritative deterministic composition
+over observed candidates. Later query, search, or Agent runtime phases may
+introduce bounded access without weakening these semantics. Do not treat
+1C.1 as an optimized Agent request path.
+
+Preserved retrieval limitations include API projection limit 10, child
+limit 50, first-page projection points, first-page TAF periods, eventual
+consistency, ISO candidate filters, equal-epoch risk ties, cache timing,
+and the broader overview hazard count. Shared context does not silently
+"fix" them.
+
+### Deferred
+
+- **1C.2:** hazard-impact context and encounters-by-hazard retrieval.
+- **1C.3:** airport weather/status context; no global current assessment.
+- Phase 1D: search, region, geospatial, network snapshot.
+- Phase 1E: Phase 0 `ToolResult` / `Evidence` / agents / `/ai`.
