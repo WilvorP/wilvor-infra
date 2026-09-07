@@ -14,6 +14,8 @@ from boto3.dynamodb.conditions import Attr, Key
 from boto3.dynamodb.types import TypeDeserializer, TypeSerializer
 
 import current_set
+from wilvor_operational import access as operational_access
+from wilvor_operational import readers as operational_readers
 
 
 DDB = boto3.resource("dynamodb")
@@ -107,6 +109,25 @@ RECOMMENDATIONS = DDB.Table(
 ALERTS = DDB.Table(
     os.environ["ACTIVE_ALERTS_TABLE_NAME"]
 )
+
+
+def operational_tables():
+    return operational_readers.OperationalTables(
+        aircraft=AIRCRAFT,
+        projections=PROJECTIONS,
+        projection_points=PROJECTION_POINTS,
+        hazards=HAZARDS,
+        hazard_coordinates=HAZARD_COORDINATES,
+        encounters=ENCOUNTERS,
+        risks=RISKS,
+        airports=AIRPORTS,
+        metar=METAR,
+        taf=TAF,
+        taf_periods=TAF_PERIODS,
+        airport_assessments=AIRPORT_ASSESSMENTS,
+        recommendations=RECOMMENDATIONS,
+        alerts=ALERTS,
+    )
 
 
 # ---------------------------------------------------------------------
@@ -266,38 +287,19 @@ def _query_latest(
     partition_value,
     limit=10,
 ):
-    response = table.query(
-        IndexName=index_name,
-        KeyConditionExpression=Key(
-            partition_name
-        ).eq(partition_value),
-        ScanIndexForward=False,
-        Limit=limit,
+    return operational_access.query_latest(
+        table,
+        index_name,
+        partition_name,
+        partition_value,
+        limit=limit,
+        key=Key,
     )
-
-    return response.get("Items", [])
 
 
 def _query_all(table, **kwargs):
-    items = []
+    return operational_access.query_all(table, **kwargs)
 
-    while True:
-        response = table.query(**kwargs)
-
-        items.extend(
-            response.get("Items", [])
-        )
-
-        last_key = response.get(
-            "LastEvaluatedKey"
-        )
-
-        if not last_key:
-            return items
-
-        kwargs["ExclusiveStartKey"] = (
-            last_key
-        )
 
 def _scan_all(
     table,
@@ -315,30 +317,7 @@ def _scan_all(
     perform a full table scan on every browser refresh.
     """
 
-    items = []
-
-    while True:
-        response = table.scan(
-            **kwargs
-        )
-
-        items.extend(
-            response.get(
-                "Items",
-                [],
-            )
-        )
-
-        last_key = response.get(
-            "LastEvaluatedKey"
-        )
-
-        if not last_key:
-            return items
-
-        kwargs[
-            "ExclusiveStartKey"
-        ] = last_key
+    return operational_access.scan_all(table, **kwargs)
 
 def _scan_count(
     table,
@@ -443,38 +422,18 @@ def _cached(
 
 
 def _load_current_indexes(now_epoch):
-    projections = _scan_all(
+    projections = operational_readers.scan_projection_index_candidates(
         PROJECTIONS,
-        FilterExpression=(
-            Attr("projection_status").eq("READY")
-            & Attr("valid_until_epoch").gt(now_epoch)
-        ),
-        ProjectionExpression=(
-            "aircraft_id,"
-            "projection_id,"
-            "generated_at_epoch,"
-            "valid_until_epoch,"
-            "projection_status"
-        ),
+        now_epoch=now_epoch,
+        attr=Attr,
+        scan_all=_scan_all,
     )
 
-    hazards = _scan_all(
+    hazards = operational_readers.scan_hazard_index_candidates(
         HAZARDS,
-        FilterExpression=(
-            Attr("status").eq("ACTIVE")
-            & Attr("materialization_status").eq("READY")
-            & Attr("valid_to_epoch").gte(now_epoch)
-        ),
-        ProjectionExpression=(
-            "hazard_id,"
-            "source_version,"
-            "#hazard_status,"
-            "materialization_status,"
-            "valid_to_epoch"
-        ),
-        ExpressionAttributeNames={
-            "#hazard_status": "status",
-        },
+        now_epoch=now_epoch,
+        attr=Attr,
+        scan_all=_scan_all,
     )
 
     return (
@@ -495,40 +454,11 @@ def _current_encounter_snapshot():
         projection_ids, hazard_versions = _load_current_indexes(
             now_epoch
         )
-        items = _scan_all(
+        items = operational_readers.scan_encounter_candidates(
             ENCOUNTERS,
-            FilterExpression=Attr("encounter_state").is_in(
-                list(current_set.CURRENT_ENCOUNTER_STATES)
-            ),
-            ProjectionExpression=(
-                "encounter_id,"
-                "aircraft_id,"
-                "projection_id,"
-                "hazard_id,"
-                "hazard_version_key,"
-                "hazard_source_version,"
-                "hazard_type,"
-                "severity,"
-                "encounter_state,"
-                "geometry_overlap_status,"
-                "time_overlap_status,"
-                "altitude_overlap_status,"
-                "resolution_reason,"
-                "resolved_at_utc,"
-                "freshness_status,"
-                "corridor_intersects,"
-                "centerline_intersects,"
-                "inside_now,"
-                "exact_intersection_confirmed,"
-                "trajectory_confidence,"
-                "matched_h3_cell_count,"
-                "detected_at_epoch,"
-                "detected_at_utc,"
-                "valid_from_utc,"
-                "valid_to_utc,"
-                "expires_at_epoch,"
-                "projection_generated_at_utc"
-            ),
+            attr=Attr,
+            scan_all=_scan_all,
+            encounter_states=current_set.CURRENT_ENCOUNTER_STATES,
         )
         current_items = [
             item
@@ -880,13 +810,11 @@ def _hazard_geometry(hazard):
         f"{hazard_id}#{source_version}"
     )
 
-    rows = _query_all(
+    rows = operational_readers.query_hazard_coordinate_rows(
         HAZARD_COORDINATES,
-        KeyConditionExpression=Key(
-            "hazard_version_key"
-        ).eq(hazard_version_key),
-        ScanIndexForward=True,
-        ConsistentRead=True,
+        hazard_version_key,
+        key=Key,
+        query_all=_query_all,
     )
 
     if not rows:
@@ -1130,29 +1058,20 @@ def list_aircraft(
                 "callsign cannot be empty"
             )
 
-        kwargs = {
-            "IndexName": IDX_AIRCRAFT_CALLSIGN,
-            "KeyConditionExpression": Key(
-                "callsign"
-            ).eq(callsign),
-            "FilterExpression": Attr(
-                "expires_at_epoch"
-            ).gt(now),
-            "ScanIndexForward": False,
-            "Limit": limit,
-        }
-
-        _with_start_key(
-            kwargs,
-            next_token,
+        page = operational_readers.query_aircraft_by_callsign_page(
+            AIRCRAFT,
+            callsign=callsign,
+            now_epoch=now,
+            limit=limit,
+            exclusive_start_key=_decode_token(next_token),
+            key=Key,
+            attr=Attr,
         )
-
-        response = AIRCRAFT.query(**kwargs)
         return _page_with_items(
-            response,
+            {"LastEvaluatedKey": page["last_evaluated_key"]},
             [
                 item
-                for item in response.get("Items", [])
+                for item in page["items"]
                 if current_set.is_current_aircraft(item, now)
             ],
         )
@@ -1168,29 +1087,20 @@ def list_aircraft(
                 "h3Cell cannot be empty"
             )
 
-        kwargs = {
-            "IndexName": IDX_AIRCRAFT_H3,
-            "KeyConditionExpression": Key(
-                "current_h3_cell"
-            ).eq(h3_cell),
-            "FilterExpression": Attr(
-                "expires_at_epoch"
-            ).gt(now),
-            "ScanIndexForward": False,
-            "Limit": limit,
-        }
-
-        _with_start_key(
-            kwargs,
-            next_token,
+        page = operational_readers.query_aircraft_by_h3_page(
+            AIRCRAFT,
+            h3_cell=h3_cell,
+            now_epoch=now,
+            limit=limit,
+            exclusive_start_key=_decode_token(next_token),
+            key=Key,
+            attr=Attr,
         )
-
-        response = AIRCRAFT.query(**kwargs)
         return _page_with_items(
-            response,
+            {"LastEvaluatedKey": page["last_evaluated_key"]},
             [
                 item
-                for item in response.get("Items", [])
+                for item in page["items"]
                 if current_set.is_current_aircraft(item, now)
             ],
         )
@@ -1202,24 +1112,18 @@ def list_aircraft(
     # We will replace broad map scans with query-optimized access
     # before treating this as a production operational endpoint.
     # -------------------------------------------------------------
-    kwargs = {
-        "FilterExpression": Attr(
-            "expires_at_epoch"
-        ).gt(now),
-        "Limit": limit,
-    }
-
-    _with_start_key(
-        kwargs,
-        next_token,
+    page = operational_readers.scan_aircraft_page(
+        AIRCRAFT,
+        now_epoch=now,
+        limit=limit,
+        exclusive_start_key=_decode_token(next_token),
+        attr=Attr,
     )
-
-    response = AIRCRAFT.scan(**kwargs)
     return _page_with_items(
-        response,
+        {"LastEvaluatedKey": page["last_evaluated_key"]},
         [
             item
-            for item in response.get("Items", [])
+            for item in page["items"]
             if current_set.is_current_aircraft(item, now)
         ],
     )
@@ -1235,12 +1139,11 @@ def get_aircraft_detail(aircraft_id):
             "aircraftId is required"
         )
 
-    current = AIRCRAFT.get_item(
-        Key={
-            "aircraft_id": aircraft_id
-        },
-        ConsistentRead=True,
-    ).get("Item")
+    current = operational_readers.get_aircraft_record(
+        AIRCRAFT,
+        aircraft_id,
+        consistent_read=True,
+    )
 
     if not current:
         return None
@@ -1277,20 +1180,12 @@ def get_aircraft_detail(aircraft_id):
         projection
         and projection.get("projection_id")
     ):
-        response = PROJECTION_POINTS.query(
-            KeyConditionExpression=Key(
-                "projection_id"
-            ).eq(
-                projection["projection_id"]
-            ),
-            ScanIndexForward=True,
-            ConsistentRead=True,
+        page = operational_readers.query_projection_points_page(
+            PROJECTION_POINTS,
+            projection["projection_id"],
+            key=Key,
         )
-
-        projection_points = response.get(
-            "Items",
-            [],
-        )
+        projection_points = page["items"]
 
     # -------------------------------------------------------------
     # Recent decision context
@@ -1469,29 +1364,18 @@ def list_active_hazards(
 ):
     now = int(time.time())
 
-    kwargs = {
-        "IndexName": IDX_HAZARD_STATUS_VALIDITY,
-        "KeyConditionExpression": (
-            Key("status").eq("ACTIVE")
-            & Key("valid_to_epoch").gte(now)
-        ),
-        "FilterExpression": Attr(
-            "materialization_status"
-        ).eq("READY"),
-        "ScanIndexForward": True,
-        "Limit": limit,
-    }
-
-    _with_start_key(
-        kwargs,
-        next_token,
+    page = operational_readers.query_active_hazard_candidates_page(
+        HAZARDS,
+        now_epoch=now,
+        limit=limit,
+        exclusive_start_key=_decode_token(next_token),
+        key=Key,
+        attr=Attr,
     )
-
-    response = HAZARDS.query(**kwargs)
 
     enriched = []
 
-    for hazard in response.get("Items", []):
+    for hazard in page["items"]:
         if not current_set.is_current_hazard(hazard, now):
             continue
 
@@ -1507,7 +1391,7 @@ def list_active_hazards(
         enriched.append(item)
 
     return _page_with_items(
-        response,
+        {"LastEvaluatedKey": page["last_evaluated_key"]},
         enriched,
     )
 
@@ -1606,39 +1490,21 @@ def list_airports(
     # Weather-impact GSI
     # -------------------------------------------------------------
     if weather_impact:
-        kwargs = {
-            "IndexName": IDX_AIRPORT_IMPACT_TIME,
-            "KeyConditionExpression": Key(
-                "weather_impact_status"
-            ).eq(weather_impact),
-            "FilterExpression": Attr(
-                "expires_at_epoch"
-            ).gt(now),
-            "ScanIndexForward": False,
-            "Limit": limit,
-        }
-
-        if weather_risk:
-            kwargs["FilterExpression"] = (
-                Attr(
-                    "expires_at_epoch"
-                ).gt(now)
-                & Attr(
-                    "weather_risk_level"
-                ).eq(weather_risk)
-            )
-
-        _with_start_key(
-            kwargs,
-            next_token,
+        page = operational_readers.query_airports_by_impact_page(
+            AIRPORTS,
+            weather_impact=weather_impact,
+            now_epoch=now,
+            limit=limit,
+            weather_risk=weather_risk,
+            exclusive_start_key=_decode_token(next_token),
+            key=Key,
+            attr=Attr,
         )
-
-        response = AIRPORTS.query(**kwargs)
         return _page_with_items(
-            response,
+            {"LastEvaluatedKey": page["last_evaluated_key"]},
             [
                 item
-                for item in response.get("Items", [])
+                for item in page["items"]
                 if current_set.is_current_airport_status(item, now)
             ],
         )
@@ -1647,29 +1513,20 @@ def list_airports(
     # Weather-risk GSI
     # -------------------------------------------------------------
     if weather_risk:
-        kwargs = {
-            "IndexName": IDX_AIRPORT_RISK_TIME,
-            "KeyConditionExpression": Key(
-                "weather_risk_level"
-            ).eq(weather_risk),
-            "FilterExpression": Attr(
-                "expires_at_epoch"
-            ).gt(now),
-            "ScanIndexForward": False,
-            "Limit": limit,
-        }
-
-        _with_start_key(
-            kwargs,
-            next_token,
+        page = operational_readers.query_airports_by_risk_page(
+            AIRPORTS,
+            weather_risk=weather_risk,
+            now_epoch=now,
+            limit=limit,
+            exclusive_start_key=_decode_token(next_token),
+            key=Key,
+            attr=Attr,
         )
-
-        response = AIRPORTS.query(**kwargs)
         return _page_with_items(
-            response,
+            {"LastEvaluatedKey": page["last_evaluated_key"]},
             [
                 item
-                for item in response.get("Items", [])
+                for item in page["items"]
                 if current_set.is_current_airport_status(item, now)
             ],
         )
@@ -1677,24 +1534,18 @@ def list_airports(
     # -------------------------------------------------------------
     # Small airport list.
     # -------------------------------------------------------------
-    kwargs = {
-        "FilterExpression": Attr(
-            "expires_at_epoch"
-        ).gt(now),
-        "Limit": limit,
-    }
-
-    _with_start_key(
-        kwargs,
-        next_token,
+    page = operational_readers.scan_airports_page(
+        AIRPORTS,
+        now_epoch=now,
+        limit=limit,
+        exclusive_start_key=_decode_token(next_token),
+        attr=Attr,
     )
-
-    response = AIRPORTS.scan(**kwargs)
     return _page_with_items(
-        response,
+        {"LastEvaluatedKey": page["last_evaluated_key"]},
         [
             item
-            for item in response.get("Items", [])
+            for item in page["items"]
             if current_set.is_current_airport_status(item, now)
         ],
     )
@@ -1713,12 +1564,11 @@ def get_airport_detail(airport_id):
     # -------------------------------------------------------------
     # Derived AirportStatus
     # -------------------------------------------------------------
-    status = AIRPORTS.get_item(
-        Key={
-            "airport_id": airport_id
-        },
-        ConsistentRead=True,
-    ).get("Item")
+    status = operational_readers.get_airport_status_record(
+        AIRPORTS,
+        airport_id,
+        consistent_read=True,
+    )
 
     if not status:
         return None
@@ -1731,19 +1581,17 @@ def get_airport_detail(airport_id):
     # -------------------------------------------------------------
     # Current weather
     # -------------------------------------------------------------
-    metar = METAR.get_item(
-        Key={
-            "station_id": station_id
-        },
-        ConsistentRead=True,
-    ).get("Item")
+    metar = operational_readers.get_metar_record(
+        METAR,
+        station_id,
+        consistent_read=True,
+    )
 
-    taf = TAF.get_item(
-        Key={
-            "station_id": station_id
-        },
-        ConsistentRead=True,
-    ).get("Item")
+    taf = operational_readers.get_taf_record(
+        TAF,
+        station_id,
+        consistent_read=True,
+    )
 
     # -------------------------------------------------------------
     # Forecast periods around the operational window.
@@ -1752,17 +1600,12 @@ def get_airport_detail(airport_id):
     # -------------------------------------------------------------
     now = int(time.time())
 
-    periods_response = TAF_PERIODS.query(
-        IndexName=IDX_TAF_PERIOD_STATION_TIME,
-        KeyConditionExpression=(
-            Key("station_id").eq(station_id)
-            & Key("period_from_epoch").between(
-                now - 21600,
-                now + 129600,
-            )
-        ),
-        ScanIndexForward=True,
-        Limit=50,
+    periods_page = operational_readers.query_taf_period_candidates_page(
+        TAF_PERIODS,
+        station_id=station_id,
+        now_epoch=now,
+        limit=50,
+        key=Key,
     )
 
     # -------------------------------------------------------------
@@ -1780,12 +1623,7 @@ def get_airport_detail(airport_id):
         "airport": status,
         "metar": metar,
         "taf": taf,
-        "tafForecastPeriods": (
-            periods_response.get(
-                "Items",
-                [],
-            )
-        ),
+        "tafForecastPeriods": periods_page["items"],
         "recentAssessments": assessments,
     }
 
@@ -1810,21 +1648,9 @@ def _latest_current_risks():
             if item.get("encounter_id")
         }
 
-        risks = _scan_all(
+        risks = operational_readers.scan_risk_candidates(
             RISKS,
-            ProjectionExpression=(
-                "risk_id,"
-                "encounter_id,"
-                "aircraft_id,"
-                "hazard_id,"
-                "hazard_type,"
-                "risk_level,"
-                "risk_score,"
-                "confidence,"
-                "generated_at_epoch,"
-                "generated_at_utc,"
-                "valid_until_utc"
-            ),
+            scan_all=_scan_all,
         )
 
         latest_by_encounter = {}
@@ -1871,28 +1697,12 @@ def _latest_current_risks():
 def _active_recommendations():
     def _load():
         now_iso = _now_iso()
-        items = _scan_all(
+        items = operational_readers.scan_recommendation_candidates(
             RECOMMENDATIONS,
-            FilterExpression=(
-                Attr("recommendation_status").eq("ACTIVE")
-                & Attr("valid_until_utc").gt(now_iso)
-            ),
-            ProjectionExpression=(
-                "recommendation_id,"
-                "risk_id,"
-                "recommendation_status,"
-                "valid_until_utc,"
-                "aircraft_id,"
-                "hazard_id,"
-                "risk_level,"
-                "risk_score,"
-                "confidence,"
-                "primary_action_type,"
-                "preferred_airport_id,"
-                "preferred_airport_score,"
-                "created_at_utc,"
-                "created_at_epoch"
-            ),
+            now_iso=now_iso,
+            project=True,
+            attr=Attr,
+            scan_all=_scan_all,
         )
         return {"items": items}
 
@@ -1907,12 +1717,12 @@ def _current_recommendation_snapshot():
     def _load():
         current_risk_ids = _latest_current_risks()["current_risk_ids"]
         now_iso = _now_iso()
-        recommendations = _scan_all(
+        recommendations = operational_readers.scan_recommendation_candidates(
             RECOMMENDATIONS,
-            FilterExpression=(
-                Attr("recommendation_status").eq("ACTIVE")
-                & Attr("valid_until_utc").gt(now_iso)
-            ),
+            now_iso=now_iso,
+            project=False,
+            attr=Attr,
+            scan_all=_scan_all,
         )
         current_items = [
             item
@@ -2007,20 +1817,13 @@ def _current_risk_and_recommendation_ids():
 def _active_alerts():
     def _load():
         now_iso = _now_iso()
-        items = _scan_all(
+        items = operational_readers.scan_alert_candidates(
             ALERTS,
-            FilterExpression=(
-                Attr("alert_state").is_in(
-                    list(current_set.CURRENT_ALERT_STATES)
-                )
-                & Attr("valid_until_utc").gt(now_iso)
-            ),
-            ProjectionExpression=(
-                "alert_state,"
-                "risk_id,"
-                "recommendation_id,"
-                "valid_until_utc"
-            ),
+            now_iso=now_iso,
+            project=True,
+            attr=Attr,
+            scan_all=_scan_all,
+            alert_states=current_set.CURRENT_ALERT_STATES,
         )
         by_state = Counter(
             str(item.get("alert_state", "UNKNOWN")).upper()
@@ -2045,14 +1848,13 @@ def _current_alert_snapshot():
             _current_risk_and_recommendation_ids()
         )
         now_iso = _now_iso()
-        alerts = _scan_all(
+        alerts = operational_readers.scan_alert_candidates(
             ALERTS,
-            FilterExpression=(
-                Attr("alert_state").is_in(
-                    list(current_set.CURRENT_ALERT_STATES)
-                )
-                & Attr("valid_until_utc").gt(now_iso)
-            ),
+            now_iso=now_iso,
+            project=False,
+            attr=Attr,
+            scan_all=_scan_all,
+            alert_states=current_set.CURRENT_ALERT_STATES,
         )
         current_items = [
             item

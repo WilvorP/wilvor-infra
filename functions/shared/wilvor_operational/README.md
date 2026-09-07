@@ -14,21 +14,28 @@ the ideal aviation-domain policy. Phase 1A is a parity-preserving extraction,
 not a policy review. The ambiguities below remain visible precisely so future
 work does not mistake compatibility behavior for an endorsed rule.
 
-The package is pure, standard-library-only domain code. Dependency direction
-is:
+`current_set.py` remains pure, standard-library-only domain code. Phase 1B
+adds sibling DynamoDB record/candidate readers. Dependency direction is:
 
 ```text
-wilvor_operational.current_set
-        ^
-        |
-operational_api.current_set compatibility facade
-        ^
-        |
-operational_api.repository
+wilvor_operational.current_set          wilvor_operational.access
+        ^                                        ^
+        |                                        |
+        |                               wilvor_operational.readers
+        |                                        ^
+        +----------------+-----------------------+
+                         |
+            operational_api.repository
+                         ^
+                         |
+            operational_api.current_set facade
 ```
 
-The shared package has no AWS, boto3, Lambda configuration, environment,
-network, writer, or `wilvor_ai` dependency.
+`current_set` has no AWS, boto3, Lambda configuration, environment, network,
+writer, or `wilvor_ai` dependency. `access` and `readers` may use boto3
+DynamoDB condition helpers against injected table handles only. They do not
+import each other as a cycle with `current_set`, and they do not import
+`wilvor_ai`.
 
 ## Reference time and validity boundaries
 
@@ -247,14 +254,15 @@ separately authorized behavior change.
 ## Phase boundaries
 
 - **Phase 1A:** defines and shares what counts as current or active.
-- **Phase 1B:** may retrieve authoritative current records.
+- **Phase 1B:** retrieves exact stored records and DynamoDB-narrowed candidates.
 - **Phase 1C:** may join records into aircraft, hazard, and airport contexts.
 - **Phase 1D:** may search/filter contexts, including geospatial concerns.
 - **Phase 1E:** may expose deterministic queries through Phase 0 AI contracts.
 
-This package does not provide DynamoDB repositories, context queries, search,
-geospatial logic, AI tools, `ToolResult`, `Evidence`, agents, providers, or AWS
-infrastructure.
+`current_set` does not provide DynamoDB access. `access` / `readers` do not
+apply current-set semantics or compose business contexts. This package still
+does not provide search, geospatial logic, AI tools, `ToolResult`, `Evidence`,
+agents, providers, or AWS infrastructure.
 
 ## Pre-refactor characterization baseline
 
@@ -270,4 +278,120 @@ infrastructure.
 
 The characterization suite ran before `wilvor_operational.current_set`
 existed. The identical suite must pass after facade conversion and repository
+delegation.
+
+## Phase 1B shared operational read layer
+
+Phase 1B adds sibling data-access authority. It does not change Phase 1A
+semantics.
+
+```text
+DynamoDB
+   |
+   v
+wilvor_operational.access
+   |
+   v
+wilvor_operational.readers
+   |
+   v
+exact stored records or candidate rows
+
+independently:
+
+wilvor_operational.current_set
+   |
+   v
+semantic current/active selection
+```
+
+The caller composes them. `readers.py` does not import `current_set.py`.
+`access.py` does not import `current_set.py`. `current_set.py` does not import
+readers or access. There are no `load_current_*` helpers.
+
+### Table injection
+
+`OperationalTables` is a small keyword-only namespace of already-created
+DynamoDB table handles. The Operational API continues to create those handles
+from its existing environment variables and `boto3.resource("dynamodb")`.
+Shared code never reads those environment names and never creates a resource
+or client. A future Agent runtime will inject its own handles.
+
+Importing `wilvor_operational` still exports only `current_set` and remains
+boto3-free. Importing `wilvor_operational.readers` requires boto3 to be
+present locally and performs no network call.
+
+### Exact versus candidate versus current
+
+- `get_*_record` is an exact PK lookup. A retained expired aircraft or
+  AirportStatus row can be returned.
+- `query_*_page` / `scan_*_page` return one DynamoDB page of stored rows.
+- `scan_*_candidates` / `query_*_candidates` return DynamoDB-narrowed stored
+  rows. Existing time filters receive caller-supplied `now_epoch` or `now_iso`.
+  That is candidate narrowing, not Phase 1A selection.
+- Current/active membership remains `current_set` applied by the caller.
+
+### What readers do not own
+
+Shared access/readers contain no cache, no wall-clock reads, no HTTP
+next-token encoding, no dashboard DTOs, no GeoJSON composition, no linked
+contexts, and no AI types. Operational API retains caches, token bytes, page
+envelopes, overview/map/freshness/health, `_scan_count` / `_query_count`,
+`_hazard_geometry`, `_join_current_contexts`, and the existing
+`_latest_current_risks` per-item clock loop.
+
+### Retrieval inventory used by Phase 1B
+
+Exact: aircraft, AirportStatus, METAR, TAF.
+
+Pages: aircraft callsign/H3/scan; airport impact/risk/scan; active-hazard GSI.
+
+Candidates: projection index scan; hazard index scan; encounter scan; risk
+scan; recommendation scan; alert scan; latest-by-partition queries;
+hazard-coordinate drain; first-page projection points; first-page TAF periods.
+
+### Retrieval correctness limitations preserved
+
+These are compatibility behaviors, not Phase 1B repairs:
+
+- Aircraft detail projection window is newest 10 GSI rows.
+- Aircraft detail child queries use newest 50 GSI rows.
+- Projection points and TAF periods are first-page only.
+- TAF periods are not constrained to one `taf_version_key`.
+- Paginated list `Limit` is evaluated before filter/current-set.
+- Encounter/recommendation/alert lists drain full scans then paginate in
+  memory.
+- Overview hazard `activeCount` is broader than READY queryable-current.
+- `/encounters/active` attaches newest GSI risk without current-risk validity.
+- Recommendation/alert DynamoDB filters compare ISO strings.
+- List/scan paths are eventually consistent; some detail reads are consistent.
+- Risk scan order is undefined; equal-epoch ties follow input order.
+- Unused GSIs, including `recommendation_status-updated_at_epoch-index`, stay
+  unused.
+
+### Future Phase 1C boundary
+
+Phase 1C may compose `readers` + `current_set` into aircraft, hazard, and
+airport contexts. Phase 1B stops at stored/candidate records.
+
+### Phase 1B pre-refactor characterization baseline
+
+- HEAD: `eef54da4ff4da88c5c699249c8d9416e17d1f293`
+- Recorded: 2026-09-07
+- Commands:
+
+  ```powershell
+  $env:PYTHONDONTWRITEBYTECODE='1'; python -m pytest tests/unit/operational_api/test_current_state_characterization.py tests/unit/operational_api/test_read_access_characterization.py -q -p no:cacheprovider
+  ```
+
+  Result: `36 passed`
+
+  ```powershell
+  $env:PYTHONDONTWRITEBYTECODE='1'; python -m pytest tests/unit/operational_api tests/unit/shared/test_wilvor_operational_current_set.py -q -p no:cacheprovider
+  ```
+
+  Result: `96 passed`
+
+The read-access characterization suite ran against the pre-extraction
+Operational API repository. The identical assertions must pass after
 delegation.
