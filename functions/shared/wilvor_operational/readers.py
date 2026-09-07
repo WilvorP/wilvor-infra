@@ -15,6 +15,7 @@ IDX_AIRCRAFT_H3 = "current_h3_cell-position_time_epoch-index"
 IDX_PROJECTION_AIRCRAFT_TIME = "aircraft_id-generated_at_epoch-index"
 IDX_HAZARD_STATUS_VALIDITY = "status-valid_to_epoch-index"
 IDX_ENCOUNTER_AIRCRAFT_TIME = "aircraft_id-detected_at_epoch-index"
+IDX_ENCOUNTER_HAZARD_TIME = "hazard_id-detected_at_epoch-index"
 IDX_RISK_AIRCRAFT_TIME = "aircraft_id-generated_at_epoch-index"
 IDX_RISK_ENCOUNTER_TIME = "encounter_id-generated_at_epoch-index"
 IDX_AIRPORT_RISK_TIME = "weather-risk-updated-index"
@@ -485,6 +486,25 @@ def scan_encounter_candidates(
         table,
         FilterExpression=attr("encounter_state").is_in(list(encounter_states)),
         ProjectionExpression=ENCOUNTER_CANDIDATE_PROJECTION,
+    )
+
+
+def query_encounter_candidates_by_hazard(
+    table,
+    hazard_id,
+    *,
+    key=Key,
+    attr=Attr,
+    query_all=access.query_all,
+    encounter_states=CURRENT_ENCOUNTER_STATES,
+):
+    return query_all(
+        table,
+        IndexName=IDX_ENCOUNTER_HAZARD_TIME,
+        KeyConditionExpression=key("hazard_id").eq(hazard_id),
+        FilterExpression=attr("encounter_state").is_in(list(encounter_states)),
+        ProjectionExpression=ENCOUNTER_CANDIDATE_PROJECTION,
+        ScanIndexForward=True,
     )
 
 

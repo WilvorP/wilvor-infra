@@ -18,6 +18,7 @@ class Coverage(str, Enum):
     FULL_SCAN = "FULL_SCAN"
     BOUNDED_QUERY = "BOUNDED_QUERY"
     EXACT_PK = "EXACT_PK"
+    FULL_QUERY = "FULL_QUERY"
 
 
 class Consistency(str, Enum):
@@ -57,6 +58,14 @@ RECOMMENDATION_ABSENCE_LIMITATION = (
 ALERT_ABSENCE_LIMITATION = (
     "Absence of an alert is proven only within the observed active-state, "
     "time-filtered candidate set."
+)
+HAZARD_SOURCE_VERSION_LIMITATION = (
+    "Current-impact lineage was not evaluated because the hazard root "
+    "has no usable source_version."
+)
+NO_SNAPSHOT_LIMITATION = (
+    "DynamoDB reads are independently observed; this composition is not "
+    "a transactional cross-table snapshot."
 )
 
 
@@ -114,6 +123,28 @@ class AircraftOperationalContext:
     retrieval: tuple[RetrievalObservation, ...]
 
 
+@dataclass(frozen=True)
+class HazardImpactContext:
+    aircraft: dict[str, Any] | None
+    aircraft_is_current: bool
+    aircraft_link: Link
+    projection: dict[str, Any] | None
+    projection_is_current: bool
+    projection_link: Link
+    encounter: EncounterOperationalContext
+
+
+@dataclass(frozen=True)
+class HazardOperationalContext:
+    hazard: dict[str, Any]
+    hazard_is_lifecycle_active: bool
+    hazard_is_current: bool
+    source_version: str
+    impacts: tuple[HazardImpactContext, ...]
+    hazard_version_link: Link
+    retrieval: tuple[RetrievalObservation, ...]
+
+
 def scan_observation(source: str, *extra_limitations: str) -> RetrievalObservation:
     limitations = (EVENTUAL_SCAN_LIMITATION,) + extra_limitations
     return RetrievalObservation(
@@ -125,12 +156,64 @@ def scan_observation(source: str, *extra_limitations: str) -> RetrievalObservati
     )
 
 
-def exact_pk_observation(source: str) -> RetrievalObservation:
+def exact_pk_observation(source: str, *extra_limitations: str) -> RetrievalObservation:
     return RetrievalObservation(
         source=source,
         coverage=Coverage.EXACT_PK,
         consistency=Consistency.CONSISTENT,
         limit=None,
+        limitations=extra_limitations,
+    )
+
+
+def query_observation(source: str, *extra_limitations: str) -> RetrievalObservation:
+    limitations = (EVENTUAL_SCAN_LIMITATION,) + extra_limitations
+    return RetrievalObservation(
+        source=source,
+        coverage=Coverage.FULL_QUERY,
+        consistency=Consistency.EVENTUAL,
+        limit=None,
+        limitations=limitations,
+    )
+
+
+def hydrate_aircraft(
+    *,
+    selected_aircraft_id: str,
+    hydrated: dict[str, Any] | None,
+    now_epoch: int,
+) -> tuple[dict[str, Any] | None, Link]:
+    selected = _identity(("aircraft_id", selected_aircraft_id))
+    if hydrated is None:
+        return None, Link(
+            state=LinkState.HYDRATION_MISSING,
+            kind=LinkKind.EXACT,
+            selected_identity=selected,
+        )
+
+    observed = _identity(("aircraft_id", _text(hydrated.get("aircraft_id"))))
+    if _text(hydrated.get("aircraft_id")).lower() != _text(selected_aircraft_id).lower():
+        return None, Link(
+            state=LinkState.HYDRATION_IDENTITY_MISMATCH,
+            kind=LinkKind.EXACT,
+            reason="hydrated aircraft_id differs from selected aircraft",
+            selected_identity=selected,
+            observed_identity=observed,
+        )
+
+    if not current_set.is_current_aircraft(hydrated, now_epoch):
+        return hydrated, Link(
+            state=LinkState.HYDRATION_NO_LONGER_CURRENT,
+            kind=LinkKind.CURRENT_DEPENDENT,
+            selected_identity=selected,
+            observed_identity=observed,
+        )
+
+    return hydrated, Link(
+        state=LinkState.PRESENT,
+        kind=LinkKind.EXACT,
+        selected_identity=selected,
+        observed_identity=observed,
     )
 
 

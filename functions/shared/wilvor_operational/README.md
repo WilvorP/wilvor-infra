@@ -529,9 +529,169 @@ consistency, ISO candidate filters, equal-epoch risk ties, cache timing,
 and the broader overview hazard count. Shared context does not silently
 "fix" them.
 
-### Deferred
+### Deferred after 1C.1
 
-- **1C.2:** hazard-impact context and encounters-by-hazard retrieval.
+- **1C.2:** hazard-impact context and encounters-by-hazard retrieval
+  (completed below).
 - **1C.3:** airport weather/status context; no global current assessment.
 - Phase 1D: search, region, geospatial, network snapshot.
+- Phase 1E: Phase 0 `ToolResult` / `Evidence` / agents / `/ai`.
+
+## Phase 1C.2 hazard impact operational context
+
+Phase 1C.2 answers: given a known `hazard_id`, what are the observed
+current operational impacts of that hazard?
+
+It does **not** discover hazards by geography, region, SIGMET search, or
+network snapshot. Phase 1D may later find hazard IDs and pass them here.
+
+```text
+exact get_hazard_record(H)
+        |
+        v
+Phase 1A lifecycle-active / queryable-current flags
+        |
+        +-- missing root → None
+        +-- non-current root → exact row, impacts skipped
+        +-- current root, no source_version → lineage not evaluated
+        +-- current H/V1 → compose against V1 only
+                |
+                v
+        query_encounter_candidates_by_hazard (FULL_QUERY)
+        scan projections / risks / recommendations / alerts
+                |
+                v
+        Phase 1A is_current_encounter + 1C.1 encounter chain
+                |
+                v
+        HazardOperationalContext
+                |
+                v
+        final get_hazard_record (drift detection only)
+```
+
+### Context types
+
+- `HazardOperationalContext` holds the **initial** exact hazard root,
+  separate `hazard_is_lifecycle_active` and `hazard_is_current` flags, the
+  initial `source_version`, current `impacts`, a `hazard_version_link`, and
+  retrieval observations. The name is not `HazardCurrentContext` because a
+  retained non-current root is a valid result.
+- `HazardImpactContext` wraps one current encounter's affected aircraft,
+  that aircraft's authoritative projection, and the existing
+  `EncounterOperationalContext`. It does not duplicate risk,
+  recommendation, or alert fields.
+
+If `get_hazard_record` returns `None`, `build_hazard_operational_context`
+returns `None` and does not query descendants. That is not an AI
+`NOT_FOUND` status.
+
+### Root cases
+
+- **Missing / empty `hazard_id`:** `None`.
+- **Retained non-current root** (`CANCELLED`, `EXPIRED`, validity ended,
+  `ACTIVE` but not `READY`): return the exact stored row. Lifecycle-active
+  and queryable-current stay distinct Phase 1A booleans. Current-impact
+  retrieval is skipped because Phase 1A cannot mark an encounter current
+  without a current hazard version. `impacts = ()` means evaluation was
+  skipped, not "safe" or "no impact."
+- **Current root with missing/empty `source_version`:** keep the exact
+  root and Phase 1A flags. Do not fabricate a version or query the
+  encounter GSI. `hazard_version_link` is `MISSING` / `VERSIONED` with
+  "Current-impact lineage was not evaluated because the hazard root has
+  no usable source_version." This is **not** the same as a completed
+  query that observed zero current encounters.
+- **Current H/V1:** `current_hazard_versions = {H: V1}` from the initial
+  exact row only. No network hazard scan.
+
+### Encounter retrieval
+
+`query_encounter_candidates_by_hazard` uses the existing
+`hazard_id-detected_at_epoch-index` GSI (`ALL` projection). It drains
+every `LastEvaluatedKey` page, applies the established
+`DETECTED`/`MONITORING` candidate-state filter, and does **not** filter
+`source_version` in DynamoDB. The reader performs no current-set or
+context composition.
+
+Coverage is `FULL_QUERY` with `EVENTUAL` consistency and
+"A recently written record may not yet be visible." All observed pages
+were drained. That is not global operational completeness.
+
+Membership still uses `is_current_encounter` with the V1 version map and
+`index_current_projections` over one drained projection-index scan. Do
+not use the Operational API newest-10 projection window. Older
+source-version encounters and stale-projection encounters stay excluded.
+A retained encounter alone does not mean an aircraft is currently
+affected.
+
+Distinct current `encounter_id`s are not silently deduplicated.
+
+### Affected aircraft and projections
+
+Each selected encounter exact-hydrates `get_aircraft_record` through
+`hydrate_aircraft`. Missing aircraft keeps the impact with
+`HYDRATION_MISSING`. A retained expired aircraft remains on the impact
+with `aircraft_is_current = False` and is not rewritten as "not
+affected."
+
+Projection hydration reuses the 1C.1 helper against the authoritative
+winner from the observed projection candidate set.
+
+### Encounter decision-chain reuse
+
+Each impact's `EncounterOperationalContext` is built by the existing
+1C.1 `_build_encounter_context` primitive: current risk selection
+(missing `valid_until_utc` accepted; equal-epoch first-observed tie;
+copied metadata not revalidated), **all** current recommendations, and
+**all** current OR-lineage alerts.
+
+### Amendment drift
+
+ActiveHazards still overwrites one row per `hazard_id`. A build that
+starts as H/V1 composes only against V1. A final consistent
+`get_hazard_record` is **drift detection only**.
+
+If the final row is H/V2: `hazard_version_link` becomes
+`HYDRATION_VERSION_MISMATCH`, selected identity stays V1, observed is
+V2, the context root remains the initial H/V1 row, and V1-selected
+impacts are preserved. The call does not substitute V2, rebuild, requery
+encounters, or recompute flags.
+
+If the final row is still V1, that is **not** a transactional
+cross-table snapshot. Other tables may have changed during composition.
+Retrieval records that DynamoDB reads are independently observed.
+
+A later V2 never starts impact composition that the initial root
+skipped (non-current or missing `source_version`).
+
+Per-encounter 1C.1 hazard hydration may also observe V2 and keep
+`HYDRATION_VERSION_MISMATCH` without substituting V2.
+
+### Retrieval observations
+
+- Root reads: `EXACT_PK` + `CONSISTENT`
+- Hazard GSI: `FULL_QUERY` + `EVENTUAL`
+- Projection / risk / recommendation / alert scans: `FULL_SCAN` +
+  `EVENTUAL`
+- Exact descendants: `EXACT_PK` + `CONSISTENT`
+
+There is still no completeness Boolean.
+
+### Correctness-first read pattern
+
+For a current H/V1 root the builder performs two consistent hazard
+GetItems (initial + final), one drained hazard-partition GSI query, one
+projection index scan, one risk scan, one recommendation scan, one alert
+scan, then exact hydrations per selected encounter. A missing root is
+one GetItem. A non-current root, or a current root with no usable
+`source_version`, is two GetItems and no encounter query.
+
+This remains a reference composition path. Phase 1C.2 makes no
+production latency or cost promise.
+
+### Deferred
+
+- **1C.3:** airport weather/status context; no global current assessment.
+- Phase 1D: search, region, geospatial, network snapshot; pass known
+  hazard IDs into this builder.
 - Phase 1E: Phase 0 `ToolResult` / `Evidence` / agents / `/ai`.

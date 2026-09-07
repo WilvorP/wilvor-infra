@@ -183,6 +183,121 @@ def test_scan_observation_is_eventual_and_not_a_completeness_boolean():
     assert not hasattr(observation, "complete_for_current_membership")
 
 
+def test_query_observation_is_full_query_eventual_and_not_complete():
+    observation = linking.query_observation("query_encounter_candidates_by_hazard")
+
+    assert observation.coverage is linking.Coverage.FULL_QUERY
+    assert observation.consistency is linking.Consistency.EVENTUAL
+    assert observation.limit is None
+    assert linking.EVENTUAL_SCAN_LIMITATION in observation.limitations
+    assert not hasattr(observation, "complete_for_current_membership")
+    assert not hasattr(observation, "complete")
+    assert not hasattr(observation, "is_complete")
+
+
+def test_hydrate_aircraft_present_retained_missing_and_mismatch():
+    current = {
+        "aircraft_id": "abc123",
+        "expires_at_epoch": NOW + 100,
+    }
+    retained = {
+        "aircraft_id": "abc123",
+        "expires_at_epoch": NOW,
+    }
+    other = {
+        "aircraft_id": "other",
+        "expires_at_epoch": NOW + 100,
+    }
+
+    present, present_link = linking.hydrate_aircraft(
+        selected_aircraft_id="ABC123",
+        hydrated=current,
+        now_epoch=NOW,
+    )
+    stale, stale_link = linking.hydrate_aircraft(
+        selected_aircraft_id="abc123",
+        hydrated=retained,
+        now_epoch=NOW,
+    )
+    missing, missing_link = linking.hydrate_aircraft(
+        selected_aircraft_id="abc123",
+        hydrated=None,
+        now_epoch=NOW,
+    )
+    mismatch, mismatch_link = linking.hydrate_aircraft(
+        selected_aircraft_id="abc123",
+        hydrated=other,
+        now_epoch=NOW,
+    )
+
+    assert present is current
+    assert present_link.state is linking.LinkState.PRESENT
+    assert stale is retained
+    assert stale_link.state is linking.LinkState.HYDRATION_NO_LONGER_CURRENT
+    assert missing is None
+    assert missing_link.state is linking.LinkState.HYDRATION_MISSING
+    assert mismatch is None
+    assert mismatch_link.state is linking.LinkState.HYDRATION_IDENTITY_MISMATCH
+
+
+def test_hazard_context_types_wrap_encounter_without_duplicating_chain():
+    encounter = linking.compose_encounter_operational_context(
+        encounter={"encounter_id": "enc-1"},
+        encounter_is_current=True,
+        encounter_link=linking.Link(
+            state=linking.LinkState.PRESENT,
+            kind=linking.LinkKind.EXACT,
+        ),
+        hazard=None,
+        hazard_link=linking.Link(
+            state=linking.LinkState.MISSING,
+            kind=linking.LinkKind.VERSIONED,
+        ),
+        risk=None,
+        risk_link=linking.Link(
+            state=linking.LinkState.MISSING,
+            kind=linking.LinkKind.EXACT,
+        ),
+        recommendations=(),
+        recommendation_link=linking.recommendation_link_for(()),
+        alerts=(),
+        alert_link=linking.alert_link_for(()),
+    )
+    impact = linking.HazardImpactContext(
+        aircraft={"aircraft_id": "abc123"},
+        aircraft_is_current=True,
+        aircraft_link=linking.Link(
+            state=linking.LinkState.PRESENT,
+            kind=linking.LinkKind.EXACT,
+        ),
+        projection=None,
+        projection_is_current=False,
+        projection_link=linking.Link(
+            state=linking.LinkState.MISSING,
+            kind=linking.LinkKind.CURRENT_DEPENDENT,
+        ),
+        encounter=encounter,
+    )
+    context = linking.HazardOperationalContext(
+        hazard={"hazard_id": "hazard-1", "source_version": "v1"},
+        hazard_is_lifecycle_active=True,
+        hazard_is_current=True,
+        source_version="v1",
+        impacts=(impact,),
+        hazard_version_link=linking.Link(
+            state=linking.LinkState.PRESENT,
+            kind=linking.LinkKind.VERSIONED,
+        ),
+        retrieval=(),
+    )
+
+    assert context.impacts[0].encounter is encounter
+    assert not hasattr(impact, "risk")
+    assert not hasattr(impact, "recommendations")
+    assert not hasattr(impact, "alerts")
+    assert encounter.risk is None
+
+
 def test_linking_source_has_no_io_or_forbidden_imports():
     source = inspect.getsource(linking)
     text = (PACKAGE_DIR / "linking.py").read_text(encoding="utf-8")

@@ -295,6 +295,73 @@ def test_index_and_decision_candidate_scans_match_established_shapes():
     assert "ProjectionExpression" not in alerts.calls[1][1]
 
 
+def test_hazard_encounter_query_uses_existing_gsi_and_drains_pages():
+    table = RecordingTable(
+        [
+            {
+                "Items": [{"encounter_id": "enc-1"}],
+                "LastEvaluatedKey": {"encounter_id": "enc-1"},
+            },
+            {"Items": [{"encounter_id": "enc-2"}]},
+        ]
+    )
+
+    items = readers.query_encounter_candidates_by_hazard(
+        table,
+        "hazard-1",
+        key=Key,
+        attr=Attr,
+    )
+
+    assert items == [
+        {"encounter_id": "enc-1"},
+        {"encounter_id": "enc-2"},
+    ]
+    assert len(table.calls) == 2
+    first = table.calls[0][1]
+    assert first["IndexName"] == readers.IDX_ENCOUNTER_HAZARD_TIME
+    assert first["IndexName"] == "hazard_id-detected_at_epoch-index"
+    assert first["ScanIndexForward"] is True
+    assert "Limit" not in first
+    assert "ConsistentRead" not in first
+    assert condition_shape(first["KeyConditionExpression"]) == (
+        "=",
+        ("name", "hazard_id"),
+        "hazard-1",
+    )
+    assert condition_shape(first["FilterExpression"]) == (
+        "IN",
+        ("name", "encounter_state"),
+        ["DETECTED", "MONITORING"],
+    )
+    assert projection_fields(first["ProjectionExpression"]) == projection_fields(
+        readers.ENCOUNTER_CANDIDATE_PROJECTION
+    )
+    assert table.calls[1][1]["ExclusiveStartKey"] == {"encounter_id": "enc-1"}
+    assert "source_version" not in str(first["KeyConditionExpression"])
+    assert "source_version" not in str(first.get("FilterExpression", ""))
+
+
+def test_hazard_encounter_query_honors_injected_query_all():
+    captured = []
+
+    def fake_query_all(table, **kwargs):
+        captured.append(kwargs)
+        return [{"encounter_id": "enc-injected"}]
+
+    items = readers.query_encounter_candidates_by_hazard(
+        object(),
+        "hazard-9",
+        query_all=fake_query_all,
+        key=Key,
+        attr=Attr,
+    )
+
+    assert items == [{"encounter_id": "enc-injected"}]
+    assert captured[0]["IndexName"] == readers.IDX_ENCOUNTER_HAZARD_TIME
+    assert "current_set" not in captured[0]
+
+
 def test_projection_points_are_single_page_and_coordinates_drain():
     points = RecordingTable(
         [
