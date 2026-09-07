@@ -1,6 +1,6 @@
-"""Compatibility facade for shared Wilvor operational current-set semantics."""
+"""Dependency-free Wilvor operational domain semantics."""
 
-from wilvor_operational.current_set import (
+from .current_set import (
     CURRENT_ALERT_STATES,
     CURRENT_ENCOUNTER_STATES,
     TERMINAL_ENCOUNTER_STATES,

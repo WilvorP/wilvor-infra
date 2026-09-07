@@ -170,13 +170,6 @@ IDX_ALERT_AIRCRAFT_TIME = (
 )
 
 
-ACTIVE_ALERT_STATES = [
-    "NEW",
-    "MONITORING",
-    "ESCALATED",
-    "UPDATED",
-]
-
 CURRENT_ENCOUNTER_CACHE_TTL_SECONDS = 15
 
 
@@ -1154,8 +1147,14 @@ def list_aircraft(
             next_token,
         )
 
-        return _page(
-            AIRCRAFT.query(**kwargs)
+        response = AIRCRAFT.query(**kwargs)
+        return _page_with_items(
+            response,
+            [
+                item
+                for item in response.get("Items", [])
+                if current_set.is_current_aircraft(item, now)
+            ],
         )
 
     # -------------------------------------------------------------
@@ -1186,8 +1185,14 @@ def list_aircraft(
             next_token,
         )
 
-        return _page(
-            AIRCRAFT.query(**kwargs)
+        response = AIRCRAFT.query(**kwargs)
+        return _page_with_items(
+            response,
+            [
+                item
+                for item in response.get("Items", [])
+                if current_set.is_current_aircraft(item, now)
+            ],
         )
 
     # -------------------------------------------------------------
@@ -1209,8 +1214,14 @@ def list_aircraft(
         next_token,
     )
 
-    return _page(
-        AIRCRAFT.scan(**kwargs)
+    response = AIRCRAFT.scan(**kwargs)
+    return _page_with_items(
+        response,
+        [
+            item
+            for item in response.get("Items", [])
+            if current_set.is_current_aircraft(item, now)
+        ],
     )
 
 
@@ -1481,6 +1492,9 @@ def list_active_hazards(
     enriched = []
 
     for hazard in response.get("Items", []):
+        if not current_set.is_current_hazard(hazard, now):
+            continue
+
         item = dict(hazard)
 
         geometry = _hazard_geometry(
@@ -1619,8 +1633,14 @@ def list_airports(
             next_token,
         )
 
-        return _page(
-            AIRPORTS.query(**kwargs)
+        response = AIRPORTS.query(**kwargs)
+        return _page_with_items(
+            response,
+            [
+                item
+                for item in response.get("Items", [])
+                if current_set.is_current_airport_status(item, now)
+            ],
         )
 
     # -------------------------------------------------------------
@@ -1644,8 +1664,14 @@ def list_airports(
             next_token,
         )
 
-        return _page(
-            AIRPORTS.query(**kwargs)
+        response = AIRPORTS.query(**kwargs)
+        return _page_with_items(
+            response,
+            [
+                item
+                for item in response.get("Items", [])
+                if current_set.is_current_airport_status(item, now)
+            ],
         )
 
     # -------------------------------------------------------------
@@ -1663,8 +1689,14 @@ def list_airports(
         next_token,
     )
 
-    return _page(
-        AIRPORTS.scan(**kwargs)
+    response = AIRPORTS.scan(**kwargs)
+    return _page_with_items(
+        response,
+        [
+            item
+            for item in response.get("Items", [])
+            if current_set.is_current_airport_status(item, now)
+        ],
     )
 
 
@@ -1799,28 +1831,22 @@ def _latest_current_risks():
 
         for risk in risks:
             encounter_id = risk.get("encounter_id")
-
-            if (
-                not encounter_id
-                or encounter_id not in current_encounter_ids
-            ):
-                continue
-
             valid_until = risk.get("valid_until_utc")
-
-            if valid_until and not _is_future_iso(valid_until):
-                continue
-
-            current_epoch = int(
-                risk.get("generated_at_epoch", 0) or 0
-            )
             existing = latest_by_encounter.get(encounter_id)
-            existing_epoch = int(
-                (existing or {}).get("generated_at_epoch", 0) or 0
+            reference_epoch = (
+                int(time.time())
+                if valid_until
+                else 0
+            )
+            selected = current_set.choose_latest_current_risk(
+                existing,
+                risk,
+                current_encounter_ids=current_encounter_ids,
+                now_epoch=reference_epoch,
             )
 
-            if existing is None or current_epoch > existing_epoch:
-                latest_by_encounter[encounter_id] = risk
+            if selected is not existing and encounter_id:
+                latest_by_encounter[encounter_id] = selected
 
         items = list(latest_by_encounter.values())
         current_risk_ids = {
@@ -1895,7 +1921,10 @@ def _current_recommendation_snapshot():
                 item,
                 current_risk_ids=current_risk_ids,
             )
-            and _is_future_iso(item.get("valid_until_utc"))
+            and current_set.is_lifecycle_active_recommendation(
+                item,
+                int(time.time()),
+            )
         ]
         return {
             "items": current_items,
@@ -1981,7 +2010,9 @@ def _active_alerts():
         items = _scan_all(
             ALERTS,
             FilterExpression=(
-                Attr("alert_state").is_in(ACTIVE_ALERT_STATES)
+                Attr("alert_state").is_in(
+                    list(current_set.CURRENT_ALERT_STATES)
+                )
                 & Attr("valid_until_utc").gt(now_iso)
             ),
             ProjectionExpression=(
@@ -2031,7 +2062,10 @@ def _current_alert_snapshot():
                 current_risk_ids=current_risk_ids,
                 current_recommendation_ids=current_recommendation_ids,
             )
-            and _is_future_iso(item.get("valid_until_utc"))
+            and current_set.is_lifecycle_active_alert(
+                item,
+                int(time.time()),
+            )
         ]
         return {
             "items": current_items,
