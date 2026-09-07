@@ -259,8 +259,8 @@ separately authorized behavior change.
 - **Phase 1B:** retrieves exact stored records and DynamoDB-narrowed candidates.
 - **Phase 1C.1:** joins observed current aircraft/encounter records into
   operational contexts after exact PK hydration.
-- **Phase 1C.2:** deferred hazard-impact context.
-- **Phase 1C.3:** deferred airport operational context.
+- **Phase 1C.2:** joins a known hazard into current operational impacts.
+- **Phase 1C.3:** joins a known airport into weather/status context.
 - **Phase 1D:** may search/filter contexts, including geospatial concerns.
 - **Phase 1E:** may expose deterministic queries through Phase 0 AI contracts.
 
@@ -533,7 +533,8 @@ and the broader overview hazard count. Shared context does not silently
 
 - **1C.2:** hazard-impact context and encounters-by-hazard retrieval
   (completed below).
-- **1C.3:** airport weather/status context; no global current assessment.
+- **1C.3:** airport weather/status context; no global current assessment
+  (completed below).
 - Phase 1D: search, region, geospatial, network snapshot.
 - Phase 1E: Phase 0 `ToolResult` / `Evidence` / agents / `/ai`.
 
@@ -691,7 +692,187 @@ production latency or cost promise.
 
 ### Deferred
 
-- **1C.3:** airport weather/status context; no global current assessment.
+- **1C.3:** airport weather/status context; no global current assessment
+  (completed below).
 - Phase 1D: search, region, geospatial, network snapshot; pass known
   hazard IDs into this builder.
+- Phase 1E: Phase 0 `ToolResult` / `Evidence` / agents / `/ai`.
+
+## Phase 1C.3 airport operational context
+
+Phase 1C.3 answers: given a known `airport_id`, what deterministic
+AirportStatus and independently observed latest weather exist?
+
+It does **not** search for airports, resolve a region, rank diversions,
+or invent a current AirportAssessment. Phase 1D may later find airport
+IDs and pass them here.
+
+```text
+normalize airport_id (strip + upper)
+        |
+        v
+exact get_airport_status_record
+        |
+        +-- empty / missing root → None, no descendants
+        +-- retained expired root → keep row, airport_is_current=False
+        +-- current root → airport_is_current=True
+                |
+                v
+        station_id = AirportStatus.station_id only
+        (no Operational API airport_id fallback)
+                |
+                +-- missing station → keep root; no METAR/TAF/period I/O
+                +-- station present
+                        |
+                        v
+                exact get_metar_record / get_taf_record
+                latest_* are latest-table observations
+                source links compare copied status versions
+                        |
+                        v
+                query_taf_period_rows_for_version
+                (children of latest_taf.taf_version_key only)
+                        |
+                        v
+                AirportOperationalContext
+                        |
+                        v
+                final get_airport_status_record (drift detection only)
+```
+
+### Context type
+
+`AirportOperationalContext` holds the **initial** exact AirportStatus
+root, `airport_is_current`, the authoritative `station_id`, independently
+observed `latest_metar` / `latest_taf` / `latest_taf_periods`, source
+lineage links, a root `airport_status_link`, and retrieval observations.
+
+Field names are not `metar`, `taf`, or `taf_periods`. Those names would
+imply the weather rows produced the AirportStatus. Latest-table presence
+is a separate fact from AirportStatus provenance.
+
+If `get_airport_status_record` returns `None`,
+`build_airport_operational_context` returns `None` and does not query
+descendants. That is not an AI `NOT_FOUND` status.
+
+### Root currentness
+
+Only Phase 1A `is_current_airport_status` is used
+(`expires_at_epoch > now_epoch`). A retained expired AirportStatus still
+returns a context with `airport_is_current = False`. Expiry does not
+prove weather descendants cannot exist, so an expired root may still
+hydrate latest METAR/TAF/periods. Those newer weather rows are not
+claimed as the sources that produced the expired status.
+
+AirportStatus currentness is separate from copied METAR/TAF freshness
+fields. Those source/status fields are preserved exactly and are not
+normalized into `wilvor_ai.FreshnessStatus`.
+
+### Station identity
+
+Shared truth uses `AirportStatus.station_id` only. It does **not** copy
+the Operational API fallback `status.station_id or airport_id`.
+
+If `station_id` is missing or empty: keep the AirportStatus root, set
+`station_id = ""`, skip METAR/TAF/period reads, set latest weather to
+`None` / `()`, and mark source lineage `MISSING` / `VERSIONED`. No
+station is invented. Station-reference is not queried.
+
+### Latest weather is not automatically provenance
+
+`latest_metar` and `latest_taf` are independently observed latest-table
+rows (`get_metar_record` / `get_taf_record`, consistent exact PK).
+
+`metar_source_link` and `taf_source_link` compare repository-supported
+status source versions (`source_metar_version` / copied `metar_version`;
+`taf_version_key` when both sides have it, otherwise
+`source_taf_version` / `source_version`) to the observed latest versions.
+
+- Matching versions → `PRESENT` / `VERSIONED`
+- Latest exists, versions differ → keep the latest row;
+  `HYDRATION_VERSION_MISMATCH` / `VERSIONED`; do not claim the newer
+  row produced AirportStatus
+- Status source version missing while latest exists → keep latest;
+  lineage is `MISSING` / `VERSIONED`, not `PRESENT`
+- Latest missing → `None` and `HYDRATION_MISSING`; never imply VFR,
+  safe, or no forecast concern
+- Hydrated `station_id` differs → do not use the row;
+  `HYDRATION_IDENTITY_MISMATCH`
+
+Latest-only weather tables cannot recover a historical M1/T1 once the
+latest row has moved to M2/T2. Presence of a latest weather row does
+not imply source lineage `PRESENT`.
+
+### Version-bound TAF periods
+
+`latest_taf_periods` are exact children of
+`latest_taf.taf_version_key` via `query_taf_period_rows_for_version`:
+base-table `taf_version_key` query, `ScanIndexForward=True`,
+`ConsistentRead=True`, no Limit, no FilterExpression, every
+`LastEvaluatedKey` page drained.
+
+`taf_periods_link.selected_identity` includes
+`("taf_version_key", latest_taf.taf_version_key)`.
+
+If `latest_taf` is absent, AirportStatus's copied `taf_version_key` is
+not queried. If the observed TAF has no usable `taf_version_key`, no
+period query runs and the link is `MISSING` / `VERSIONED`.
+
+There is no `is_current_taf_period` policy. The shared context does not
+apply the Operational API `now-6h` / `now+36h` Limit-50 station/time
+GSI. `period_materialization_status` is preserved exactly; `BUILDING`
+is not rewritten as READY or current.
+
+### No AirportAssessment
+
+Phase 1A has no current AirportAssessment semantics.
+`AirportOperationalContext` has no `recent_assessments`,
+`current_assessment`, or `active_assessment`. Existing API recent-
+assessment retrieval remains presentation/investigation only.
+
+### Root drift
+
+After descendant observations, one final consistent
+`get_airport_status_record` is **drift detection only**. Comparable
+fields are `updated_at_epoch` and, when present on both rows,
+`source_metar_version`, `source_taf_version`, and `taf_version_key`.
+
+If any comparable field changed: `airport_status_link` is
+`HYDRATION_VERSION_MISMATCH`. The initial AirportStatus root, initial
+`airport_is_current`, selected `station_id`, and already-observed
+weather/periods are kept. The call does not replace the root, rebuild,
+restart reads, or recompute descendants from the final row.
+
+If a writer-contract drift field is unexpectedly absent, it is not
+fabricated; a limitation is recorded.
+
+A same-version final read is **not** a transactional cross-table
+snapshot. Separate tables may still have changed during composition.
+
+### Retrieval observations
+
+- AirportStatus initial and final: `EXACT_PK` + `CONSISTENT`
+- METAR / TAF exact: `EXACT_PK` + `CONSISTENT`
+- TAF period version query: `FULL_QUERY` + `CONSISTENT`, `limit=None`
+- Final read records an explicit no-cross-table-snapshot limitation
+
+There is still no completeness Boolean.
+
+### Correctness-first read pattern
+
+For a station-bearing root the builder performs two consistent
+AirportStatus GetItems (initial + final), one consistent METAR GetItem,
+one consistent TAF GetItem, and one drained version-bound TAF-period
+query when `latest_taf.taf_version_key` is usable. A missing root is
+one GetItem. A missing `station_id` is two GetItems and no weather I/O.
+
+This remains a reference composition path. Phase 1C.3 does not delegate
+`get_airport_detail`. The Operational API may continue its station
+fallback, first-page mixed TAF-period window, and recent assessments.
+Those are compatibility/presentation semantics.
+
+### Deferred
+
+- Phase 1D: search, region, geospatial, diversion candidates, network
+  snapshot; pass known airport IDs into this builder.
 - Phase 1E: Phase 0 `ToolResult` / `Evidence` / agents / `/ai`.

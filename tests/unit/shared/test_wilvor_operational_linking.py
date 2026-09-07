@@ -298,6 +298,94 @@ def test_hazard_context_types_wrap_encounter_without_duplicating_chain():
     assert encounter.risk is None
 
 
+def test_latest_weather_source_link_match_mismatch_absent_and_missing():
+    latest = {"station_id": "KSEA", "metar_version": "M1"}
+
+    matched, present = linking.latest_weather_source_link(
+        selected_station_id="KSEA",
+        selected_source_version="M1",
+        version_name="metar_version",
+        hydrated=latest,
+        observed_version="M1",
+    )
+    mismatched_row = {"station_id": "KSEA", "metar_version": "M2"}
+    kept, mismatch = linking.latest_weather_source_link(
+        selected_station_id="KSEA",
+        selected_source_version="M1",
+        version_name="metar_version",
+        hydrated=mismatched_row,
+        observed_version="M2",
+    )
+    unproven_row = {"station_id": "KSEA", "metar_version": "M2"}
+    retained, unproven = linking.latest_weather_source_link(
+        selected_station_id="KSEA",
+        selected_source_version="",
+        version_name="metar_version",
+        hydrated=unproven_row,
+        observed_version="M2",
+    )
+    missing, missing_link = linking.latest_weather_source_link(
+        selected_station_id="KSEA",
+        selected_source_version="M1",
+        version_name="metar_version",
+        hydrated=None,
+        observed_version="",
+    )
+    identity_row = {"station_id": "KPDX", "metar_version": "M1"}
+    rejected, identity = linking.latest_weather_source_link(
+        selected_station_id="KSEA",
+        selected_source_version="M1",
+        version_name="metar_version",
+        hydrated=identity_row,
+        observed_version="M1",
+    )
+
+    assert matched is latest
+    assert present.state is linking.LinkState.PRESENT
+    assert present.kind is linking.LinkKind.VERSIONED
+    assert kept is mismatched_row
+    assert mismatch.state is linking.LinkState.HYDRATION_VERSION_MISMATCH
+    assert retained is unproven_row
+    assert unproven.state is linking.LinkState.MISSING
+    assert unproven.state is not linking.LinkState.PRESENT
+    assert missing is None
+    assert missing_link.state is linking.LinkState.HYDRATION_MISSING
+    assert rejected is None
+    assert identity.state is linking.LinkState.HYDRATION_IDENTITY_MISMATCH
+
+
+def test_taf_periods_link_names_parent_version_key():
+    present = linking.taf_periods_link_for(
+        ({"period_key": "p1"},),
+        taf_version_key="KSEA#T1",
+    )
+    empty = linking.taf_periods_link_for((), taf_version_key="KSEA#T1")
+    missing = linking.taf_periods_link_for((), taf_version_key="")
+
+    assert present.state is linking.LinkState.PRESENT
+    assert ("taf_version_key", "KSEA#T1") in present.selected_identity
+    assert ("taf_version_key", "KSEA#T1") in present.observed_identity
+    assert empty.state is linking.LinkState.ABSENT_FROM_CURRENT_CANDIDATES
+    assert ("taf_version_key", "KSEA#T1") in empty.selected_identity
+    assert missing.state is linking.LinkState.MISSING
+    assert missing.kind is linking.LinkKind.VERSIONED
+
+
+def test_consistent_query_observation_is_full_query_without_eventual_limitation():
+    observation = linking.query_observation(
+        "query_taf_period_rows_for_version",
+        linking.TAF_PERIOD_VERSION_LIMITATION,
+        consistency=linking.Consistency.CONSISTENT,
+    )
+
+    assert observation.coverage is linking.Coverage.FULL_QUERY
+    assert observation.consistency is linking.Consistency.CONSISTENT
+    assert observation.limit is None
+    assert linking.EVENTUAL_SCAN_LIMITATION not in observation.limitations
+    assert linking.TAF_PERIOD_VERSION_LIMITATION in observation.limitations
+    assert not hasattr(observation, "complete")
+
+
 def test_linking_source_has_no_io_or_forbidden_imports():
     source = inspect.getsource(linking)
     text = (PACKAGE_DIR / "linking.py").read_text(encoding="utf-8")

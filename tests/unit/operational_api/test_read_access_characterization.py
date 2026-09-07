@@ -837,6 +837,71 @@ def test_taf_period_query_uses_six_to_thirty_six_hour_window_first_page_only(
     assert detail["tafForecastPeriods"] == [{"period_key": "p1"}]
 
 
+def test_airport_detail_falls_back_to_airport_id_when_station_id_missing(
+    operational_repository,
+    monkeypatch,
+):
+    repo = operational_repository
+    status = {
+        "airport_id": "KSEA",
+        "expires_at_epoch": NOW + 100,
+    }
+    airports = RecordingTable([{"Item": status}])
+    metar = RecordingTable([{"Item": {"station_id": "KSEA"}}])
+    taf = RecordingTable([{"Item": {"station_id": "KSEA"}}])
+    repo.AIRPORTS = airports
+    repo.METAR = metar
+    repo.TAF = taf
+    repo.TAF_PERIODS = RecordingTable([{"Items": []}])
+    install_time(repo, monkeypatch)
+    monkeypatch.setattr(repo, "_query_latest", lambda *args, **kwargs: [])
+
+    detail = repo.get_airport_detail("ksea")
+
+    assert detail["airport"] is status
+    assert metar.calls[0][1]["Key"] == {"station_id": "KSEA"}
+    assert taf.calls[0][1]["Key"] == {"station_id": "KSEA"}
+
+
+def test_airport_detail_recent_assessments_use_airport_time_index(
+    operational_repository,
+    monkeypatch,
+):
+    repo = operational_repository
+    repo.AIRPORTS = RecordingTable(
+        [
+            {
+                "Item": {
+                    "airport_id": "KSEA",
+                    "station_id": "KSEA",
+                }
+            }
+        ]
+    )
+    repo.METAR = RecordingTable([{}])
+    repo.TAF = RecordingTable([{}])
+    repo.TAF_PERIODS = RecordingTable([{"Items": []}])
+    assessments = RecordingTable([{"Items": [{"evaluation_id": "eval-1"}]}])
+    repo.AIRPORT_ASSESSMENTS = assessments
+    install_time(repo, monkeypatch)
+
+    detail = repo.get_airport_detail("KSEA")
+
+    assert len(assessments.calls) == 1
+    operation, kwargs = assessments.calls[0]
+    assert operation == "query"
+    assert kwargs["IndexName"] == "airport_id-created_at_epoch-index"
+    assert kwargs["ScanIndexForward"] is False
+    assert kwargs["Limit"] == 10
+    assert "ConsistentRead" not in kwargs
+    assert condition_shape(kwargs["KeyConditionExpression"]) == (
+        "=",
+        ("name", "airport_id"),
+        "KSEA",
+    )
+    assert detail["recentAssessments"] == [{"evaluation_id": "eval-1"}]
+
+
 def test_dynamodb_page_token_round_trip_preserves_last_evaluated_key(
     operational_repository,
     monkeypatch,

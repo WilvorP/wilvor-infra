@@ -429,6 +429,66 @@ def test_taf_period_query_uses_established_window_and_first_page():
     )
 
 
+def test_taf_period_version_query_uses_base_table_and_drains_pages():
+    table = RecordingTable(
+        [
+            {
+                "Items": [{"period_key": "p1", "taf_version_key": "KSEA#T1"}],
+                "LastEvaluatedKey": {"period_key": "p1"},
+            },
+            {"Items": [{"period_key": "p2", "taf_version_key": "KSEA#T1"}]},
+        ]
+    )
+
+    rows = readers.query_taf_period_rows_for_version(
+        table,
+        "KSEA#T1",
+        key=Key,
+    )
+
+    assert rows == [
+        {"period_key": "p1", "taf_version_key": "KSEA#T1"},
+        {"period_key": "p2", "taf_version_key": "KSEA#T1"},
+    ]
+    assert len(table.calls) == 2
+    first = table.calls[0][1]
+    assert "IndexName" not in first
+    assert first["ScanIndexForward"] is True
+    assert first["ConsistentRead"] is True
+    assert "Limit" not in first
+    assert "FilterExpression" not in first
+    assert condition_shape(first["KeyConditionExpression"]) == (
+        "=",
+        ("name", "taf_version_key"),
+        "KSEA#T1",
+    )
+    assert "station_id" not in str(first["KeyConditionExpression"])
+    assert "period_from_epoch" not in str(first["KeyConditionExpression"])
+    assert table.calls[1][1]["ExclusiveStartKey"] == {"period_key": "p1"}
+    assert table.calls[1][1]["ConsistentRead"] is True
+
+
+def test_taf_period_version_query_honors_injected_query_all():
+    captured = []
+
+    def fake_query_all(table, **kwargs):
+        captured.append(kwargs)
+        return [{"period_key": "injected"}]
+
+    rows = readers.query_taf_period_rows_for_version(
+        object(),
+        "KSEA#T9",
+        query_all=fake_query_all,
+        key=Key,
+    )
+
+    assert rows == [{"period_key": "injected"}]
+    assert "IndexName" not in captured[0]
+    assert "Limit" not in captured[0]
+    assert "current_set" not in captured[0]
+    assert "now_epoch" not in captured[0]
+
+
 def test_operational_tables_is_an_injected_namespace():
     tables = readers.OperationalTables(
         aircraft="a",

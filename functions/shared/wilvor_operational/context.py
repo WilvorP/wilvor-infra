@@ -1,4 +1,4 @@
-"""Aircraft, encounter, and hazard operational context loaders.
+"""Aircraft, encounter, hazard, and airport operational context loaders.
 
 Callers supply table handles and an explicit reference epoch. This module
 does not acquire wall-clock time, cache results, call the Operational API,
@@ -31,6 +31,83 @@ def _text(value) -> str:
 
 def _normalize_aircraft_id(aircraft_id) -> str:
     return _text(aircraft_id).lower()
+
+
+def _normalize_airport_id(airport_id) -> str:
+    return _text(airport_id).upper()
+
+
+_AIRPORT_DRIFT_FIELDS = (
+    "updated_at_epoch",
+    "source_metar_version",
+    "source_taf_version",
+    "taf_version_key",
+)
+
+
+def _status_metar_source_version(airport) -> str:
+    return _text(airport.get("source_metar_version")) or _text(
+        airport.get("metar_version")
+    )
+
+
+def _observed_metar_version(metar) -> str:
+    if metar is None:
+        return ""
+    return _text(metar.get("metar_version"))
+
+
+def _taf_compare_versions(airport, latest_taf):
+    status_key = _text(airport.get("taf_version_key"))
+    latest_key = _text(latest_taf.get("taf_version_key")) if latest_taf else ""
+    if status_key and latest_key:
+        return status_key, "taf_version_key", latest_key
+
+    selected = (
+        _text(airport.get("source_taf_version"))
+        or _text(airport.get("taf_source_version"))
+        or _text(airport.get("taf_version"))
+    )
+    observed = ""
+    if latest_taf is not None:
+        observed = (
+            _text(latest_taf.get("source_version"))
+            or _text(latest_taf.get("taf_version"))
+        )
+    return selected, "source_taf_version", observed
+
+
+def _airport_identity(row, airport_id):
+    pairs = [("airport_id", airport_id or _text((row or {}).get("airport_id")))]
+    if row is not None and row.get("updated_at_epoch") is not None:
+        pairs.append(("updated_at_epoch", str(row.get("updated_at_epoch"))))
+    return tuple((name, value) for name, value in pairs if value)
+
+
+def _airport_root_drift(initial, final):
+    limitations = []
+    if final is None:
+        return True, limitations
+
+    drifted = False
+    missing_contract = False
+    for field in _AIRPORT_DRIFT_FIELDS:
+        if field not in initial or field not in final:
+            missing_contract = True
+            continue
+        if initial.get(field) != final.get(field):
+            drifted = True
+    if missing_contract:
+        limitations.append(linking.AIRPORT_DRIFT_FIELD_LIMITATION)
+    return drifted, limitations
+
+
+def _missing_weather_lineage_link(reason):
+    return linking.Link(
+        state=linking.LinkState.MISSING,
+        kind=linking.LinkKind.VERSIONED,
+        reason=reason,
+    )
 
 
 def build_aircraft_operational_context(
@@ -568,4 +645,134 @@ def _build_encounter_context(
         recommendation_link=recommendation_link,
         alerts=alerts,
         alert_link=alert_link,
+    )
+
+
+def build_airport_operational_context(
+    tables,
+    airport_id,
+    *,
+    now_epoch,
+):
+    airport_id = _normalize_airport_id(airport_id)
+    if not airport_id:
+        return None
+
+    airport = readers.get_airport_status_record(tables.airports, airport_id)
+    if airport is None:
+        return None
+
+    airport_is_current = current_set.is_current_airport_status(airport, now_epoch)
+    station_id = _text(airport.get("station_id"))
+    retrieval = [linking.exact_pk_observation("get_airport_status_record")]
+    latest_metar = None
+    latest_taf = None
+    latest_taf_periods = ()
+
+    if not station_id:
+        retrieval[0] = linking.exact_pk_observation(
+            "get_airport_status_record",
+            linking.MISSING_STATION_LIMITATION,
+        )
+        metar_source_link = _missing_weather_lineage_link(
+            linking.MISSING_STATION_LIMITATION,
+        )
+        taf_source_link = _missing_weather_lineage_link(
+            linking.MISSING_STATION_LIMITATION,
+        )
+        taf_periods_link = _missing_weather_lineage_link(
+            linking.MISSING_STATION_LIMITATION,
+        )
+    else:
+        hydrated_metar = readers.get_metar_record(tables.metar, station_id)
+        retrieval.append(linking.exact_pk_observation("get_metar_record"))
+        latest_metar, metar_source_link = linking.latest_weather_source_link(
+            selected_station_id=station_id,
+            selected_source_version=_status_metar_source_version(airport),
+            version_name="metar_version",
+            hydrated=hydrated_metar,
+            observed_version=_observed_metar_version(hydrated_metar),
+        )
+
+        hydrated_taf = readers.get_taf_record(tables.taf, station_id)
+        retrieval.append(linking.exact_pk_observation("get_taf_record"))
+        selected_taf_version, taf_version_name, observed_taf_version = (
+            _taf_compare_versions(airport, hydrated_taf)
+        )
+        latest_taf, taf_source_link = linking.latest_weather_source_link(
+            selected_station_id=station_id,
+            selected_source_version=selected_taf_version,
+            version_name=taf_version_name,
+            hydrated=hydrated_taf,
+            observed_version=observed_taf_version,
+        )
+
+        if latest_taf is None:
+            taf_periods_link = _missing_weather_lineage_link(
+                "latest TAF is absent; forecast periods were not queried "
+                "from AirportStatus copied taf_version_key"
+            )
+        else:
+            taf_version_key = _text(latest_taf.get("taf_version_key"))
+            if not taf_version_key:
+                taf_periods_link = linking.taf_periods_link_for(
+                    (),
+                    taf_version_key="",
+                )
+            else:
+                latest_taf_periods = tuple(
+                    readers.query_taf_period_rows_for_version(
+                        tables.taf_periods,
+                        taf_version_key,
+                    )
+                )
+                taf_periods_link = linking.taf_periods_link_for(
+                    latest_taf_periods,
+                    taf_version_key=taf_version_key,
+                )
+                retrieval.append(
+                    linking.query_observation(
+                        "query_taf_period_rows_for_version",
+                        linking.TAF_PERIOD_VERSION_LIMITATION,
+                        consistency=linking.Consistency.CONSISTENT,
+                    )
+                )
+
+    final = readers.get_airport_status_record(tables.airports, airport_id)
+    drifted, drift_limitations = _airport_root_drift(airport, final)
+    retrieval.append(
+        linking.exact_pk_observation(
+            "get_airport_status_record",
+            linking.NO_SNAPSHOT_LIMITATION,
+            *drift_limitations,
+        )
+    )
+    if drifted:
+        airport_status_link = linking.Link(
+            state=linking.LinkState.HYDRATION_VERSION_MISMATCH,
+            kind=linking.LinkKind.EXACT,
+            reason="AirportStatus changed during descendant observation",
+            selected_identity=_airport_identity(airport, airport_id),
+            observed_identity=_airport_identity(final, airport_id),
+        )
+    else:
+        airport_status_link = linking.Link(
+            state=linking.LinkState.PRESENT,
+            kind=linking.LinkKind.EXACT,
+            selected_identity=_airport_identity(airport, airport_id),
+            observed_identity=_airport_identity(final, airport_id),
+        )
+
+    return linking.AirportOperationalContext(
+        airport=airport,
+        airport_is_current=airport_is_current,
+        station_id=station_id,
+        latest_metar=latest_metar,
+        metar_source_link=metar_source_link,
+        latest_taf=latest_taf,
+        taf_source_link=taf_source_link,
+        latest_taf_periods=latest_taf_periods,
+        taf_periods_link=taf_periods_link,
+        airport_status_link=airport_status_link,
+        retrieval=tuple(retrieval),
     )

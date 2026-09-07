@@ -67,6 +67,24 @@ NO_SNAPSHOT_LIMITATION = (
     "DynamoDB reads are independently observed; this composition is not "
     "a transactional cross-table snapshot."
 )
+MISSING_STATION_LIMITATION = (
+    "METAR and TAF were not queried because AirportStatus has no station_id."
+)
+WEATHER_SOURCE_UNPROVEN_REASON = (
+    "AirportStatus has no usable source version; latest weather lineage "
+    "was not proven."
+)
+TAF_PERIOD_VERSION_LIMITATION = (
+    "Forecast periods are exact children of the observed TAF version only; "
+    "they are not a current-period set or an operational time window."
+)
+TAF_PERIOD_ABSENCE_LIMITATION = (
+    "Absence of a forecast period is proven only for the observed TAF "
+    "version key."
+)
+AIRPORT_DRIFT_FIELD_LIMITATION = (
+    "An expected AirportStatus drift field was absent and was not fabricated."
+)
 
 
 def _text(value: Any) -> str:
@@ -145,6 +163,21 @@ class HazardOperationalContext:
     retrieval: tuple[RetrievalObservation, ...]
 
 
+@dataclass(frozen=True)
+class AirportOperationalContext:
+    airport: dict[str, Any]
+    airport_is_current: bool
+    station_id: str
+    latest_metar: dict[str, Any] | None
+    metar_source_link: Link
+    latest_taf: dict[str, Any] | None
+    taf_source_link: Link
+    latest_taf_periods: tuple[dict[str, Any], ...]
+    taf_periods_link: Link
+    airport_status_link: Link
+    retrieval: tuple[RetrievalObservation, ...]
+
+
 def scan_observation(source: str, *extra_limitations: str) -> RetrievalObservation:
     limitations = (EVENTUAL_SCAN_LIMITATION,) + extra_limitations
     return RetrievalObservation(
@@ -166,14 +199,109 @@ def exact_pk_observation(source: str, *extra_limitations: str) -> RetrievalObser
     )
 
 
-def query_observation(source: str, *extra_limitations: str) -> RetrievalObservation:
-    limitations = (EVENTUAL_SCAN_LIMITATION,) + extra_limitations
+def query_observation(
+    source: str,
+    *extra_limitations: str,
+    consistency: Consistency = Consistency.EVENTUAL,
+) -> RetrievalObservation:
+    limitations = extra_limitations
+    if consistency is Consistency.EVENTUAL:
+        limitations = (EVENTUAL_SCAN_LIMITATION,) + extra_limitations
     return RetrievalObservation(
         source=source,
         coverage=Coverage.FULL_QUERY,
-        consistency=Consistency.EVENTUAL,
+        consistency=consistency,
         limit=None,
         limitations=limitations,
+    )
+
+
+def latest_weather_source_link(
+    *,
+    selected_station_id: str,
+    selected_source_version: str,
+    version_name: str,
+    hydrated: dict[str, Any] | None,
+    observed_version: str,
+) -> tuple[dict[str, Any] | None, Link]:
+    selected = _identity(
+        ("station_id", selected_station_id),
+        (version_name, selected_source_version),
+    )
+    if hydrated is None:
+        return None, Link(
+            state=LinkState.HYDRATION_MISSING,
+            kind=LinkKind.VERSIONED,
+            selected_identity=selected,
+        )
+
+    observed_station = _text(hydrated.get("station_id"))
+    observed = _identity(
+        ("station_id", observed_station),
+        (version_name, observed_version),
+    )
+    if observed_station.upper() != _text(selected_station_id).upper():
+        return None, Link(
+            state=LinkState.HYDRATION_IDENTITY_MISMATCH,
+            kind=LinkKind.VERSIONED,
+            reason="hydrated station_id differs from AirportStatus station_id",
+            selected_identity=selected,
+            observed_identity=observed,
+        )
+
+    if not selected_source_version:
+        return hydrated, Link(
+            state=LinkState.MISSING,
+            kind=LinkKind.VERSIONED,
+            reason=WEATHER_SOURCE_UNPROVEN_REASON,
+            selected_identity=_identity(("station_id", selected_station_id)),
+            observed_identity=observed,
+        )
+
+    if observed_version != selected_source_version:
+        return hydrated, Link(
+            state=LinkState.HYDRATION_VERSION_MISMATCH,
+            kind=LinkKind.VERSIONED,
+            reason=(
+                "latest weather version differs from AirportStatus "
+                "source version"
+            ),
+            selected_identity=selected,
+            observed_identity=observed,
+        )
+
+    return hydrated, Link(
+        state=LinkState.PRESENT,
+        kind=LinkKind.VERSIONED,
+        selected_identity=selected,
+        observed_identity=observed,
+    )
+
+
+def taf_periods_link_for(
+    periods: tuple[dict[str, Any], ...],
+    *,
+    taf_version_key: str,
+) -> Link:
+    selected = _identity(("taf_version_key", taf_version_key))
+    if not taf_version_key:
+        return Link(
+            state=LinkState.MISSING,
+            kind=LinkKind.VERSIONED,
+            reason="observed TAF has no usable taf_version_key",
+        )
+    if periods:
+        return Link(
+            state=LinkState.PRESENT,
+            kind=LinkKind.VERSIONED,
+            selected_identity=selected,
+            observed_identity=selected,
+        )
+    return Link(
+        state=LinkState.ABSENT_FROM_CURRENT_CANDIDATES,
+        kind=LinkKind.OPTIONAL,
+        reason=TAF_PERIOD_ABSENCE_LIMITATION,
+        selected_identity=selected,
     )
 
 

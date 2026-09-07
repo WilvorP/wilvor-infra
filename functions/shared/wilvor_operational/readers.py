@@ -422,6 +422,21 @@ def query_taf_period_candidates_page(
     )
 
 
+def query_taf_period_rows_for_version(
+    table,
+    taf_version_key,
+    *,
+    key=Key,
+    query_all=access.query_all,
+):
+    return query_all(
+        table,
+        KeyConditionExpression=key("taf_version_key").eq(taf_version_key),
+        ScanIndexForward=True,
+        ConsistentRead=True,
+    )
+
+
 def query_hazard_coordinate_rows(
     table,
     hazard_version_key,
