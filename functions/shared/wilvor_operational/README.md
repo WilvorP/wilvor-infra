@@ -261,13 +261,17 @@ separately authorized behavior change.
   operational contexts after exact PK hydration.
 - **Phase 1C.2:** joins a known hazard into current operational impacts.
 - **Phase 1C.3:** joins a known airport into weather/status context.
-- **Phase 1D:** may search/filter contexts, including geospatial concerns.
+- **Phase 1D.1:** deterministic non-geographic identity discovery (this
+  package; see below).
+- **Phase 1D.2 / 1D.3:** region/geometry and operational query fabric
+  remain deferred.
 - **Phase 1E:** may expose deterministic queries through Phase 0 AI contracts.
 
 `current_set` does not provide DynamoDB access. `access` / `readers` do not
-apply current-set semantics or compose business contexts. This package still
-does not provide search, geospatial logic, AI tools, `ToolResult`, `Evidence`,
-agents, providers, or AWS infrastructure.
+apply current-set semantics or compose business contexts. Phase 1D.1 adds
+entity discovery. This package still does not provide geospatial logic,
+encounter/impact search, AI tools, `ToolResult`, `Evidence`, agents,
+providers, or AWS infrastructure.
 
 ## Pre-refactor characterization baseline
 
@@ -873,6 +877,58 @@ Those are compatibility/presentation semantics.
 
 ### Deferred
 
-- Phase 1D: search, region, geospatial, diversion candidates, network
-  snapshot; pass known airport IDs into this builder.
+- Phase 1D.1: non-geographic identity discovery (completed below).
+- Phase 1D.2 / 1D.3: region, geospatial, current-encounter/impact
+  composition, network snapshot; pass known IDs into Phase 1C builders.
 - Phase 1E: Phase 0 `ToolResult` / `Evidence` / agents / `/ai`.
+
+## Phase 1D.1 deterministic entity discovery
+
+Phase 1D.1 answers: given explicit non-geographic criteria, which
+observed current aircraft, hazard, and AirportStatus identities exist?
+
+It uses Phase 1B readers plus Phase 1A current-set predicates. It does
+**not** compose encounters, reconstruct geometry, resolve regions, or
+import AI contracts. Known IDs still pass into Phase 1C builders.
+
+```text
+query_*_page          → one DynamoDB page (BOUNDED_QUERY)
+discover_*            → drain every page of that query (FULL_QUERY)
+                      → no silent Limit
+                      → GSI paths remain EVENTUAL
+                      → draining is not global completeness
+```
+
+Public functions live in `wilvor_operational.discovery`:
+
+- `discover_aircraft_by_id` — exact PK; retained expired rows stay
+  visible with `is_current=False`
+- `discover_aircraft_by_callsign` — strip+uppercase query normalization;
+  drain callsign GSI; return all current matches; never invent a winner
+- `discover_aircraft_by_h3` — drain H3 GSI as an exact persisted key;
+  no geography
+- `discover_current_hazards` — drain ACTIVE+READY+valid_to GSI, then
+  `is_current_hazard`; optional `product_type` / `hazard_type` / explicit
+  IDs
+- `discover_airport_by_id` — exact AirportStatus PK; no AirportAssessment
+- `discover_airports_by_weather_risk` / `..._weather_impact` — drain the
+  established weather GSIs, then `is_current_airport_status`
+
+Callsign limitation: Operational API queries use strip+uppercase;
+writers store strip-only callsigns; DynamoDB GSI equality is
+case-sensitive. Discovery follows the API query normalization and
+records that limitation. It does not claim case-insensitive or global
+completeness and does not scan the aircraft table.
+
+`product_type` is SIGMET/AIRMET. `hazard_type` is phenomenon
+(CONVECTION, TURBULENCE, and the other persisted values). Do not treat
+`hazard_type="SIGMET"` as product filtering.
+
+Every public function takes one caller-supplied `now_epoch`. There is
+no wall-clock read. Exact IDs record `EXACT_PK` + `CONSISTENT`. Drained
+GSI discovery records `FULL_QUERY` + `EVENTUAL` with `limit=None`. There
+is no completeness Boolean.
+
+Deferred after 1D.1: region resolver and hazard-geometry intersection
+(1D.2); current-encounter/impact fabric and network snapshot (1D.3);
+AI `ToolResult` (1E). No new AWS resources.

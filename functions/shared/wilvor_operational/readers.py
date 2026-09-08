@@ -251,6 +251,24 @@ def query_aircraft_by_callsign_page(
     return query_page(table, **kwargs)
 
 
+def query_aircraft_by_callsign(
+    table,
+    *,
+    callsign,
+    now_epoch,
+    key=Key,
+    attr=Attr,
+    query_all=access.query_all,
+):
+    return query_all(
+        table,
+        IndexName=IDX_AIRCRAFT_CALLSIGN,
+        KeyConditionExpression=key("callsign").eq(callsign),
+        FilterExpression=attr("expires_at_epoch").gt(now_epoch),
+        ScanIndexForward=False,
+    )
+
+
 def query_aircraft_by_h3_page(
     table,
     *,
@@ -271,6 +289,24 @@ def query_aircraft_by_h3_page(
     }
     _with_start_key(kwargs, exclusive_start_key)
     return query_page(table, **kwargs)
+
+
+def query_aircraft_by_h3(
+    table,
+    *,
+    h3_cell,
+    now_epoch,
+    key=Key,
+    attr=Attr,
+    query_all=access.query_all,
+):
+    return query_all(
+        table,
+        IndexName=IDX_AIRCRAFT_H3,
+        KeyConditionExpression=key("current_h3_cell").eq(h3_cell),
+        FilterExpression=attr("expires_at_epoch").gt(now_epoch),
+        ScanIndexForward=False,
+    )
 
 
 def scan_aircraft_page(
@@ -320,6 +356,30 @@ def query_airports_by_impact_page(
     return query_page(table, **kwargs)
 
 
+def query_airports_by_impact(
+    table,
+    *,
+    weather_impact,
+    now_epoch,
+    weather_risk=None,
+    key=Key,
+    attr=Attr,
+    query_all=access.query_all,
+):
+    kwargs = {
+        "IndexName": IDX_AIRPORT_IMPACT_TIME,
+        "KeyConditionExpression": key("weather_impact_status").eq(weather_impact),
+        "FilterExpression": attr("expires_at_epoch").gt(now_epoch),
+        "ScanIndexForward": False,
+    }
+    if weather_risk:
+        kwargs["FilterExpression"] = (
+            attr("expires_at_epoch").gt(now_epoch)
+            & attr("weather_risk_level").eq(weather_risk)
+        )
+    return query_all(table, **kwargs)
+
+
 def query_airports_by_risk_page(
     table,
     *,
@@ -340,6 +400,24 @@ def query_airports_by_risk_page(
     }
     _with_start_key(kwargs, exclusive_start_key)
     return query_page(table, **kwargs)
+
+
+def query_airports_by_risk(
+    table,
+    *,
+    weather_risk,
+    now_epoch,
+    key=Key,
+    attr=Attr,
+    query_all=access.query_all,
+):
+    return query_all(
+        table,
+        IndexName=IDX_AIRPORT_RISK_TIME,
+        KeyConditionExpression=key("weather_risk_level").eq(weather_risk),
+        FilterExpression=attr("expires_at_epoch").gt(now_epoch),
+        ScanIndexForward=False,
+    )
 
 
 def scan_airports_page(
@@ -381,6 +459,26 @@ def query_active_hazard_candidates_page(
     }
     _with_start_key(kwargs, exclusive_start_key)
     return query_page(table, **kwargs)
+
+
+def query_active_hazard_candidates(
+    table,
+    *,
+    now_epoch,
+    key=Key,
+    attr=Attr,
+    query_all=access.query_all,
+):
+    return query_all(
+        table,
+        IndexName=IDX_HAZARD_STATUS_VALIDITY,
+        KeyConditionExpression=(
+            key("status").eq("ACTIVE")
+            & key("valid_to_epoch").gte(now_epoch)
+        ),
+        FilterExpression=attr("materialization_status").eq("READY"),
+        ScanIndexForward=True,
+    )
 
 
 def query_projection_points_page(

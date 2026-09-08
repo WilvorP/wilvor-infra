@@ -342,6 +342,306 @@ def test_hazard_encounter_query_uses_existing_gsi_and_drains_pages():
     assert "source_version" not in str(first.get("FilterExpression", ""))
 
 
+def _assert_two_page_gsi_drain(table, items, *, index_name, scan_index_forward):
+    assert items == [
+        {"id": "page-1"},
+        {"id": "page-2"},
+    ]
+    assert len(table.calls) == 2
+    first = table.calls[0][1]
+    assert first["IndexName"] == index_name
+    assert first["ScanIndexForward"] is scan_index_forward
+    assert "Limit" not in first
+    assert "ConsistentRead" not in first
+    assert table.calls[1][1]["ExclusiveStartKey"] == {"k": "1"}
+    assert "Limit" not in table.calls[1][1]
+    assert "ConsistentRead" not in table.calls[1][1]
+
+
+def test_aircraft_callsign_drain_uses_established_gsi_and_all_pages():
+    table = RecordingTable(
+        [
+            {"Items": [{"id": "page-1"}], "LastEvaluatedKey": {"k": "1"}},
+            {"Items": [{"id": "page-2"}]},
+        ]
+    )
+
+    items = readers.query_aircraft_by_callsign(
+        table,
+        callsign="UAL123",
+        now_epoch=NOW,
+        key=Key,
+        attr=Attr,
+    )
+
+    _assert_two_page_gsi_drain(
+        table,
+        items,
+        index_name=readers.IDX_AIRCRAFT_CALLSIGN,
+        scan_index_forward=False,
+    )
+    first = table.calls[0][1]
+    assert condition_shape(first["KeyConditionExpression"]) == (
+        "=",
+        ("name", "callsign"),
+        "UAL123",
+    )
+    assert condition_shape(first["FilterExpression"]) == (
+        ">",
+        ("name", "expires_at_epoch"),
+        NOW,
+    )
+
+
+def test_aircraft_h3_drain_uses_established_gsi_and_all_pages():
+    table = RecordingTable(
+        [
+            {"Items": [{"id": "page-1"}], "LastEvaluatedKey": {"k": "1"}},
+            {"Items": [{"id": "page-2"}]},
+        ]
+    )
+
+    items = readers.query_aircraft_by_h3(
+        table,
+        h3_cell="8428347ffffffff",
+        now_epoch=NOW,
+        key=Key,
+        attr=Attr,
+    )
+
+    _assert_two_page_gsi_drain(
+        table,
+        items,
+        index_name=readers.IDX_AIRCRAFT_H3,
+        scan_index_forward=False,
+    )
+    first = table.calls[0][1]
+    assert condition_shape(first["KeyConditionExpression"]) == (
+        "=",
+        ("name", "current_h3_cell"),
+        "8428347ffffffff",
+    )
+    assert condition_shape(first["FilterExpression"]) == (
+        ">",
+        ("name", "expires_at_epoch"),
+        NOW,
+    )
+
+
+def test_active_hazard_candidate_drain_uses_full_items_and_all_pages():
+    table = RecordingTable(
+        [
+            {
+                "Items": [
+                    {
+                        "id": "page-1",
+                        "product_type": "SIGMET",
+                        "hazard_type": "CONVECTION",
+                    }
+                ],
+                "LastEvaluatedKey": {"k": "1"},
+            },
+            {
+                "Items": [
+                    {
+                        "id": "page-2",
+                        "product_type": "AIRMET",
+                        "hazard_type": "ICING",
+                    }
+                ]
+            },
+        ]
+    )
+
+    items = readers.query_active_hazard_candidates(
+        table,
+        now_epoch=NOW,
+        key=Key,
+        attr=Attr,
+    )
+
+    assert items == [
+        {
+            "id": "page-1",
+            "product_type": "SIGMET",
+            "hazard_type": "CONVECTION",
+        },
+        {
+            "id": "page-2",
+            "product_type": "AIRMET",
+            "hazard_type": "ICING",
+        },
+    ]
+    assert len(table.calls) == 2
+    first = table.calls[0][1]
+    assert first["IndexName"] == readers.IDX_HAZARD_STATUS_VALIDITY
+    assert first["ScanIndexForward"] is True
+    assert "Limit" not in first
+    assert "ConsistentRead" not in first
+    assert "ProjectionExpression" not in first
+    assert condition_shape(first["KeyConditionExpression"]) == (
+        "AND",
+        ("=", ("name", "status"), "ACTIVE"),
+        (">=", ("name", "valid_to_epoch"), NOW),
+    )
+    assert condition_shape(first["FilterExpression"]) == (
+        "=",
+        ("name", "materialization_status"),
+        "READY",
+    )
+    assert table.calls[1][1]["ExclusiveStartKey"] == {"k": "1"}
+
+
+def test_airport_risk_drain_uses_established_gsi_and_all_pages():
+    table = RecordingTable(
+        [
+            {"Items": [{"id": "page-1"}], "LastEvaluatedKey": {"k": "1"}},
+            {"Items": [{"id": "page-2"}]},
+        ]
+    )
+
+    items = readers.query_airports_by_risk(
+        table,
+        weather_risk="HIGH",
+        now_epoch=NOW,
+        key=Key,
+        attr=Attr,
+    )
+
+    _assert_two_page_gsi_drain(
+        table,
+        items,
+        index_name=readers.IDX_AIRPORT_RISK_TIME,
+        scan_index_forward=False,
+    )
+    first = table.calls[0][1]
+    assert condition_shape(first["KeyConditionExpression"]) == (
+        "=",
+        ("name", "weather_risk_level"),
+        "HIGH",
+    )
+    assert condition_shape(first["FilterExpression"]) == (
+        ">",
+        ("name", "expires_at_epoch"),
+        NOW,
+    )
+
+
+def test_airport_impact_drain_uses_established_gsi_and_all_pages():
+    table = RecordingTable(
+        [
+            {"Items": [{"id": "page-1"}], "LastEvaluatedKey": {"k": "1"}},
+            {"Items": [{"id": "page-2"}]},
+        ]
+    )
+
+    items = readers.query_airports_by_impact(
+        table,
+        weather_impact="WEATHER_IMPACTED",
+        now_epoch=NOW,
+        key=Key,
+        attr=Attr,
+    )
+
+    _assert_two_page_gsi_drain(
+        table,
+        items,
+        index_name=readers.IDX_AIRPORT_IMPACT_TIME,
+        scan_index_forward=False,
+    )
+    first = table.calls[0][1]
+    assert condition_shape(first["KeyConditionExpression"]) == (
+        "=",
+        ("name", "weather_impact_status"),
+        "WEATHER_IMPACTED",
+    )
+    assert condition_shape(first["FilterExpression"]) == (
+        ">",
+        ("name", "expires_at_epoch"),
+        NOW,
+    )
+
+
+def test_discovery_drains_honor_injected_query_all():
+    captured = []
+
+    def fake_query_all(table, **kwargs):
+        captured.append(kwargs)
+        return [{"id": "injected"}]
+
+    unused = object()
+    assert readers.query_aircraft_by_callsign(
+        unused,
+        callsign="UAL123",
+        now_epoch=NOW,
+        query_all=fake_query_all,
+        key=Key,
+        attr=Attr,
+    ) == [{"id": "injected"}]
+    assert readers.query_aircraft_by_h3(
+        unused,
+        h3_cell="cell",
+        now_epoch=NOW,
+        query_all=fake_query_all,
+        key=Key,
+        attr=Attr,
+    ) == [{"id": "injected"}]
+    assert readers.query_active_hazard_candidates(
+        unused,
+        now_epoch=NOW,
+        query_all=fake_query_all,
+        key=Key,
+        attr=Attr,
+    ) == [{"id": "injected"}]
+    assert readers.query_airports_by_risk(
+        unused,
+        weather_risk="HIGH",
+        now_epoch=NOW,
+        query_all=fake_query_all,
+        key=Key,
+        attr=Attr,
+    ) == [{"id": "injected"}]
+    assert readers.query_airports_by_impact(
+        unused,
+        weather_impact="WEATHER_IMPACTED",
+        now_epoch=NOW,
+        query_all=fake_query_all,
+        key=Key,
+        attr=Attr,
+    ) == [{"id": "injected"}]
+
+    assert len(captured) == 5
+    for kwargs in captured:
+        assert "Limit" not in kwargs
+        assert "ConsistentRead" not in kwargs
+        assert "current_set" not in kwargs
+
+
+def test_page_helpers_remain_bounded_after_drain_additions():
+    table = RecordingTable(
+        [
+            {
+                "Items": [{"id": "page-1"}],
+                "LastEvaluatedKey": {"k": "1"},
+            }
+        ]
+    )
+
+    page = readers.query_aircraft_by_callsign_page(
+        table,
+        callsign="UAL123",
+        now_epoch=NOW,
+        limit=20,
+        key=Key,
+        attr=Attr,
+    )
+
+    assert page["items"] == [{"id": "page-1"}]
+    assert page["last_evaluated_key"] == {"k": "1"}
+    assert len(table.calls) == 1
+    assert table.calls[0][1]["Limit"] == 20
+
+
 def test_hazard_encounter_query_honors_injected_query_all():
     captured = []
 
