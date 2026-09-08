@@ -3273,6 +3273,12 @@ def publish_hazard_materialized(
         )
     )
 
+    materialized_at_utc = (
+        active_hazard[
+            "materialized_at_utc"
+        ]
+    )
+
     detail = {
         "hazard_id": (
             active_hazard["hazard_id"]
@@ -3332,9 +3338,135 @@ def publish_hazard_materialized(
             ]
         ),
 
-        "published_at_utc": (
-            now_utc_iso()
+        "materialized_at_utc": (
+            materialized_at_utc
         ),
+
+        "published_at_utc": (
+            materialized_at_utc
+        ),
+
+        "geometry_hash": (
+            active_hazard[
+                "geometry_hash"
+            ]
+        ),
+
+        "geometry_type": (
+            active_hazard[
+                "geometry_type"
+            ]
+        ),
+
+        "geometry_point_count": (
+            active_hazard[
+                "geometry_point_count"
+            ]
+        ),
+
+        "product_type": (
+            active_hazard.get(
+                "product_type",
+                "SIGMET",
+            )
+        ),
+
+        "hazard_type": (
+            active_hazard[
+                "hazard_type"
+            ]
+        ),
+
+        "valid_from_utc": (
+            active_hazard[
+                "valid_from_utc"
+            ]
+        ),
+
+        "valid_to_utc": (
+            active_hazard[
+                "valid_to_utc"
+            ]
+        ),
+
+        "amendment_type": (
+            active_hazard.get(
+                "amendment_type"
+            )
+        ),
+
+        "created_at_utc": (
+            active_hazard.get(
+                "created_at_utc"
+            )
+        ),
+
+        "received_at_utc": (
+            active_hazard.get(
+                "received_at_utc"
+            )
+        ),
+
+        "source_product_id": (
+            active_hazard.get(
+                "source_product_id"
+            )
+        ),
+
+        "source_system": (
+            active_hazard.get(
+                "source_system",
+                SOURCE_SYSTEM,
+            )
+        ),
+
+        "severity": (
+            active_hazard.get(
+                "severity"
+            )
+        ),
+
+        "minimum_lower_altitude_ft": (
+            active_hazard.get(
+                "minimum_lower_altitude_ft"
+            )
+        ),
+
+        "maximum_upper_altitude_ft": (
+            active_hazard.get(
+                "maximum_upper_altitude_ft"
+            )
+        ),
+
+        "source_icao_id": (
+            active_hazard.get(
+                "source_icao_id"
+            )
+        ),
+
+        "series_id": (
+            active_hazard.get(
+                "series_id"
+            )
+        ),
+
+        "alpha_char": (
+            active_hazard.get(
+                "alpha_char"
+            )
+        ),
+
+        "raw_s3_uri": (
+            active_hazard.get(
+                "raw_s3_uri"
+            )
+        ),
+    }
+
+    detail = {
+        key: value
+        for key, value in detail.items()
+        if value is not None
     }
 
     response = events_client.put_events(

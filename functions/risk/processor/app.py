@@ -1377,6 +1377,28 @@ def publish_risk_event(
                 "schema_version"
             ]
         ),
+
+        "scoring_ruleset_version": (
+            item.get(
+                "scoring_ruleset_version"
+            )
+        ),
+
+        "scoring_config_version": (
+            item.get(
+                "scoring_config_version"
+            )
+        ),
+
+        "hazard_type": (
+            item.get(
+                "hazard_type"
+            )
+        ),
+
+        "encounter_state": (
+            encounter_state
+        ),
     }
 
     response = eventbridge.put_events(

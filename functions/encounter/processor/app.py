@@ -1484,6 +1484,24 @@ def publish_encounter_event(
         "schema_version": item.get(
             "schema_version"
         ),
+        "geometry_hash": item.get(
+            "geometry_hash"
+        ),
+        "hazard_type": item.get(
+            "hazard_type"
+        ),
+        "inside_now": item.get(
+            "inside_now"
+        ),
+        "corridor_intersects": item.get(
+            "corridor_intersects"
+        ),
+        "resolved_at_epoch": item.get(
+            "resolved_at_epoch"
+        ),
+        "resolved_at_utc": item.get(
+            "resolved_at_utc"
+        ),
     }
 
     detail = {
