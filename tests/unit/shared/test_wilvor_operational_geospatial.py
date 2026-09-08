@@ -426,6 +426,8 @@ modules = [
     'wilvor_operational.context',
     'wilvor_operational.discovery',
     'wilvor_operational.regions',
+    'wilvor_operational.observed',
+    'wilvor_operational.query',
 ]
 for name in modules:
     __import__(name)

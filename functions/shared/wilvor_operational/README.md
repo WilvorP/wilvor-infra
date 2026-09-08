@@ -263,15 +263,14 @@ separately authorized behavior change.
 - **Phase 1C.3:** joins a known airport into weather/status context.
 - **Phase 1D.1:** deterministic non-geographic identity discovery (this
   package; see below).
-- **Phase 1D.2 / 1D.3:** region/geometry and operational query fabric
-  remain deferred.
+- **Phase 1D.2:** deterministic region + hazard geometry discovery.
+- **Phase 1D.3:** request-scoped operational query fabric (see below).
 - **Phase 1E:** may expose deterministic queries through Phase 0 AI contracts.
 
 `current_set` does not provide DynamoDB access. `access` / `readers` do not
-apply current-set semantics or compose business contexts. Phase 1D.1 adds
-entity discovery. This package still does not provide geospatial logic,
-encounter/impact search, AI tools, `ToolResult`, `Evidence`, agents,
-providers, or AWS infrastructure.
+apply current-set semantics or compose business contexts. This package still
+does not provide AI tools, `ToolResult`, `Evidence`, agents, providers, or
+AWS infrastructure.
 
 ## Pre-refactor characterization baseline
 
@@ -879,7 +878,9 @@ Those are compatibility/presentation semantics.
 
 - Phase 1D.1: non-geographic identity discovery (completed below).
 - Phase 1D.2: deterministic region + hazard geometry discovery (completed below).
-- Phase 1D.3: current-encounter/impact composition, network snapshot; pass known IDs into Phase 1C builders.
+- Phase 1D.3: current-encounter/impact fabric and observed network state
+  (completed below). Multi-hazard queries do not call
+  `build_hazard_operational_context` once per hazard.
 - Phase 1E: Phase 0 `ToolResult` / `Evidence` / agents / `/ai`.
 
 ## Phase 1D.1 deterministic entity discovery
@@ -930,8 +931,9 @@ GSI discovery records `FULL_QUERY` + `EVENTUAL` with `limit=None`. There
 is no completeness Boolean.
 
 Deferred after 1D.1: region resolver and hazard-geometry intersection
-(1D.2, completed below); current-encounter/impact fabric and network
-snapshot (1D.3); AI `ToolResult` (1E). No new AWS resources.
+(1D.2, completed below); current-encounter/impact fabric and observed
+network state (1D.3, completed below); AI `ToolResult` (1E). No new AWS
+resources.
 
 ## Phase 1D.2 deterministic region + hazard geometry discovery
 
@@ -999,5 +1001,94 @@ Shapely is confined to `geometry.py` / `geospatial.py`. Existing
 Operational API imports remain Shapely-free. No new AWS resources.
 No runtime geographic API.
 
-Deferred after 1D.2: current-encounter/impact fabric (1D.3); AI
-`ToolResult` (1E).
+Deferred after 1D.2: current-encounter/impact fabric (1D.3, completed
+below); AI `ToolResult` (1E).
+
+## Phase 1D.3 deterministic operational query fabric
+
+Phase 1D.3 answers: given one caller-supplied `now_epoch` and explicit
+filters, which current hazard-aircraft impacts and encounters are
+observed, and with which retrieval / geospatial / operational
+limitations?
+
+It does **not** import Phase 0 AI contracts, call an LLM, or change
+Operational API behavior.
+
+### ObservedOperationalSet
+
+`observed.ObservedOperationalSet` is request-scoped. It records
+independently observed DynamoDB reads at one `now_epoch`. It is not a
+transaction, not complete, and not a process-global cache. Every high-level
+result includes `NO_SNAPSHOT_LIMITATION`.
+
+Loaders are query-specific and staged:
+
+- region/hazard impact: confirm 1D.2 `INTERSECTS` pins, then encounter
+  GSI drains for confirmed pins only, then one projection scan and one
+  risk/recommendation/alert scan
+- aircraft/callsign encounter: encounter GSI by aircraft, then
+  `discover_current_hazards(hazard_ids=...)` to build the authoritative
+  current hazard-version map, then the same projection/decision scans
+
+`selected_hazard_versions` contains only confirmed/current pins. Encounter
+rows never self-authorize `hazard_source_version`.
+
+### Public Phase 1C composition
+
+Encounter → risk → recommendations → alerts is not reimplemented.
+`linking.compose_encounter_operational_context_from_observed_records` and
+`compose_hazard_impact_from_observed_records` are the public pure
+primitives. Phase 1C builders keep I/O and delegate to the same functions.
+
+Projection exact-hydrate missing/mismatch still preserves a valid
+impact relationship in Phase 1C and 1D.3; the failure stays on
+`projection_link`.
+
+### Region pin confirmation
+
+1D.2 may pin a spatial identity. 1D.3 confirms it with a later consistent
+`get_hazard_record`. Compatible pins enter encounter evaluation. Missing,
+non-current, version-drifted, or copied geometry-identity drift pins are
+`operationally_unevaluated`. 1D.3 never re-pins V2 or reruns geography.
+
+### Explicit hazard pins
+
+`search_current_impacts(hazard_ids=...)` without a region uses 1D.1 exact
+GetItem. That row is the pin. A second confirmation GetItem is not added.
+Later `hydrate_hazard` detects drift: no confirmed impact, no re-pin.
+Requested IDs that are missing, non-current, or lack `source_version` are
+`RejectedOperationalHazardSelection`, distinct from 1D.2
+`rejected_candidates`. This path does not import Shapely or `geospatial`.
+
+### Result buckets
+
+`CurrentImpactQueryResult` distinguishes:
+
+1. `impacts` — confirmed `CurrentImpactRecord` only
+2. `operationally_unevaluated` — pin or encounter relationship could not
+   be established
+3. `geospatial_unevaluated` — 1D.2 spatial UNEVALUATED
+4. rejected 1D.2 candidates and rejected explicit selections
+
+One current encounter is one impact row. Same aircraft under two hazards
+is two rows. `unique_aircraft_ids` is derived only from confirmed impacts.
+
+`CurrentImpactRecord` is emitted only when the selected pin is established,
+`is_current_encounter` passed against the authoritative maps, and
+`hydrate_encounter` is `PRESENT` and current, and `hydrate_hazard` is
+`PRESENT` at the pinned version.
+
+### Public queries
+
+- `search_current_impacts` — requires `region` or `hazard_ids`
+- `search_current_encounters` — requires aircraft, callsign, and/or hazard
+  identity; callsign is 0..N with `CALLSIGN_CASE_LIMITATION` and no winner
+- `get_observed_network_state` — Phase 1A counts/IDs only, including READY
+  hazards; no AirportStatus; not `/overview`
+
+Operational API `/overview` hazard counts remain ACTIVE + valid_to and do
+not require READY. 1D.3 does not change `/overview`.
+
+There is no standalone status-only risk/recommendation/alert search and
+no universal source-freshness policy. No new AWS resources. Phase 1E may
+wrap these domain results later.

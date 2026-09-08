@@ -303,39 +303,11 @@ def _build_hazard_impact(
         if aircraft_id
         else None
     )
-    aircraft, aircraft_link = linking.hydrate_aircraft(
-        selected_aircraft_id=aircraft_id,
-        hydrated=hydrated_aircraft,
-        now_epoch=now_epoch,
+    hydrated_projection = (
+        readers.get_projection_record(tables.projections, selected_projection_id)
+        if selected_projection_id
+        else None
     )
-    aircraft_is_current = bool(
-        aircraft is not None
-        and current_set.is_current_aircraft(aircraft, now_epoch)
-    )
-
-    if not selected_projection_id:
-        projection = None
-        projection_is_current = False
-        projection_link = linking.Link(
-            state=linking.LinkState.MISSING,
-            kind=linking.LinkKind.CURRENT_DEPENDENT,
-            reason="no current projection identity in the observed candidate set",
-        )
-    else:
-        hydrated_projection = readers.get_projection_record(
-            tables.projections,
-            selected_projection_id,
-        )
-        projection, projection_link = linking.hydrate_projection(
-            selected_projection_id=selected_projection_id,
-            context_aircraft_id=aircraft_id,
-            hydrated=hydrated_projection,
-            now_epoch=now_epoch,
-        )
-        projection_is_current = (
-            projection_link.state == linking.LinkState.PRESENT
-        )
-
     encounter = _build_encounter_context(
         tables,
         aircraft_id=aircraft_id,
@@ -349,14 +321,13 @@ def _build_hazard_impact(
         alert_candidates=alert_candidates,
         now_epoch=now_epoch,
     )
-    return linking.HazardImpactContext(
-        aircraft=aircraft,
-        aircraft_is_current=aircraft_is_current,
-        aircraft_link=aircraft_link,
-        projection=projection,
-        projection_is_current=projection_is_current,
-        projection_link=projection_link,
+    return linking.compose_hazard_impact_from_observed_records(
+        aircraft_id=aircraft_id,
+        selected_projection_id=selected_projection_id,
+        hydrated_aircraft=hydrated_aircraft,
+        hydrated_projection=hydrated_projection,
         encounter=encounter,
+        now_epoch=now_epoch,
     )
 
 
@@ -554,7 +525,7 @@ def _build_encounter_context(
         if selected_encounter_id
         else None
     )
-    encounter, encounter_link, encounter_is_current = linking.hydrate_encounter(
+    encounter, _, _ = linking.hydrate_encounter(
         selected_encounter_id=selected_encounter_id or "",
         context_aircraft_id=aircraft_id,
         selected_projection_id=selected_projection_id,
@@ -562,89 +533,36 @@ def _build_encounter_context(
         current_projection_ids=current_projection_ids,
         current_hazard_versions=current_hazard_versions,
     )
-
-    lineage_source = encounter or encounter_candidate
-    hazard_id = _text(lineage_source.get("hazard_id"))
-    selected_source_version = current_hazard_versions.get(hazard_id, "")
-    if not hazard_id or not selected_source_version:
-        hazard = None
-        hazard_link = linking.Link(
-            state=linking.LinkState.MISSING,
-            kind=linking.LinkKind.VERSIONED,
-            selected_identity=(
-                (("hazard_id", hazard_id),) if hazard_id else ()
-            ),
-        )
-    else:
-        hydrated_hazard = readers.get_hazard_record(tables.hazards, hazard_id)
-        hazard, hazard_link = linking.hydrate_hazard(
-            selected_hazard_id=hazard_id,
-            selected_source_version=selected_source_version,
-            hydrated=hydrated_hazard,
-        )
-
+    hazard_id, selected_source_version = linking.selected_encounter_hazard_lineage(
+        encounter,
+        encounter_candidate,
+        current_hazard_versions,
+    )
+    hydrated_hazard = (
+        readers.get_hazard_record(tables.hazards, hazard_id)
+        if hazard_id and selected_source_version
+        else None
+    )
     selected_risk = selected_risks.get(selected_encounter_id)
-    if not selected_risk or not selected_risk.get("risk_id"):
-        risk = None
-        risk_link = linking.Link(
-            state=linking.LinkState.MISSING,
-            kind=linking.LinkKind.EXACT,
-            selected_identity=(
-                (("encounter_id", selected_encounter_id),)
-                if selected_encounter_id
-                else ()
-            ),
-            reason="no current risk identity in the observed candidate set",
-        )
-        current_risk_ids = set()
-    else:
-        risk, risk_link = linking.hydrate_risk(
-            selected_risk_id=selected_risk["risk_id"],
-            selected_encounter_id=selected_encounter_id,
-            hydrated=readers.get_risk_record(
-                tables.risks,
-                selected_risk["risk_id"],
-            ),
-            current_encounter_ids=selected_encounter_ids,
-            now_epoch=now_epoch,
-        )
-        current_risk_ids = (
-            {risk["risk_id"]}
-            if risk is not None and risk_link.state == linking.LinkState.PRESENT
-            else set()
-        )
-
-    recommendations = linking.select_current_recommendations(
-        recommendation_candidates,
-        current_risk_ids=current_risk_ids,
-        now_epoch=now_epoch,
+    hydrated_risk = (
+        readers.get_risk_record(tables.risks, selected_risk["risk_id"])
+        if selected_risk and selected_risk.get("risk_id")
+        else None
     )
-    recommendation_link = linking.recommendation_link_for(recommendations)
-    current_recommendation_ids = {
-        _text(item.get("recommendation_id"))
-        for item in recommendations
-        if item.get("recommendation_id")
-    }
-    alerts = linking.select_current_alerts(
-        alert_candidates,
-        current_risk_ids=current_risk_ids,
-        current_recommendation_ids=current_recommendation_ids,
+    return linking.compose_encounter_operational_context_from_observed_records(
+        aircraft_id=aircraft_id,
+        selected_projection_id=selected_projection_id,
+        encounter_candidate=encounter_candidate,
+        hydrated_encounter=hydrated_encounter,
+        hydrated_hazard=hydrated_hazard,
+        hydrated_risk=hydrated_risk,
+        current_projection_ids=current_projection_ids,
+        current_hazard_versions=current_hazard_versions,
+        selected_risks=selected_risks,
+        selected_encounter_ids=selected_encounter_ids,
+        recommendation_candidates=recommendation_candidates,
+        alert_candidates=alert_candidates,
         now_epoch=now_epoch,
-    )
-    alert_link = linking.alert_link_for(alerts)
-
-    return linking.compose_encounter_operational_context(
-        encounter=encounter,
-        encounter_is_current=encounter_is_current,
-        encounter_link=encounter_link,
-        hazard=hazard,
-        hazard_link=hazard_link,
-        risk=risk,
-        risk_link=risk_link,
-        recommendations=recommendations,
-        recommendation_link=recommendation_link,
-        alerts=alerts,
-        alert_link=alert_link,
     )
 
 

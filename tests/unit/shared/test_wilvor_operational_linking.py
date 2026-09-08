@@ -386,6 +386,111 @@ def test_consistent_query_observation_is_full_query_without_eventual_limitation(
     assert not hasattr(observation, "complete")
 
 
+def test_compose_from_observed_records_matches_decision_chain():
+    encounter = {
+        "encounter_id": "proj-1#hazard-1#v1",
+        "aircraft_id": "abc123",
+        "projection_id": "proj-1",
+        "hazard_id": "hazard-1",
+        "hazard_source_version": "v1",
+        "encounter_state": "DETECTED",
+    }
+    hazard = {
+        "hazard_id": "hazard-1",
+        "source_version": "v1",
+        "status": "ACTIVE",
+        "materialization_status": "READY",
+        "valid_to_epoch": NOW + 1000,
+    }
+    risk = {
+        "risk_id": "risk-1",
+        "encounter_id": "proj-1#hazard-1#v1",
+        "generated_at_epoch": NOW,
+    }
+    recs = [
+        {
+            "recommendation_id": "rec-1",
+            "risk_id": "risk-1",
+            "recommendation_status": "ACTIVE",
+            "valid_until_utc": FUTURE,
+        },
+        {
+            "recommendation_id": "rec-2",
+            "risk_id": "risk-1",
+            "recommendation_status": "ACTIVE",
+            "valid_until_utc": FUTURE,
+        },
+    ]
+    alerts = [
+        {
+            "alert_id": "alert-risk",
+            "risk_id": "risk-1",
+            "alert_state": "NEW",
+            "valid_until_utc": FUTURE,
+        },
+        {
+            "alert_id": "alert-rec",
+            "recommendation_id": "rec-2",
+            "alert_state": "UPDATED",
+            "valid_until_utc": FUTURE,
+        },
+    ]
+
+    composed = linking.compose_encounter_operational_context_from_observed_records(
+        aircraft_id="abc123",
+        selected_projection_id="proj-1",
+        encounter_candidate=encounter,
+        hydrated_encounter=encounter,
+        hydrated_hazard=hazard,
+        hydrated_risk=risk,
+        current_projection_ids={"abc123": "proj-1"},
+        current_hazard_versions={"hazard-1": "v1"},
+        selected_risks={"proj-1#hazard-1#v1": risk},
+        selected_encounter_ids={"proj-1#hazard-1#v1"},
+        recommendation_candidates=recs,
+        alert_candidates=alerts,
+        now_epoch=NOW,
+    )
+    impact = linking.compose_hazard_impact_from_observed_records(
+        aircraft_id="abc123",
+        selected_projection_id="proj-1",
+        hydrated_aircraft={
+            "aircraft_id": "abc123",
+            "expires_at_epoch": NOW + 100,
+        },
+        hydrated_projection={
+            "aircraft_id": "abc123",
+            "projection_id": "proj-1",
+            "projection_status": "READY",
+            "valid_until_epoch": NOW + 1000,
+        },
+        encounter=composed,
+        now_epoch=NOW,
+    )
+
+    assert composed.encounter_is_current is True
+    assert composed.encounter_link.state is linking.LinkState.PRESENT
+    assert composed.hazard["source_version"] == "v1"
+    assert composed.risk is risk
+    assert [item["recommendation_id"] for item in composed.recommendations] == [
+        "rec-1",
+        "rec-2",
+    ]
+    assert [item["alert_id"] for item in composed.alerts] == [
+        "alert-risk",
+        "alert-rec",
+    ]
+    assert impact.aircraft_is_current is True
+    assert impact.projection_is_current is True
+    assert impact.encounter is composed
+    hazard_id, source_version = linking.selected_encounter_hazard_lineage(
+        composed.encounter,
+        encounter,
+        {"hazard-1": "v1"},
+    )
+    assert (hazard_id, source_version) == ("hazard-1", "v1")
+
+
 def test_linking_source_has_no_io_or_forbidden_imports():
     source = inspect.getsource(linking)
     text = (PACKAGE_DIR / "linking.py").read_text(encoding="utf-8")

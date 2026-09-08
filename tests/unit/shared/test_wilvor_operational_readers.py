@@ -342,6 +342,92 @@ def test_hazard_encounter_query_uses_existing_gsi_and_drains_pages():
     assert "source_version" not in str(first.get("FilterExpression", ""))
 
 
+def test_aircraft_encounter_query_uses_existing_gsi_and_drains_pages():
+    table = RecordingTable(
+        [
+            {
+                "Items": [{"encounter_id": "enc-1"}],
+                "LastEvaluatedKey": {"encounter_id": "enc-1"},
+            },
+            {"Items": [{"encounter_id": "enc-2"}]},
+        ]
+    )
+
+    items = readers.query_encounter_candidates_by_aircraft(
+        table,
+        "abc123",
+        key=Key,
+        attr=Attr,
+    )
+
+    assert items == [
+        {"encounter_id": "enc-1"},
+        {"encounter_id": "enc-2"},
+    ]
+    assert len(table.calls) == 2
+    first = table.calls[0][1]
+    assert first["IndexName"] == readers.IDX_ENCOUNTER_AIRCRAFT_TIME
+    assert first["IndexName"] == "aircraft_id-detected_at_epoch-index"
+    assert first["ScanIndexForward"] is True
+    assert "Limit" not in first
+    assert "ConsistentRead" not in first
+    assert condition_shape(first["KeyConditionExpression"]) == (
+        "=",
+        ("name", "aircraft_id"),
+        "abc123",
+    )
+    assert condition_shape(first["FilterExpression"]) == (
+        "IN",
+        ("name", "encounter_state"),
+        ["DETECTED", "MONITORING"],
+    )
+    assert projection_fields(first["ProjectionExpression"]) == projection_fields(
+        readers.ENCOUNTER_CANDIDATE_PROJECTION
+    )
+    assert table.calls[1][1]["ExclusiveStartKey"] == {"encounter_id": "enc-1"}
+    assert "source_version" not in str(first["KeyConditionExpression"])
+    assert "hazard_source_version" not in str(first.get("FilterExpression", ""))
+    assert "current_set" not in inspect.getsource(
+        readers.query_encounter_candidates_by_aircraft
+    )
+
+
+def test_scan_aircraft_candidates_drains_pages_without_current_set():
+    table = RecordingTable(
+        [
+            {
+                "Items": [{"aircraft_id": "a-1"}],
+                "LastEvaluatedKey": {"aircraft_id": "a-1"},
+            },
+            {"Items": [{"aircraft_id": "a-2"}]},
+        ]
+    )
+
+    items = readers.scan_aircraft_candidates(
+        table,
+        now_epoch=NOW,
+        attr=Attr,
+    )
+
+    assert items == [
+        {"aircraft_id": "a-1"},
+        {"aircraft_id": "a-2"},
+    ]
+    assert len(table.calls) == 2
+    first = table.calls[0][1]
+    assert "Limit" not in first
+    assert "ConsistentRead" not in first
+    assert condition_shape(first["FilterExpression"]) == (
+        ">",
+        ("name", "expires_at_epoch"),
+        NOW,
+    )
+    assert table.calls[1][1]["ExclusiveStartKey"] == {"aircraft_id": "a-1"}
+    source = inspect.getsource(readers.scan_aircraft_candidates)
+    assert "current_set" not in source
+    assert "is_current_aircraft" not in source
+
+
 def _assert_two_page_gsi_drain(table, items, *, index_name, scan_index_forward):
     assert items == [
         {"id": "page-1"},

@@ -656,3 +656,168 @@ def compose_encounter_operational_context(
         recommendation_link=recommendation_link,
         alert_link=alert_link,
     )
+
+
+def selected_encounter_hazard_lineage(
+    encounter: dict[str, Any] | None,
+    encounter_candidate: dict[str, Any] | None,
+    current_hazard_versions: dict[str, str],
+) -> tuple[str, str]:
+    lineage_source = encounter or encounter_candidate or {}
+    hazard_id = _text(lineage_source.get("hazard_id"))
+    if not hazard_id:
+        return "", ""
+    return hazard_id, _text(current_hazard_versions.get(hazard_id, ""))
+
+
+def compose_encounter_operational_context_from_observed_records(
+    *,
+    aircraft_id: str,
+    selected_projection_id: str,
+    encounter_candidate: dict[str, Any],
+    hydrated_encounter: dict[str, Any] | None,
+    hydrated_hazard: dict[str, Any] | None,
+    hydrated_risk: dict[str, Any] | None,
+    current_projection_ids: dict[str, str],
+    current_hazard_versions: dict[str, str],
+    selected_risks: dict[str, dict[str, Any]],
+    selected_encounter_ids: set[str],
+    recommendation_candidates: Iterable[dict[str, Any]],
+    alert_candidates: Iterable[dict[str, Any]],
+    now_epoch: int,
+) -> EncounterOperationalContext:
+    selected_encounter_id = encounter_candidate.get("encounter_id")
+    encounter, encounter_link, encounter_is_current = hydrate_encounter(
+        selected_encounter_id=selected_encounter_id or "",
+        context_aircraft_id=aircraft_id,
+        selected_projection_id=selected_projection_id,
+        hydrated=hydrated_encounter,
+        current_projection_ids=current_projection_ids,
+        current_hazard_versions=current_hazard_versions,
+    )
+
+    hazard_id, selected_source_version = selected_encounter_hazard_lineage(
+        encounter,
+        encounter_candidate,
+        current_hazard_versions,
+    )
+    if not hazard_id or not selected_source_version:
+        hazard = None
+        hazard_link = Link(
+            state=LinkState.MISSING,
+            kind=LinkKind.VERSIONED,
+            selected_identity=(
+                (("hazard_id", hazard_id),) if hazard_id else ()
+            ),
+        )
+    else:
+        hazard, hazard_link = hydrate_hazard(
+            selected_hazard_id=hazard_id,
+            selected_source_version=selected_source_version,
+            hydrated=hydrated_hazard,
+        )
+
+    selected_risk = selected_risks.get(selected_encounter_id)
+    if not selected_risk or not selected_risk.get("risk_id"):
+        risk = None
+        risk_link = Link(
+            state=LinkState.MISSING,
+            kind=LinkKind.EXACT,
+            selected_identity=(
+                (("encounter_id", selected_encounter_id),)
+                if selected_encounter_id
+                else ()
+            ),
+            reason="no current risk identity in the observed candidate set",
+        )
+        current_risk_ids: set[str] = set()
+    else:
+        risk, risk_link = hydrate_risk(
+            selected_risk_id=selected_risk["risk_id"],
+            selected_encounter_id=selected_encounter_id,
+            hydrated=hydrated_risk,
+            current_encounter_ids=selected_encounter_ids,
+            now_epoch=now_epoch,
+        )
+        current_risk_ids = (
+            {risk["risk_id"]}
+            if risk is not None and risk_link.state == LinkState.PRESENT
+            else set()
+        )
+
+    recommendations = select_current_recommendations(
+        recommendation_candidates,
+        current_risk_ids=current_risk_ids,
+        now_epoch=now_epoch,
+    )
+    recommendation_link = recommendation_link_for(recommendations)
+    current_recommendation_ids = {
+        _text(item.get("recommendation_id"))
+        for item in recommendations
+        if item.get("recommendation_id")
+    }
+    alerts = select_current_alerts(
+        alert_candidates,
+        current_risk_ids=current_risk_ids,
+        current_recommendation_ids=current_recommendation_ids,
+        now_epoch=now_epoch,
+    )
+    return compose_encounter_operational_context(
+        encounter=encounter,
+        encounter_is_current=encounter_is_current,
+        encounter_link=encounter_link,
+        hazard=hazard,
+        hazard_link=hazard_link,
+        risk=risk,
+        risk_link=risk_link,
+        recommendations=recommendations,
+        recommendation_link=recommendation_link,
+        alerts=alerts,
+        alert_link=alert_link_for(alerts),
+    )
+
+
+def compose_hazard_impact_from_observed_records(
+    *,
+    aircraft_id: str,
+    selected_projection_id: str,
+    hydrated_aircraft: dict[str, Any] | None,
+    hydrated_projection: dict[str, Any] | None,
+    encounter: EncounterOperationalContext,
+    now_epoch: int,
+) -> HazardImpactContext:
+    aircraft, aircraft_link = hydrate_aircraft(
+        selected_aircraft_id=aircraft_id,
+        hydrated=hydrated_aircraft,
+        now_epoch=now_epoch,
+    )
+    aircraft_is_current = bool(
+        aircraft is not None and current_set.is_current_aircraft(aircraft, now_epoch)
+    )
+
+    if not selected_projection_id:
+        projection = None
+        projection_is_current = False
+        projection_link = Link(
+            state=LinkState.MISSING,
+            kind=LinkKind.CURRENT_DEPENDENT,
+            reason="no current projection identity in the observed candidate set",
+        )
+    else:
+        projection, projection_link = hydrate_projection(
+            selected_projection_id=selected_projection_id,
+            context_aircraft_id=aircraft_id,
+            hydrated=hydrated_projection,
+            now_epoch=now_epoch,
+        )
+        projection_is_current = projection_link.state == LinkState.PRESENT
+
+    return HazardImpactContext(
+        aircraft=aircraft,
+        aircraft_is_current=aircraft_is_current,
+        aircraft_link=aircraft_link,
+        projection=projection,
+        projection_is_current=projection_is_current,
+        projection_link=projection_link,
+        encounter=encounter,
+    )

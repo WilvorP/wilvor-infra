@@ -621,6 +621,38 @@ def query_encounter_candidates_by_hazard(
     )
 
 
+def query_encounter_candidates_by_aircraft(
+    table,
+    aircraft_id,
+    *,
+    key=Key,
+    attr=Attr,
+    query_all=access.query_all,
+    encounter_states=CURRENT_ENCOUNTER_STATES,
+):
+    return query_all(
+        table,
+        IndexName=IDX_ENCOUNTER_AIRCRAFT_TIME,
+        KeyConditionExpression=key("aircraft_id").eq(aircraft_id),
+        FilterExpression=attr("encounter_state").is_in(list(encounter_states)),
+        ProjectionExpression=ENCOUNTER_CANDIDATE_PROJECTION,
+        ScanIndexForward=True,
+    )
+
+
+def scan_aircraft_candidates(
+    table,
+    *,
+    now_epoch,
+    attr=Attr,
+    scan_all=access.scan_all,
+):
+    return scan_all(
+        table,
+        FilterExpression=attr("expires_at_epoch").gt(now_epoch),
+    )
+
+
 def scan_risk_candidates(
     table,
     *,
