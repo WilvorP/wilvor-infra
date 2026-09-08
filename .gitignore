@@ -18,6 +18,9 @@ functions/**/dist/
 # Generated METAR processor build directory
 functions/weather/metar/processor/build/
 
+# Phase 1D.2 vendored region provenance must remain trackable despite *.json.
+!functions/shared/wilvor_operational/data/us_states.meta.json
+
 
 envs/dev/tfplan
 

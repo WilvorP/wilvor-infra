@@ -878,8 +878,8 @@ Those are compatibility/presentation semantics.
 ### Deferred
 
 - Phase 1D.1: non-geographic identity discovery (completed below).
-- Phase 1D.2 / 1D.3: region, geospatial, current-encounter/impact
-  composition, network snapshot; pass known IDs into Phase 1C builders.
+- Phase 1D.2: deterministic region + hazard geometry discovery (completed below).
+- Phase 1D.3: current-encounter/impact composition, network snapshot; pass known IDs into Phase 1C builders.
 - Phase 1E: Phase 0 `ToolResult` / `Evidence` / agents / `/ai`.
 
 ## Phase 1D.1 deterministic entity discovery
@@ -930,5 +930,74 @@ GSI discovery records `FULL_QUERY` + `EVENTUAL` with `limit=None`. There
 is no completeness Boolean.
 
 Deferred after 1D.1: region resolver and hazard-geometry intersection
-(1D.2); current-encounter/impact fabric and network snapshot (1D.3);
-AI `ToolResult` (1E). No new AWS resources.
+(1D.2, completed below); current-encounter/impact fabric and network
+snapshot (1D.3); AI `ToolResult` (1E). No new AWS resources.
+
+## Phase 1D.2 deterministic region + hazard geometry discovery
+
+Phase 1D.2 answers: given a supported U.S. state and one reference
+time, which observed Phase-1A-current hazards geometrically intersect
+that state's vendored Census boundary?
+
+A resolved region such as California means the geographic state
+polygon/multipolygon in Wilvor's vendored U.S. Census Cartographic
+Boundary dataset at the recorded vintage. It does **not** mean FAA
+airspace, ARTCC, FIR, an operational aviation region, ImpactCells,
+HazardCells, an H3 region, or arbitrary proximity.
+
+### Scope and data
+
+- Resolver: exactly 50 U.S. states by official name or USPS code.
+  Strip, collapse whitespace, case-insensitive exact match only.
+  No cities, DC, territories, fuzzy match, or extra tokens.
+- Dataset: Census Cartographic Boundary Files, State and Equivalent,
+  1:500,000, GENZ2025 KML, structurally converted to GeoJSON.
+  Provenance is in `data/SOURCE.md` and `data/us_states.meta.json`.
+- Source coordinates are KML geodetic longitude/latitude
+  (WGS84-compatible). **No reprojection** is performed.
+- `regions.py` is Shapely-free, loads via `importlib.resources`, and
+  exposes frozen nested `(longitude, latitude)` tuples.
+- Alaska is spatially supported in this vintage because no adjacent
+  ring longitude jump exceeds 180 degrees. Identity still resolves if
+  a later vintage marks it unsupported; then evaluation is
+  `UNEVALUATED`, not outside.
+
+### Evaluation pipeline
+
+1. `resolve_region` against the vendored dataset.
+2. Unresolved input: empty collections, no DynamoDB I/O.
+3. `discover_current_hazards` from Phase 1D.1 (not a second GSI).
+4. Consistent `get_hazard_record` for every candidate.
+5. Revalidate exact currentness, `product_type`, and `hazard_type`.
+   Failures are `rejected_candidates`, not spatial status.
+6. Pin `hazard_id` / `source_version` and copied `geometry_hash` /
+   `materialization_id` / `geometry_type` when present.
+7. If the GSI version differed, record eventual-version divergence and
+   evaluate the exact parent. V1 was never pinned.
+8. Hydrate `HazardCoordinates` with `FULL_QUERY` + `CONSISTENT`.
+9. Reconstruct Polygon/MultiPolygon strictly. No topology repair.
+10. `shapely.intersects` (overlap, containment, and boundary touch).
+11. Final consistent parent read is drift detection only. A later
+    version discards the provisional TRUE/FALSE and becomes
+    `UNEVALUATED`. No substitution and no rebuild.
+
+`geometry_hash` is copied parent/child **lineage** equality only. It
+is not an independently recomputed content checksum.
+
+### Result buckets
+
+- `INTERSECTS` / `DOES_NOT_INTERSECT` / `UNEVALUATED` for pinned
+  current hazards.
+- `rejected_candidates` for GSI candidates that the exact parent
+  proves missing, non-current, or filter-mismatched.
+- Invalid/missing geometry is not outside. H3 is not geographic
+  authority. No encounters, risks, recommendations, alerts, or
+  `build_hazard_operational_context`.
+
+Public entry: `geospatial.discover_current_hazards_in_region`.
+Shapely is confined to `geometry.py` / `geospatial.py`. Existing
+Operational API imports remain Shapely-free. No new AWS resources.
+No runtime geographic API.
+
+Deferred after 1D.2: current-encounter/impact fabric (1D.3); AI
+`ToolResult` (1E).
