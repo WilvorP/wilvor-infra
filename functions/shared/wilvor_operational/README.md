@@ -1087,8 +1087,9 @@ is two rows. `unique_aircraft_ids` is derived only from confirmed impacts.
   hazards; no AirportStatus; not `/overview`
 
 Operational API `/overview` hazard counts remain ACTIVE + valid_to and do
-not require READY. 1D.3 does not change `/overview`.
+  not require READY. 1D.3 does not change `/overview`.
 
 There is no standalone status-only risk/recommendation/alert search and
-no universal source-freshness policy. No new AWS resources. Phase 1E may
-wrap these domain results later.
+no universal source-freshness policy. No new AWS resources. Phase 1E wraps
+these domain results through `wilvor_ai.live_ops` without changing
+operational semantics.

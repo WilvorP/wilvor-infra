@@ -180,6 +180,39 @@ failure visibility, and cost/usage visibility.
 
 Phase 0 creates no CloudWatch or other AWS resources.
 
+## Phase 1E Live Operations adapters
+
+Phase 1E adds read-only Live Operations tools in `wilvor_ai.live_ops`. They
+wrap committed Phase 1 public domain functions and return Phase 0
+`ToolResult` / `Evidence` envelopes. `wilvor_ai.live_ops_mapping` maps already
+returned domain objects onto curated JSON payloads, retrieval-driven logical
+evidence sources, and Phase 0 status/confidence/freshness.
+
+The adapters do not implement an agent runtime, call AWS, construct boto3
+clients, read the wall clock, or decide operational currentness, geography,
+joins, or source-version authority. `import wilvor_ai` remains contracts-only
+and does not import `wilvor_operational`. Region geospatial evaluation is
+loaded only when a region argument is supplied.
+
+The V1 catalog is exactly eight retrieve-only tools:
+
+- `search_current_hazards`
+- `search_current_impacts`
+- `search_current_encounters`
+- `get_observed_network_state`
+- `get_aircraft_operational_context`
+- `get_hazard_operational_context`
+- `get_airport_operational_context`
+- `find_aircraft_by_callsign`
+
+All eight are `READ_ONLY_ADVISORY` with
+`RETRIEVE_DETERMINISTIC_OPERATIONAL_CONTEXT`. There is no ninth convenience
+tool, no provider schema, and no routing or prompt logic.
+
+All V1 Live Ops evidence uses `FreshnessStatus.UNKNOWN` with
+`FRESHNESS_NOT_ESTABLISHED`. `CURRENT` is not `FRESH`. Confirmed-zero results
+remain distinguishable from unevaluated-zero `PARTIAL` results.
+
 ## Deliberately not implemented
 
 Phase 0 does not add LangGraph, agents, LLM/provider integration, prompts,
@@ -191,7 +224,8 @@ production infrastructure.
 
 ## Tests
 
-Run the offline contract suite from the repository root:
+Run the offline contract suite from the repository root, including Phase 0
+contracts and Phase 1E Live Operations adapter tests:
 
 ```powershell
 python -m pytest tests/contracts -q -p no:cacheprovider
