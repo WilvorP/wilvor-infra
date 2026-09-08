@@ -295,3 +295,51 @@ output "operational_api_log_group_name" {
     module.operational_api.lambda_log_group_name
   )
 }
+
+output "enable_historical_facts" {
+  value = module.historical_facts.enable_historical_facts
+}
+
+output "historical_facts_bucket_name" {
+  value = module.historical_facts.historical_bucket_name
+}
+
+output "historical_facts_bucket_arn" {
+  value = module.historical_facts.historical_bucket_arn
+}
+
+output "historical_facts_firehose_stream_name" {
+  value = module.historical_facts.facts_firehose_stream_name
+}
+
+output "historical_facts_firehose_stream_arn" {
+  value = module.historical_facts.facts_firehose_stream_arn
+}
+
+output "historical_geometry_firehose_stream_name" {
+  value = module.historical_facts.geometry_firehose_stream_name
+}
+
+output "historical_geometry_firehose_stream_arn" {
+  value = module.historical_facts.geometry_firehose_stream_arn
+}
+
+output "historical_facts_transform_lambda_name" {
+  value = module.historical_facts.transform_lambda_name
+}
+
+output "historical_facts_transform_lambda_arn" {
+  value = module.historical_facts.transform_lambda_arn
+}
+
+output "historical_facts_dlq_url" {
+  value = module.historical_facts.dlq_url
+}
+
+output "historical_facts_dlq_arn" {
+  value = module.historical_facts.dlq_arn
+}
+
+output "historical_facts_rule_names" {
+  value = module.historical_facts.historical_rule_names
+}

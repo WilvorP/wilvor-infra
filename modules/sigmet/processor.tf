@@ -106,6 +106,23 @@ data "aws_iam_policy_document" "sigmet_processor_policy" {
       "${aws_cloudwatch_log_group.sigmet_processor.arn}:*",
     ]
   }
+
+  dynamic "statement" {
+    for_each = var.historical_geometry_firehose_stream_arn != "" ? [1] : []
+
+    content {
+      sid    = "PutHistoricalGeometryFacts"
+      effect = "Allow"
+
+      actions = [
+        "firehose:PutRecord",
+      ]
+
+      resources = [
+        var.historical_geometry_firehose_stream_arn,
+      ]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "sigmet_processor_lambda" {
@@ -150,6 +167,9 @@ resource "aws_lambda_function" "sigmet_processor" {
       BAD_RECORDS_BUCKET_NAME        = aws_s3_bucket.sigmet_archive.bucket
       BAD_RECORDS_PREFIX             = "bad-records/source=sigmet_processor"
       RETENTION_AFTER_VALID_TO_HOURS = "6"
+      HISTORICAL_GEOMETRY_FIREHOSE_STREAM_NAME = (
+        var.historical_geometry_firehose_stream_name
+      )
     }
   }
 

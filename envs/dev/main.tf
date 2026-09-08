@@ -89,7 +89,34 @@ module "sigmet" {
   event_bus_name = local.default_event_bus_name
   event_bus_arn  = local.default_event_bus_arn
 
+  historical_geometry_firehose_stream_name = (
+    module.historical_facts.geometry_firehose_stream_name
+  )
+  historical_geometry_firehose_stream_arn = (
+    module.historical_facts.geometry_firehose_stream_arn
+  )
+
   tags = local.common_tags
+}
+
+module "historical_facts" {
+  source = "../../modules/historical_facts"
+
+  name_prefix = local.name_prefix
+  aws_region  = var.aws_region
+  account_id  = data.aws_caller_identity.current.account_id
+  tags        = local.common_tags
+
+  enable_historical_facts = false
+
+  event_bus_name = local.default_event_bus_name
+  event_bus_arn  = local.default_event_bus_arn
+
+  transform_zip_path = (
+    "${path.root}/../../functions/historical_facts/transform/dist/historical_facts_transform.zip"
+  )
+
+  historical_facts_force_destroy = true
 }
 
 module "metar" {

@@ -115,3 +115,15 @@ variable "impact_expansion_config_version" {
   default     = "wilvor.impact_expansion.v1"
   description = "Version string used to force impact-cell rematerialization when expansion config changes."
 }
+
+variable "historical_geometry_firehose_stream_name" {
+  type        = string
+  default     = ""
+  description = "DirectPut Firehose stream for HazardGeometryFact. Empty disables historical geometry transport."
+}
+
+variable "historical_geometry_firehose_stream_arn" {
+  type        = string
+  default     = ""
+  description = "ARN of the historical geometry Firehose stream. Empty disables PutRecord IAM."
+}
