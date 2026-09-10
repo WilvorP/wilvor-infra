@@ -81,6 +81,12 @@ DASHBOARD_CATALOG = {
     "runway-metadata": "Runway Metadata",
 }
 
+if os.environ.get("ENABLE_HISTORICAL_FACTS_DASHBOARD") == "true":
+    DASHBOARD_CATALOG = {
+        **DASHBOARD_CATALOG,
+        "historical-facts": "Historical Facts",
+    }
+
 SUPPORTED_WIDGET_TYPES = {
     "metric",
     "text",

@@ -106,3 +106,13 @@ variable "max_matched_h3_cells" {
   type    = number
   default = 200
 }
+
+variable "historical_facts_bucket_name" {
+  type    = string
+  default = ""
+}
+
+variable "historical_facts_bucket_arn" {
+  type    = string
+  default = ""
+}

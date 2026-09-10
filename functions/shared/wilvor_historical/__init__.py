@@ -19,6 +19,18 @@ from .contracts import (
     HistoricalFactError,
     RiskFact,
 )
+from .coverage import (
+    DEFAULT_COLLECTION_EVALUATION_POLICY,
+    CollectionEvaluationPolicy,
+    evaluate_collection_window,
+    required_streams_for,
+)
+from .coverage_contracts import (
+    COLLECTION_CONTROL_DATASET,
+    CONTROL_SCHEMA_VERSION,
+    Evaluability,
+    HistoricalCoverageError,
+)
 from .from_events import (
     GEOMETRY_IN_MEMORY_DETAIL_TYPE,
     HistoricalMappingError,
@@ -30,6 +42,14 @@ from .from_events import (
 )
 
 __all__ = [
+    "COLLECTION_CONTROL_DATASET",
+    "CONTROL_SCHEMA_VERSION",
+    "DEFAULT_COLLECTION_EVALUATION_POLICY",
+    "CollectionEvaluationPolicy",
+    "Evaluability",
+    "HistoricalCoverageError",
+    "evaluate_collection_window",
+    "required_streams_for",
     "COORDINATES_AXIS_LONLAT",
     "ENCOUNTER_FACT_SCHEMA_VERSION",
     "GEOMETRY_IN_MEMORY_DETAIL_TYPE",

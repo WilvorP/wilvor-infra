@@ -108,6 +108,23 @@ data "aws_iam_policy_document" "sigmet_processor_policy" {
   }
 
   dynamic "statement" {
+    for_each = var.historical_facts_bucket_arn != "" ? [1] : []
+
+    content {
+      sid    = "WriteHistoricalGapMetadata"
+      effect = "Allow"
+
+      actions = [
+        "s3:PutObject",
+      ]
+
+      resources = [
+        "${var.historical_facts_bucket_arn}/metadata/incidents/*",
+      ]
+    }
+  }
+
+  dynamic "statement" {
     for_each = var.historical_geometry_firehose_stream_arn != "" ? [1] : []
 
     content {
@@ -170,6 +187,7 @@ resource "aws_lambda_function" "sigmet_processor" {
       HISTORICAL_GEOMETRY_FIREHOSE_STREAM_NAME = (
         var.historical_geometry_firehose_stream_name
       )
+      HISTORICAL_FACTS_BUCKET_NAME = var.historical_facts_bucket_name
     }
   }
 

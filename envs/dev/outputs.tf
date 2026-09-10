@@ -343,3 +343,15 @@ output "historical_facts_dlq_arn" {
 output "historical_facts_rule_names" {
   value = module.historical_facts.historical_rule_names
 }
+
+output "historical_facts_coverage_lambda_name" {
+  value = module.historical_facts.coverage_lambda_name
+}
+
+output "historical_facts_coverage_lambda_arn" {
+  value = module.historical_facts.coverage_lambda_arn
+}
+
+output "historical_facts_dashboard_name" {
+  value = module.historical_facts.dashboard_name
+}

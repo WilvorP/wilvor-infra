@@ -55,3 +55,13 @@ variable "log_retention_days" {
   type    = number
   default = 3
 }
+
+variable "historical_facts_bucket_name" {
+  type    = string
+  default = ""
+}
+
+variable "historical_facts_bucket_arn" {
+  type    = string
+  default = ""
+}

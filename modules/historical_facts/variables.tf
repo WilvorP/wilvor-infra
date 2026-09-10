@@ -18,7 +18,7 @@ variable "tags" {
 variable "enable_historical_facts" {
   type        = bool
   default     = false
-  description = "When false, this module creates no AWS resources and SIGMET historical geometry transport stays unset. Must remain false until Phase 2A.1c durable coverage/gap and monitoring are reviewed."
+  description = "When false, this module creates no AWS resources and does not look up the persistent historical bucket. Must remain false until the data plane exists and collection is explicitly approved."
 }
 
 variable "event_bus_name" {
@@ -34,39 +34,12 @@ variable "transform_zip_path" {
   type = string
 }
 
-variable "historical_fact_retention_days" {
-  type    = number
-  default = 365
-
-  validation {
-    condition     = var.historical_fact_retention_days > 0
-    error_message = "historical_fact_retention_days must be greater than 0."
-  }
+variable "coverage_zip_path" {
+  type = string
 }
 
-variable "historical_fact_error_retention_days" {
-  type    = number
-  default = 30
-
-  validation {
-    condition     = var.historical_fact_error_retention_days > 0
-    error_message = "historical_fact_error_retention_days must be greater than 0."
-  }
-}
-
-variable "historical_fact_noncurrent_version_retention_days" {
-  type    = number
-  default = 30
-
-  validation {
-    condition     = var.historical_fact_noncurrent_version_retention_days > 0
-    error_message = "historical_fact_noncurrent_version_retention_days must be greater than 0."
-  }
-}
-
-variable "historical_facts_force_destroy" {
-  type    = bool
-  default = true
+variable "dlq_consumer_zip_path" {
+  type = string
 }
 
 variable "firehose_buffering_interval_seconds" {

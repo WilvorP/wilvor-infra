@@ -183,6 +183,25 @@ cd ..\..
 
 A successful destroy should return no resources.
 
+`dev-down.ps1` and `dev-reset.ps1` refuse `envs/dev-historical-data`. The
+persistent historical facts bucket is not part of daily teardown.
+
+When `enable_historical_facts` is **false** (the committed default),
+`dev-down` uses the existing destroy path with no special behavior.
+
+When collection is enabled, `dev-down` invokes coverage_control
+`DEACTIVATE`, requires a durable `COLLECTION_DEACTIVATION` object in
+`metadata/`, and **aborts** destroy if that write cannot be confirmed.
+
+There is **no** `historical-data-down.ps1`. `aws s3 rm --recursive` is not
+sufficient on this versioned `force_destroy=false` bucket. Break-glass
+reset is documented only: list and delete all object versions and delete
+markers, verify the bucket is empty of versions, then destroy the
+data-plane root. That terminates the current `collection_epoch_id`.
+
+Use `historical-data-up.ps1` only to init/validate/plan/apply
+`envs/dev-historical-data`.
+
 ---
 
 ## `dev-reset.ps1`

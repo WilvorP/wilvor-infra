@@ -124,6 +124,11 @@ HISTORICAL_GEOMETRY_FIREHOSE_STREAM_NAME = os.environ.get(
     "",
 ).strip()
 
+HISTORICAL_FACTS_BUCKET_NAME = os.environ.get(
+    "HISTORICAL_FACTS_BUCKET_NAME",
+    "",
+).strip()
+
 FIREHOSE_PUT_RECORD_MAX_BYTES = 1_024_000
 
 
@@ -3509,12 +3514,87 @@ def publish_hazard_materialized(
         )
         or 0
     ):
+        _record_historical_source_put_failure(
+            hazard_version_key=hazard_version_key,
+        )
         raise RuntimeError(
             "Failed to publish "
             f"hazard.materialized: {response}"
         )
 
     return 1
+
+
+def _canonical_now_z() -> str:
+    return now_utc_iso().replace("+00:00", "Z")
+
+
+def _record_historical_source_put_failure(*, hazard_version_key: str) -> None:
+    emit_metric(
+        pipeline="sigmet",
+        component="sigmet_processor",
+        stage="historical_source",
+        metrics={"HistoricalSourcePutFailure": 1},
+        properties={"hazard_version_key": hazard_version_key},
+    )
+    log_event(
+        "HistoricalSourcePutFailure",
+        hazard_version_key=hazard_version_key,
+    )
+    _write_historical_gap_fail_open(
+        datasets=("hazard_version",),
+        gap_domain="DOMAIN_1",
+        reason="PRODUCER_PUT_EVENTS_FAILURE",
+        identity=hazard_version_key,
+        producer_detail_type="hazard.materialized",
+    )
+
+
+def _write_historical_gap_fail_open(
+    *,
+    datasets: tuple[str, ...],
+    gap_domain: str,
+    reason: str,
+    identity: str,
+    producer_detail_type: str,
+) -> None:
+    try:
+        from gap_writer import write_unbound_incident_fail_open
+        from wilvor_historical.coverage_contracts import (
+            CONTROL_SCHEMA_VERSION,
+            STAGING_STATE,
+            ControlRecordType,
+            GapDomain,
+            UncertaintyClass,
+            UnboundCollectionIncident,
+        )
+
+        now_utc = _canonical_now_z()
+        end_utc = (
+            datetime.fromisoformat(now_utc.replace("Z", "+00:00"))
+            + timedelta(seconds=1)
+        ).isoformat().replace("+00:00", "Z")
+        incident = UnboundCollectionIncident(
+            control_schema_version=CONTROL_SCHEMA_VERSION,
+            record_type=ControlRecordType.UNBOUND_COLLECTION_INCIDENT,
+            staging_state=STAGING_STATE,
+            affected_datasets=datasets,
+            gap_domain=GapDomain(gap_domain),
+            reason=reason,
+            uncertainty_class=UncertaintyClass.KNOWN_MISSING,
+            detected_at_utc=now_utc,
+            interval_start_utc=now_utc,
+            interval_end_utc=end_utc,
+            created_at_utc=now_utc,
+            dedup_id=f"sigmet|{reason}|{identity}|{now_utc}",
+            identity=identity or None,
+            source_subsystem="sigmet",
+            producer_source="wilvor.weather",
+            producer_detail_type=producer_detail_type,
+        )
+        write_unbound_incident_fail_open(incident)
+    except Exception:
+        pass
 
 
 def _emit_historical_geometry_metric(
@@ -3597,6 +3677,13 @@ def publish_historical_geometry_fact(
                     "serialized_bytes": serialized_bytes,
                 },
             )
+            _write_historical_gap_fail_open(
+                datasets=("hazard_geometry",),
+                gap_domain="GEOMETRY",
+                reason="GEOMETRY_OVERSIZED",
+                identity=hazard_version_key or fact.hazard_version_key,
+                producer_detail_type="hazard_geometry.directput",
+            )
             return
 
         firehose_client.put_record(
@@ -3625,6 +3712,13 @@ def publish_historical_geometry_fact(
             extra_properties={
                 "error_type": exc.__class__.__name__,
             },
+        )
+        _write_historical_gap_fail_open(
+            datasets=("hazard_geometry",),
+            gap_domain="GEOMETRY",
+            reason="GEOMETRY_PUT_FAILURE",
+            identity=hazard_version_key,
+            producer_detail_type="hazard_geometry.directput",
         )
 
 

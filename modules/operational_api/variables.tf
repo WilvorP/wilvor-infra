@@ -57,3 +57,9 @@ variable "tags" {
   type    = map(string)
   default = {}
 }
+
+variable "enable_historical_facts" {
+  type        = bool
+  default     = false
+  description = "When true, register the historical-facts CloudWatch dashboard in the Operational API catalog."
+}

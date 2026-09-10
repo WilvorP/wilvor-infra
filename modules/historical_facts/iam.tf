@@ -99,7 +99,7 @@ data "aws_iam_policy_document" "firehose" {
     ]
 
     resources = [
-      "${aws_s3_bucket.historical_facts[0].arn}/*",
+      "${data.aws_s3_bucket.historical_facts[0].arn}/*",
     ]
   }
 
@@ -114,7 +114,7 @@ data "aws_iam_policy_document" "firehose" {
     ]
 
     resources = [
-      aws_s3_bucket.historical_facts[0].arn,
+      data.aws_s3_bucket.historical_facts[0].arn,
     ]
   }
 

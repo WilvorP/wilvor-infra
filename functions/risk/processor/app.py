@@ -32,6 +32,11 @@ EVENT_BUS_NAME = os.environ.get(
     "default",
 )
 
+HISTORICAL_FACTS_BUCKET_NAME = os.environ.get(
+    "HISTORICAL_FACTS_BUCKET_NAME",
+    "",
+)
+
 RISK_SCHEMA_VERSION = os.environ.get(
     "RISK_SCHEMA_VERSION",
     "wilvor.risk_results.v4.0",
@@ -1275,6 +1280,78 @@ def persist_risk_result(
         )
 
 
+def _record_historical_source_put_failure(
+    *,
+    identity_value: Any,
+    detail_type: str,
+) -> None:
+    try:
+        cloudwatch.put_metric_data(
+            Namespace="Wilvor/Pipeline",
+            MetricData=[
+                {
+                    "MetricName": "HistoricalSourcePutFailure",
+                    "Value": 1,
+                    "Unit": "Count",
+                    "Dimensions": [
+                        {"Name": "Environment", "Value": ENVIRONMENT},
+                        {"Name": "Pipeline", "Value": "risk"},
+                        {"Name": "Component", "Value": "risk_processor"},
+                        {"Name": "Stage", "Value": "historical_source"},
+                    ],
+                }
+            ],
+        )
+    except Exception:
+        pass
+
+    print(
+        json.dumps(
+            {
+                "event": "HistoricalSourcePutFailure",
+                "risk_id": identity_value,
+                "detail_type": detail_type,
+            },
+            default=str,
+        )
+    )
+
+    try:
+        from gap_writer import write_unbound_incident_fail_open
+        from wilvor_historical.coverage_contracts import (
+            CONTROL_SCHEMA_VERSION,
+            STAGING_STATE,
+            ControlRecordType,
+            GapDomain,
+            UncertaintyClass,
+            UnboundCollectionIncident,
+        )
+
+        now_utc = epoch_to_utc(now_epoch())
+        end_utc = epoch_to_utc(now_epoch() + 1)
+        incident = UnboundCollectionIncident(
+            control_schema_version=CONTROL_SCHEMA_VERSION,
+            record_type=ControlRecordType.UNBOUND_COLLECTION_INCIDENT,
+            staging_state=STAGING_STATE,
+            affected_datasets=("risk",),
+            gap_domain=GapDomain.DOMAIN_1,
+            reason="PRODUCER_PUT_EVENTS_FAILURE",
+            uncertainty_class=UncertaintyClass.KNOWN_MISSING,
+            detected_at_utc=now_utc,
+            interval_start_utc=now_utc,
+            interval_end_utc=end_utc,
+            created_at_utc=now_utc,
+            dedup_id=f"domain1|risk|{identity_value}|{now_utc}",
+            identity=str(identity_value) if identity_value else None,
+            source_subsystem="risk",
+            producer_source="wilvor.risk",
+            producer_detail_type=detail_type,
+        )
+        write_unbound_incident_fail_open(incident)
+    except Exception:
+        pass
+
+
 def publish_risk_event(
     *,
     item: dict[str, Any],
@@ -1432,6 +1509,10 @@ def publish_risk_event(
         )
         or 0
     ):
+        _record_historical_source_put_failure(
+            identity_value=item.get("risk_id"),
+            detail_type=detail_type,
+        )
         raise RuntimeError(
             (
                 "Failed to publish "

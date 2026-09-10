@@ -164,13 +164,20 @@ been established.
 Example: infra enabled 02:00, delivery broken until 02:44. 02:00–02:44 must
 not be reported later as a verified zero-event window.
 
+Phase 2A.1c adds `coverage.py` / `coverage_contracts.py`: collection-control
+records and a pure `evaluate_collection_window` that answers
+`NOT_ACTIVE` / `NOT_YET_EVALUABLE` / `EVALUABLE` / `GAP_OR_UNCERTAIN`.
+Terraform apply time is not coverage start. The evaluator does not import
+boto3 or read the wall clock.
+
 Phase 2B/2C must distinguish verified zero facts, unproven collection, and
-query failure. 2A.1c may persist collection metadata; 2A.1a does not.
+query failure.
 
 ## Later phases
 
 - **2A.1b:** EventBridge / Firehose / S3 persistence.
-- **2A.1c:** observability and collection metadata.
+- **2A.1c:** collection metadata, horizons, and observability (this package
+  owns only the pure contracts/evaluator).
 - **2A.2:** Glue / Athena.
 - **2B:** deterministic historical queries.
 - **2C:** analytics ToolResult adapters.

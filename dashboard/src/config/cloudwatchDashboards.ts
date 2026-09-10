@@ -168,6 +168,15 @@ export const CLOUDWATCH_DASHBOARDS: readonly CloudWatchDashboardEntry[] = [
       'Runway load status, record results, loader Lambda and runway DynamoDB.',
     embedUrl: null,
   },
+  {
+    id: 'historical-facts',
+    name: `${CLOUDWATCH_NAME_PREFIX}-historical-facts`,
+    label: 'Historical Facts',
+    category: 'supporting',
+    description:
+      'Historical facts and geometry Firehose, transform, EventBridge rules, Domain-2 DLQ, and coverage control. API 404s this id while collection is disabled.',
+    embedUrl: null,
+  },
 ];
 
 export const DEFAULT_CLOUDWATCH_DASHBOARD_ID = 'aircraft-pipeline';

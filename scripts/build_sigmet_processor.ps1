@@ -82,6 +82,11 @@ try {
         -Recurse `
         -Force
 
+    Copy-Item `
+        (Join-Path $RepoRoot "functions\historical_facts\runtime\gap_writer.py") `
+        (Join-Path $PackageDir "gap_writer.py") `
+        -Force
+
     Compress-Archive `
         -Path (Join-Path $PackageDir "*") `
         -DestinationPath $ZipPath `

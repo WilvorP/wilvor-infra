@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from types import SimpleNamespace
+from typing import Callable
 
 import pytest
 
@@ -110,9 +111,26 @@ def test_allowlist_contains_all_fourteen_stable_ids(dashboards):
     }
 
     assert set(dashboards.DASHBOARD_CATALOG) == expected
+    assert "historical-facts" not in dashboards.DASHBOARD_CATALOG
     assert (
         dashboards.dashboard_aws_name("aircraft-pipeline")
         == "wilvor-test-aircraft-pipeline"
+    )
+
+
+def test_historical_facts_catalog_id_is_env_gated(
+    operational_api_env,
+    load_repo_module,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("ENABLE_HISTORICAL_FACTS_DASHBOARD", "true")
+    module = load_repo_module(
+        "unit_operational_api_cloudwatch_dashboards_enabled",
+        "functions/operational_api/cloudwatch_dashboards.py",
+    )
+    assert "historical-facts" in module.DASHBOARD_CATALOG
+    assert module.dashboard_aws_name("historical-facts") == (
+        "wilvor-test-historical-facts"
     )
 
 

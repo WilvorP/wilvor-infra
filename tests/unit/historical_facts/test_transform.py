@@ -462,14 +462,98 @@ def test_transform_source_has_no_forbidden_imports():
     assert "time" not in imported
 
 
-def test_transform_does_not_import_runtime_forbidden_modules(transform):
+def test_transform_does_not_import_runtime_forbidden_modules():
+    import os
+    import subprocess
     import sys
 
-    assert "wilvor_ai" not in sys.modules
-    assert "wilvor_operational.current_set" not in sys.modules
-    assert transform.RESULT_OK == "Ok"
-    assert transform.RESULT_PROCESSING_FAILED == "ProcessingFailed"
-    assert transform.RESULT_PROCESSING_FAILED != "Dropped"
+    shared = TRANSFORM_PATH.parents[2] / "shared"
+    script = f"""
+import importlib.util
+import sys
+from pathlib import Path
+sys.path.insert(0, {str(shared)!r})
+spec = importlib.util.spec_from_file_location(
+    "historical_facts_transform_isolated",
+    {str(TRANSFORM_PATH)!r},
+)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+assert "wilvor_ai" not in sys.modules
+assert "wilvor_operational.current_set" not in sys.modules
+assert module.RESULT_OK == "Ok"
+assert module.RESULT_PROCESSING_FAILED == "ProcessingFailed"
+assert module.RESULT_PROCESSING_FAILED != "Dropped"
+"""
+    env = os.environ.copy()
+    pythonpath = str(shared)
+    existing = env.get("PYTHONPATH", "")
+    if existing:
+        pythonpath = pythonpath + os.pathsep + existing
+    env["PYTHONPATH"] = pythonpath
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr + completed.stdout
     source = TRANSFORM_PATH.read_text(encoding="utf-8")
     assert 'result = "Dropped"' not in source
     assert '"Dropped"' not in source
+
+
+def _probe_payload() -> dict[str, Any]:
+    return {
+        "control_schema_version": "wilvor.historical.collection_control.v1",
+        "record_type": "COLLECTION_PROBE",
+        "collection_epoch_id": "epoch-1",
+        "stream": "facts",
+        "probe_id": "probe-1",
+        "interval_start_utc": "2026-07-18T12:00:00Z",
+        "interval_end_utc": "2026-07-18T12:15:00Z",
+        "observed_at_utc": "2026-07-18T12:15:00Z",
+        "dataset": "_collection_control",
+        "event_year": "2026",
+        "event_month": "07",
+        "event_day": "18",
+        "dedup_id": "probe|facts|2026-07-18T12:00:00Z|probe-1",
+    }
+
+
+def test_control_probe_is_ok_with_collection_control_partitions(transform):
+    envelope = _eventbridge_event(
+        "wilvor.historical.control",
+        "collection.probe",
+        _probe_payload(),
+    )
+    record = transform.lambda_handler(
+        {"records": [_encode_record("probe", envelope)]},
+        None,
+    )["records"][0]
+    fact = _decode_ok(record)
+    assert fact["dataset"] == "_collection_control"
+    assert fact["probe_id"] == "probe-1"
+    assert record["metadata"]["partitionKeys"]["dataset"] == "_collection_control"
+    assert record["metadata"]["partitionKeys"]["year"] == "2026"
+
+
+def test_unknown_control_record_is_processing_failed_never_dropped(transform):
+    record = transform.lambda_handler(
+        {
+            "records": [
+                _encode_record(
+                    "bad-control",
+                    {
+                        "source": "wilvor.historical.control",
+                        "detail-type": "collection.probe",
+                        "detail": {"record_type": "COLLECTION_PROBE"},
+                    },
+                )
+            ]
+        },
+        None,
+    )["records"][0]
+    assert record["result"] == "ProcessingFailed"
+    assert record.get("result") != "Dropped"

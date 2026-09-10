@@ -46,6 +46,15 @@ try {
         (Join-Path $TempDir "app.py") `
         -Force
 
+    $SharedHistoricalDir = Join-Path $RepoRoot "functions\shared\wilvor_historical"
+    $SharedTargetDir = Join-Path $TempDir "wilvor_historical"
+    New-Item -ItemType Directory -Force $SharedTargetDir | Out-Null
+    Copy-Item -Path "$SharedHistoricalDir\*" -Destination $SharedTargetDir -Recurse -Force
+    Copy-Item `
+        (Join-Path $RepoRoot "functions\historical_facts\runtime\gap_writer.py") `
+        (Join-Path $TempDir "gap_writer.py") `
+        -Force
+
     Write-Host "Creating Lambda zip..."
 
     Compress-Archive `

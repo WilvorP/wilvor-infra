@@ -27,6 +27,7 @@ const EXPECTED_AWS_NAMES = [
   'wilvor-dev-recommendations',
   'wilvor-dev-active-alerts',
   'wilvor-dev-runway-metadata',
+  'wilvor-dev-historical-facts',
 ] as const;
 
 describe('CloudWatch dashboard catalog', () => {
@@ -34,9 +35,9 @@ describe('CloudWatch dashboard catalog', () => {
     const names = CLOUDWATCH_DASHBOARDS.map((entry) => entry.name);
 
     expect(names).toEqual([...EXPECTED_AWS_NAMES]);
-    expect(new Set(names).size).toBe(14);
+    expect(new Set(names).size).toBe(15);
     expect(new Set(CLOUDWATCH_DASHBOARDS.map((entry) => entry.id)).size).toBe(
-      14,
+      15,
     );
   });
 
@@ -75,7 +76,7 @@ describe('CloudWatch dashboard catalog', () => {
       ],
       airports: ['airport-status', 'airport-assessment'],
       decision: ['risk-pipeline', 'recommendations', 'active-alerts'],
-      supporting: ['runway-metadata'],
+      supporting: ['runway-metadata', 'historical-facts'],
     });
   });
 

@@ -31,7 +31,7 @@ resource "aws_kinesis_firehose_delivery_stream" "historical" {
 
   extended_s3_configuration {
     role_arn   = aws_iam_role.firehose[0].arn
-    bucket_arn = aws_s3_bucket.historical_facts[0].arn
+    bucket_arn = data.aws_s3_bucket.historical_facts[0].arn
 
     buffering_size     = var.firehose_buffering_size_mib
     buffering_interval = var.firehose_buffering_interval_seconds

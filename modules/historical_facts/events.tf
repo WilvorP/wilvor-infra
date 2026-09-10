@@ -12,6 +12,10 @@ locals {
       source       = ["wilvor.weather"]
       detail_types = ["hazard.materialized"]
     }
+    control = {
+      source       = ["wilvor.historical.control"]
+      detail_types = ["collection.probe"]
+    }
   }
 }
 
@@ -21,7 +25,7 @@ resource "aws_sqs_queue" "historical_facts_dlq" {
   name                       = "${var.name_prefix}-historical-facts-dlq"
   sqs_managed_sse_enabled    = true
   message_retention_seconds  = var.dlq_message_retention_seconds
-  visibility_timeout_seconds = 30
+  visibility_timeout_seconds = 90
 
   tags = merge(local.common_tags, {
     Name = "${var.name_prefix}-historical-facts-dlq"

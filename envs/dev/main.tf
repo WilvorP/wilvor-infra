@@ -96,6 +96,13 @@ module "sigmet" {
     module.historical_facts.geometry_firehose_stream_arn
   )
 
+  historical_facts_bucket_name = (
+    module.historical_facts.historical_bucket_name
+  )
+  historical_facts_bucket_arn = (
+    module.historical_facts.historical_bucket_arn
+  )
+
   tags = local.common_tags
 }
 
@@ -116,7 +123,13 @@ module "historical_facts" {
     "${path.root}/../../functions/historical_facts/transform/dist/historical_facts_transform.zip"
   )
 
-  historical_facts_force_destroy = true
+  coverage_zip_path = (
+    "${path.root}/../../functions/historical_facts/coverage_control/dist/historical_facts_coverage.zip"
+  )
+
+  dlq_consumer_zip_path = (
+    "${path.root}/../../functions/historical_facts/dlq_gap_consumer/dist/historical_facts_dlq_consumer.zip"
+  )
 }
 
 module "metar" {
@@ -446,6 +459,13 @@ module "encounter" {
   event_bus_name = local.default_event_bus_name
   event_bus_arn  = local.default_event_bus_arn
 
+  historical_facts_bucket_name = (
+    module.historical_facts.historical_bucket_name
+  )
+  historical_facts_bucket_arn = (
+    module.historical_facts.historical_bucket_arn
+  )
+
   enable_encounter_event_trigger = true
 
   dynamodb_read_capacity  = 5
@@ -482,6 +502,13 @@ module "risk" {
 
   event_bus_arn = (
     local.default_event_bus_arn
+  )
+
+  historical_facts_bucket_name = (
+    module.historical_facts.historical_bucket_name
+  )
+  historical_facts_bucket_arn = (
+    module.historical_facts.historical_bucket_arn
   )
 
   # Keep disabled until manual Risk Processor
@@ -763,6 +790,8 @@ module "operational_api" {
   api_throttling_burst_limit = 50
 
   api_throttling_rate_limit = 25
+
+  enable_historical_facts = false
 
   tags = local.common_tags
 }

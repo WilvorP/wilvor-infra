@@ -78,6 +78,22 @@ data "aws_iam_policy_document" "risk_processor" {
     ]
   }
 
+  dynamic "statement" {
+    for_each = var.historical_facts_bucket_arn != "" ? [1] : []
+
+    content {
+      sid = "WriteHistoricalGapMetadata"
+
+      actions = [
+        "s3:PutObject"
+      ]
+
+      resources = [
+        "${var.historical_facts_bucket_arn}/metadata/incidents/*"
+      ]
+    }
+  }
+
   statement {
     sid = "WriteLambdaLogs"
 
@@ -170,6 +186,10 @@ resource "aws_lambda_function" "risk_processor" {
 
       EVENT_BUS_NAME = (
         var.event_bus_name
+      )
+
+      HISTORICAL_FACTS_BUCKET_NAME = (
+        var.historical_facts_bucket_name
       )
 
       RISK_SCHEMA_VERSION = (

@@ -9,22 +9,25 @@ locals {
     )
   )
 
-  cloudwatch_dashboard_ids = [
-    "aircraft-pipeline",
-    "aircraft-hazard-encounter",
-    "projection-pipeline",
-    "sigmet-pipeline",
-    "metar-pipeline",
-    "taf-pipeline",
-    "weather-events",
-    "hazard-station-candidates",
-    "airport-status",
-    "airport-assessment",
-    "risk-pipeline",
-    "recommendations",
-    "active-alerts",
-    "runway-metadata",
-  ]
+  cloudwatch_dashboard_ids = concat(
+    [
+      "aircraft-pipeline",
+      "aircraft-hazard-encounter",
+      "projection-pipeline",
+      "sigmet-pipeline",
+      "metar-pipeline",
+      "taf-pipeline",
+      "weather-events",
+      "hazard-station-candidates",
+      "airport-status",
+      "airport-assessment",
+      "risk-pipeline",
+      "recommendations",
+      "active-alerts",
+      "runway-metadata",
+    ],
+    var.enable_historical_facts ? ["historical-facts"] : [],
+  )
 
   cloudwatch_dashboard_arns = [
     for dashboard_id in local.cloudwatch_dashboard_ids :
@@ -32,30 +35,30 @@ locals {
   ]
 
   route_keys = toset([
-  "GET /health",
+    "GET /health",
 
-  "GET /overview",
-  "GET /freshness",
-  "GET /system-health",
-  "GET /system-health/dashboards/{dashboardId}",
-  "GET /system-health/dashboards/{dashboardId}/widgets/{widgetId}/image",
+    "GET /overview",
+    "GET /freshness",
+    "GET /system-health",
+    "GET /system-health/dashboards/{dashboardId}",
+    "GET /system-health/dashboards/{dashboardId}/widgets/{widgetId}/image",
 
-  "GET /aircraft",
-  "GET /aircraft/{aircraftId}",
+    "GET /aircraft",
+    "GET /aircraft/{aircraftId}",
 
-  "GET /map/aircraft",
+    "GET /map/aircraft",
 
-  "GET /hazards/active",
+    "GET /hazards/active",
 
-  "GET /encounters/active",
+    "GET /encounters/active",
 
-  "GET /airports",
-  "GET /airports/status",
-  "GET /airports/{airportId}",
+    "GET /airports",
+    "GET /airports/status",
+    "GET /airports/{airportId}",
 
-  "GET /recommendations/active",
+    "GET /recommendations/active",
 
-  "GET /alerts/active",
+    "GET /alerts/active",
   ])
 }
 
@@ -236,12 +239,13 @@ resource "aws_lambda_function" "api" {
   )
 
   environment {
-  variables = merge(
-    var.table_names,
-    {
-      NAME_PREFIX = var.name_prefix
-    }
-  )
+    variables = merge(
+      var.table_names,
+      {
+        NAME_PREFIX                       = var.name_prefix
+        ENABLE_HISTORICAL_FACTS_DASHBOARD = var.enable_historical_facts ? "true" : "false"
+      }
+    )
   }
 
   depends_on = [

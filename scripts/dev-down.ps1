@@ -71,6 +71,10 @@ if (-not $Force) {
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $terraformPath = Join-Path $repoRoot $TerraformDirectory
+
+if ($TerraformDirectory -match "dev-historical-data") {
+    throw "dev-down.ps1 must not target the persistent historical data plane (envs/dev-historical-data). There is no historical-data-down.ps1."
+}
 $resultsPath = Join-Path $repoRoot "test-results\lifecycle"
 
 if (-not (Test-Path $terraformPath)) {
@@ -121,7 +125,74 @@ try {
         Write-Warning "Terraform state could not be captured. The environment may already be empty."
     }
 
-    Write-Step "3. Create a saved destroy plan"
+    Write-Step "3. Deactivate historical collection when enabled"
+
+    $enableHistorical = ""
+    $coverageLambda = ""
+    $historicalBucket = ""
+
+    try {
+        $enableHistorical = (& terraform output -raw enable_historical_facts 2>$null)
+        $coverageLambda = (& terraform output -raw historical_facts_coverage_lambda_name 2>$null)
+        $historicalBucket = (& terraform output -raw historical_facts_bucket_name 2>$null)
+    }
+    catch {
+        $enableHistorical = ""
+        $coverageLambda = ""
+        $historicalBucket = ""
+    }
+
+    $collectionEnabled = (
+        ($enableHistorical -eq "true") -and
+        -not [string]::IsNullOrWhiteSpace($coverageLambda)
+    )
+
+    if ($collectionEnabled) {
+        $deactivateFile = Join-Path $resultsPath "historical-deactivate-$timestamp.json"
+        $payloadFile = Join-Path $resultsPath "historical-deactivate-payload-$timestamp.json"
+        '{"action":"DEACTIVATE"}' | Out-File -FilePath $payloadFile -Encoding ascii -NoNewline
+
+        & aws lambda invoke `
+            --function-name $coverageLambda `
+            --cli-binary-format raw-in-base64-out `
+            --payload "file://$payloadFile" `
+            $deactivateFile
+        Assert-LastExitCode "aws lambda invoke DEACTIVATE"
+
+        $deactivateBody = Get-Content -Raw -Path $deactivateFile
+        if ($deactivateBody -notmatch "deactivation_key") {
+            throw "Historical DEACTIVATE did not return a deactivation_key. Aborting destroy."
+        }
+
+        $deactivationKey = $null
+        try {
+            $parsed = $deactivateBody | ConvertFrom-Json
+            if ($parsed.PSObject.Properties.Name -contains "body") {
+                $parsed = $parsed.body | ConvertFrom-Json
+            }
+            $deactivationKey = [string]$parsed.deactivation_key
+        }
+        catch {
+            throw "Historical DEACTIVATE response could not be parsed. Aborting destroy."
+        }
+
+        if ([string]::IsNullOrWhiteSpace($deactivationKey) -or [string]::IsNullOrWhiteSpace($historicalBucket)) {
+            throw "Historical DEACTIVATE write could not be confirmed. Aborting destroy."
+        }
+
+        & aws s3api head-object `
+            --bucket $historicalBucket `
+            --key $deactivationKey `
+            --output json 1>$null
+        Assert-LastExitCode "aws s3api head-object deactivation key"
+
+        Write-Host "Confirmed COLLECTION_DEACTIVATION at s3://$historicalBucket/$deactivationKey"
+    }
+    else {
+        Write-Host "enable_historical_facts is false or coverage Lambda is unset. Using the existing destroy path."
+    }
+
+    Write-Step "4. Create a saved destroy plan"
 
     # Use a local relative path for the same Windows path-safety reason as dev-up.ps1.
     $destroyPlanFile = "destroy.tfplan"
@@ -137,11 +208,11 @@ try {
 
     Write-Host "Saved destroy plan: $(Resolve-Path $destroyPlanFile)"
 
-    Write-Step "4. Apply the destroy plan"
+    Write-Step "5. Apply the destroy plan"
     & terraform apply -input=false $destroyPlanFile
     Assert-LastExitCode "terraform apply destroy.tfplan"
 
-    Write-Step "5. Verify that Terraform state is empty"
+    Write-Step "6. Verify that Terraform state is empty"
     $remainingResources = @(& terraform state list)
     Assert-LastExitCode "terraform state list"
 

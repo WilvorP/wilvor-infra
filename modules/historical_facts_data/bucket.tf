@@ -1,8 +1,6 @@
 resource "aws_s3_bucket" "historical_facts" {
-  count = local.enabled ? 1 : 0
-
   bucket        = local.bucket_name
-  force_destroy = var.historical_facts_force_destroy
+  force_destroy = false
 
   tags = merge(local.common_tags, {
     Name = local.bucket_name
@@ -10,9 +8,7 @@ resource "aws_s3_bucket" "historical_facts" {
 }
 
 resource "aws_s3_bucket_public_access_block" "historical_facts" {
-  count = local.enabled ? 1 : 0
-
-  bucket = aws_s3_bucket.historical_facts[0].id
+  bucket = aws_s3_bucket.historical_facts.id
 
   block_public_acls       = true
   block_public_policy     = true
@@ -21,9 +17,7 @@ resource "aws_s3_bucket_public_access_block" "historical_facts" {
 }
 
 resource "aws_s3_bucket_ownership_controls" "historical_facts" {
-  count = local.enabled ? 1 : 0
-
-  bucket = aws_s3_bucket.historical_facts[0].id
+  bucket = aws_s3_bucket.historical_facts.id
 
   rule {
     object_ownership = "BucketOwnerEnforced"
@@ -31,9 +25,7 @@ resource "aws_s3_bucket_ownership_controls" "historical_facts" {
 }
 
 resource "aws_s3_bucket_server_side_encryption_configuration" "historical_facts" {
-  count = local.enabled ? 1 : 0
-
-  bucket = aws_s3_bucket.historical_facts[0].id
+  bucket = aws_s3_bucket.historical_facts.id
 
   rule {
     apply_server_side_encryption_by_default {
@@ -43,9 +35,7 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "historical_facts"
 }
 
 resource "aws_s3_bucket_versioning" "historical_facts" {
-  count = local.enabled ? 1 : 0
-
-  bucket = aws_s3_bucket.historical_facts[0].id
+  bucket = aws_s3_bucket.historical_facts.id
 
   versioning_configuration {
     status = "Enabled"
@@ -53,9 +43,7 @@ resource "aws_s3_bucket_versioning" "historical_facts" {
 }
 
 resource "aws_s3_bucket_lifecycle_configuration" "historical_facts" {
-  count = local.enabled ? 1 : 0
-
-  bucket = aws_s3_bucket.historical_facts[0].id
+  bucket = aws_s3_bucket.historical_facts.id
 
   depends_on = [
     aws_s3_bucket_versioning.historical_facts,
@@ -88,6 +76,19 @@ resource "aws_s3_bucket_lifecycle_configuration" "historical_facts" {
   }
 
   rule {
+    id     = "expire-current-historical-metadata"
+    status = "Enabled"
+
+    filter {
+      prefix = "metadata/"
+    }
+
+    expiration {
+      days = var.historical_fact_metadata_retention_days
+    }
+  }
+
+  rule {
     id     = "expire-noncurrent-historical-versions"
     status = "Enabled"
 
@@ -111,5 +112,25 @@ resource "aws_s3_bucket_lifecycle_configuration" "historical_facts" {
     abort_incomplete_multipart_upload {
       days_after_initiation = 1
     }
+  }
+
+  lifecycle {
+    precondition {
+      condition = (
+        var.historical_fact_metadata_retention_days
+        >= var.historical_fact_retention_days
+      )
+      error_message = "historical_fact_metadata_retention_days must be >= historical_fact_retention_days so metadata never expires before the facts it qualifies."
+    }
+  }
+}
+
+check "metadata_retention_covers_facts" {
+  assert {
+    condition = (
+      var.historical_fact_metadata_retention_days
+      >= var.historical_fact_retention_days
+    )
+    error_message = "historical_fact_metadata_retention_days must be >= historical_fact_retention_days so metadata never expires before the facts it qualifies."
   }
 }

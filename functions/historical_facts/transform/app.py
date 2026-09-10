@@ -18,6 +18,13 @@ from wilvor_historical.contracts import (
     HazardGeometryFact,
     HistoricalFactError,
 )
+from wilvor_historical.coverage_contracts import (
+    COLLECTION_CONTROL_DATASET,
+    CollectionProbeRecord,
+    ControlRecordType,
+    CoverageStream,
+    HistoricalCoverageError,
+)
 from wilvor_historical.from_events import HistoricalMappingError, fact_from_event
 
 
@@ -88,9 +95,49 @@ def _rehydrate_geometry_fact(payload: dict[str, Any]) -> HazardGeometryFact:
     )
 
 
+def _control_detail(payload: dict[str, Any]) -> dict[str, Any]:
+    if payload.get("source") == "wilvor.historical.control":
+        detail = payload.get("detail")
+        if isinstance(detail, str):
+            detail = json.loads(detail)
+        if not isinstance(detail, dict):
+            raise HistoricalCoverageError("control detail is not an object")
+        return detail
+    return payload
+
+
+def _rehydrate_probe(payload: dict[str, Any]) -> CollectionProbeRecord:
+    fields = CollectionProbeRecord.__dataclass_fields__
+    missing = [name for name in fields if name not in payload]
+    if missing:
+        raise HistoricalCoverageError(f"missing probe fields: {missing}")
+    return CollectionProbeRecord(
+        control_schema_version=payload["control_schema_version"],
+        record_type=ControlRecordType(payload["record_type"]),
+        collection_epoch_id=payload["collection_epoch_id"],
+        stream=CoverageStream(payload["stream"]),
+        probe_id=payload["probe_id"],
+        interval_start_utc=payload["interval_start_utc"],
+        interval_end_utc=payload["interval_end_utc"],
+        observed_at_utc=payload["observed_at_utc"],
+        dataset=payload["dataset"],
+        event_year=payload["event_year"],
+        event_month=payload["event_month"],
+        event_day=payload["event_day"],
+        dedup_id=payload["dedup_id"],
+    )
+
+
 def fact_from_firehose_payload(payload: Any):
     if not isinstance(payload, dict):
         raise HistoricalMappingError("record payload is not an object")
+
+    if (
+        payload.get("source") == "wilvor.historical.control"
+        or payload.get("record_type") == ControlRecordType.COLLECTION_PROBE.value
+        or payload.get("dataset") == COLLECTION_CONTROL_DATASET
+    ):
+        return _rehydrate_probe(_control_detail(payload))
 
     if payload.get("dataset") == Dataset.HAZARD_GEOMETRY.value:
         return _rehydrate_geometry_fact(payload)
@@ -117,6 +164,7 @@ def _process_record(record: dict[str, Any]) -> dict[str, Any]:
         UnicodeDecodeError,
         json.JSONDecodeError,
         HistoricalFactError,
+        HistoricalCoverageError,
         HistoricalMappingError,
         KeyError,
         TypeError,

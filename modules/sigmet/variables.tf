@@ -127,3 +127,15 @@ variable "historical_geometry_firehose_stream_arn" {
   default     = ""
   description = "ARN of the historical geometry Firehose stream. Empty disables PutRecord IAM."
 }
+
+variable "historical_facts_bucket_name" {
+  type        = string
+  default     = ""
+  description = "Persistent historical facts bucket for fail-open Domain-1/geometry gap writes. Empty disables those writes."
+}
+
+variable "historical_facts_bucket_arn" {
+  type        = string
+  default     = ""
+  description = "ARN of the persistent historical facts bucket. Empty disables gap-write IAM."
+}

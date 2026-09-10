@@ -25,6 +25,11 @@ EVENT_BUS_NAME = os.environ.get(
     "default",
 )
 
+HISTORICAL_FACTS_BUCKET_NAME = os.environ.get(
+    "HISTORICAL_FACTS_BUCKET_NAME",
+    "",
+)
+
 AIRCRAFT_PROJECTION_TABLE_NAME = os.environ[
     "AIRCRAFT_PROJECTION_TABLE_NAME"
 ]
@@ -1435,6 +1440,84 @@ def supersede_stale_encounters(
     return resolved
 
 
+def _record_historical_source_put_failure(
+    *,
+    identity_name: str,
+    identity_value: Any,
+    detail_type: str,
+    datasets: tuple[str, ...],
+) -> None:
+    try:
+        cloudwatch.put_metric_data(
+            Namespace="Wilvor/Pipeline",
+            MetricData=[
+                {
+                    "MetricName": "HistoricalSourcePutFailure",
+                    "Value": 1,
+                    "Unit": "Count",
+                    "Dimensions": [
+                        {"Name": "Environment", "Value": ENVIRONMENT},
+                        {"Name": "Pipeline", "Value": "encounter"},
+                        {"Name": "Component", "Value": "encounter_processor"},
+                        {"Name": "Stage", "Value": "historical_source"},
+                    ],
+                }
+            ],
+        )
+    except Exception:
+        pass
+
+    print(
+        json.dumps(
+            {
+                "event": "HistoricalSourcePutFailure",
+                identity_name: identity_value,
+                "detail_type": detail_type,
+            },
+            default=str,
+        )
+    )
+
+    try:
+        from gap_writer import write_unbound_incident_fail_open
+        from wilvor_historical.coverage_contracts import (
+            CONTROL_SCHEMA_VERSION,
+            STAGING_STATE,
+            ControlRecordType,
+            GapDomain,
+            UncertaintyClass,
+            UnboundCollectionIncident,
+        )
+
+        now_utc = epoch_to_utc(now_epoch())
+        if not now_utc.endswith("Z"):
+            now_utc = now_utc.replace("+00:00", "Z")
+        end_utc = epoch_to_utc(now_epoch() + 1)
+        if not end_utc.endswith("Z"):
+            end_utc = end_utc.replace("+00:00", "Z")
+        incident = UnboundCollectionIncident(
+            control_schema_version=CONTROL_SCHEMA_VERSION,
+            record_type=ControlRecordType.UNBOUND_COLLECTION_INCIDENT,
+            staging_state=STAGING_STATE,
+            affected_datasets=datasets,
+            gap_domain=GapDomain.DOMAIN_1,
+            reason="PRODUCER_PUT_EVENTS_FAILURE",
+            uncertainty_class=UncertaintyClass.KNOWN_MISSING,
+            detected_at_utc=now_utc,
+            interval_start_utc=now_utc,
+            interval_end_utc=end_utc,
+            created_at_utc=now_utc,
+            dedup_id=f"domain1|encounter|{identity_value}|{now_utc}",
+            identity=str(identity_value) if identity_value else None,
+            source_subsystem="encounter",
+            producer_source="wilvor.encounter",
+            producer_detail_type=detail_type,
+        )
+        write_unbound_incident_fail_open(incident)
+    except Exception:
+        pass
+
+
 def publish_encounter_event(
     *,
     item: dict[str, Any],
@@ -1532,6 +1615,12 @@ def publish_encounter_event(
         )
         or 0
     ):
+        _record_historical_source_put_failure(
+            identity_name="encounter_id",
+            identity_value=item.get("encounter_id"),
+            detail_type=detail_type,
+            datasets=("encounter",),
+        )
         raise RuntimeError(
             f"Failed to publish {detail_type}: {response}"
         )
