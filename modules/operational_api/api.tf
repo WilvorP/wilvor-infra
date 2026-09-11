@@ -27,6 +27,7 @@ locals {
       "runway-metadata",
     ],
     var.enable_historical_facts ? ["historical-facts"] : [],
+    var.enable_historical_analytics_dashboard ? ["historical-analytics"] : [],
   )
 
   cloudwatch_dashboard_arns = [
@@ -242,8 +243,9 @@ resource "aws_lambda_function" "api" {
     variables = merge(
       var.table_names,
       {
-        NAME_PREFIX                       = var.name_prefix
-        ENABLE_HISTORICAL_FACTS_DASHBOARD = var.enable_historical_facts ? "true" : "false"
+        NAME_PREFIX                           = var.name_prefix
+        ENABLE_HISTORICAL_FACTS_DASHBOARD     = var.enable_historical_facts ? "true" : "false"
+        ENABLE_HISTORICAL_ANALYTICS_DASHBOARD = var.enable_historical_analytics_dashboard ? "true" : "false"
       }
     )
   }

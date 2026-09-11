@@ -177,6 +177,15 @@ export const CLOUDWATCH_DASHBOARDS: readonly CloudWatchDashboardEntry[] = [
       'Historical facts and geometry Firehose, transform, EventBridge rules, Domain-2 DLQ, and coverage control. API 404s this id while collection is disabled.',
     embedUrl: null,
   },
+  {
+    id: 'historical-analytics',
+    name: `${CLOUDWATCH_NAME_PREFIX}-historical-analytics`,
+    label: 'Historical Analytics',
+    category: 'supporting',
+    description:
+      'Athena workgroup cost-driver metrics, FAILED/CANCELED query monitoring, and disposable results-bucket storage. Observability only; not coverage authority. API 404s this id while analytics is disabled.',
+    embedUrl: null,
+  },
 ];
 
 export const DEFAULT_CLOUDWATCH_DASHBOARD_ID = 'aircraft-pipeline';

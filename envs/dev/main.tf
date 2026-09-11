@@ -804,5 +804,9 @@ module "operational_api" {
 
   enable_historical_facts = true
 
+  enable_historical_analytics_dashboard = (
+    module.historical_analytics.enable_historical_analytics
+  )
+
   tags = local.common_tags
 }

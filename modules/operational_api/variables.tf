@@ -63,3 +63,9 @@ variable "enable_historical_facts" {
   default     = false
   description = "When true, register the historical-facts CloudWatch dashboard in the Operational API catalog."
 }
+
+variable "enable_historical_analytics_dashboard" {
+  type        = bool
+  default     = false
+  description = "When true, register the historical-analytics CloudWatch dashboard in the Operational API catalog."
+}

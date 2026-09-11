@@ -1,4 +1,4 @@
-# Historical analytics foundation (Phase 2A.2c)
+# Historical analytics foundation (Phase 2A.2d)
 
 This module is the **disabled-by-default** recreatable analytics
 foundation. It currently owns:
@@ -8,9 +8,10 @@ foundation. It currently owns:
 - a disposable Athena query-results S3 bucket
 - an explicit Glue database and four external tables (no crawler)
 - one dedicated Athena SQL workgroup
+- operational CloudWatch observability (dashboard, FAILED/CANCELED alarm)
 
-It does **not** create crawlers, dashboards, runtime query IAM roles,
-named query APIs, or query executors.
+It does **not** create crawlers, runtime query IAM roles, named query
+APIs, or query executors.
 
 ## Ownership boundary
 
@@ -208,3 +209,52 @@ the Phase 2B deterministic executor must submit:
 `ResultReuseByAgeConfiguration.Enabled = false`
 
 Do not assume a Terraform workgroup flag disables reuse.
+
+## Observability (Phase 2A.2d)
+
+Dashboard name / catalog id:
+
+`${name_prefix}-historical-analytics` / `historical-analytics`
+
+(`wilvor-dev-historical-analytics` in dev). Separate from
+`historical-facts` because collection transport and analytics are
+different failure domains.
+
+This dashboard is **operational observability only**:
+
+- Athena `AWS/Athena` metrics (`ProcessedBytes`, execution / planning /
+  queue times) are cost-driver and performance visibility
+- `ProcessedBytes` is not a billed-price calculator
+- results-bucket `AWS/S3` `BucketSizeBytes` / `NumberOfObjects` are
+  **daily** snapshots of derived disposable data (3-day lifecycle)
+- no objects is not a failure
+- no dataset row-count widget
+- no coverage metadata widget
+- no zero-query / inactivity alarm
+- no SNS
+
+Athena service events to EventBridge (`Athena Query State Change`) are
+**best effort**. A missing failure event does not prove a query
+succeeded. This path must not be used for coverage, verified-zero,
+gap resolution, query-result correctness, or canonical completeness.
+
+Future deterministic query code must use `GetQueryExecution` for
+authoritative query status. Phase 2A.1 `evaluate_collection_window`
+remains historical completeness authority.
+
+The EventBridge rule admits only this workgroup and AWS states:
+
+- `FAILED`
+- `CANCELED`
+
+AWS spelling is **`CANCELED`**, not `CANCELLED`. Scan-cutoff
+cancellation and intentional manual cancellation may alarm. That is
+acceptable operational signal in dev.
+
+Custom metric: `Wilvor/Pipeline` / `HistoricalAnalyticsQueryFailed`
+(dimension `WorkGroup`). Alarm: `>= 1` in one 5-minute period,
+`treat_missing_data = notBreaching`.
+
+The Operational API registers catalog id `historical-analytics` only
+when `ENABLE_HISTORICAL_ANALYTICS_DASHBOARD=true`. While disabled, that
+id returns 404 (not 500). The API has no Athena query permissions.

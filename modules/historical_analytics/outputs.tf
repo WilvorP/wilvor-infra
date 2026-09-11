@@ -41,3 +41,7 @@ output "hazard_geometry_table_name" {
 output "workgroup_name" {
   value = local.enabled ? aws_athena_workgroup.historical_analytics[0].name : ""
 }
+
+output "dashboard_name" {
+  value = local.enabled ? aws_cloudwatch_dashboard.historical_analytics[0].dashboard_name : ""
+}

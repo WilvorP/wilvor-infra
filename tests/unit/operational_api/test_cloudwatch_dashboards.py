@@ -112,6 +112,7 @@ def test_allowlist_contains_all_fourteen_stable_ids(dashboards):
 
     assert set(dashboards.DASHBOARD_CATALOG) == expected
     assert "historical-facts" not in dashboards.DASHBOARD_CATALOG
+    assert "historical-analytics" not in dashboards.DASHBOARD_CATALOG
     assert (
         dashboards.dashboard_aws_name("aircraft-pipeline")
         == "wilvor-test-aircraft-pipeline"
@@ -132,6 +133,27 @@ def test_historical_facts_catalog_id_is_env_gated(
     assert module.dashboard_aws_name("historical-facts") == (
         "wilvor-test-historical-facts"
     )
+    assert "historical-analytics" not in module.DASHBOARD_CATALOG
+
+
+def test_historical_analytics_catalog_id_is_env_gated(
+    operational_api_env,
+    load_repo_module,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("ENABLE_HISTORICAL_ANALYTICS_DASHBOARD", "true")
+    module = load_repo_module(
+        "unit_operational_api_cloudwatch_dashboards_analytics",
+        "functions/operational_api/cloudwatch_dashboards.py",
+    )
+    assert "historical-analytics" in module.DASHBOARD_CATALOG
+    assert module.DASHBOARD_CATALOG["historical-analytics"] == (
+        "Historical Analytics"
+    )
+    assert module.dashboard_aws_name("historical-analytics") == (
+        "wilvor-test-historical-analytics"
+    )
+    assert "historical-facts" not in module.DASHBOARD_CATALOG
 
 
 def test_unknown_dashboard_id_is_rejected(dashboards):
@@ -295,6 +317,18 @@ def test_app_routes_unknown_dashboard_and_text_image(
         SimpleNamespace(),
     )
     assert unknown["statusCode"] == 404
+
+    gated = operational_app.lambda_handler(
+        {
+            "rawPath": "/system-health/dashboards/historical-analytics",
+            "requestContext": {
+                "requestId": "req-1b",
+                "http": {"method": "GET"},
+            },
+        },
+        SimpleNamespace(),
+    )
+    assert gated["statusCode"] == 404
 
     text_image = operational_app.lambda_handler(
         {

@@ -6,6 +6,20 @@ locals {
   glue_database_name     = "${replace(var.name_prefix, "-", "_")}_historical_facts"
   workgroup_name         = "${var.name_prefix}-historical-analytics"
   athena_results_prefix  = "athena-results/"
+  dashboard_name         = "${var.name_prefix}-historical-analytics"
+
+  query_failure_log_group_name = "/aws/events/${var.name_prefix}-historical-analytics-query-failures"
+  wilvor_metric_namespace      = "Wilvor/Pipeline"
+  query_failure_metric_name    = "HistoricalAnalyticsQueryFailed"
+
+  analytics_alarm_defaults = {
+    comparison_operator = "GreaterThanOrEqualToThreshold"
+    threshold           = 1
+    evaluation_periods  = 1
+    period              = 300
+    statistic           = "Sum"
+    treat_missing_data  = "notBreaching"
+  }
 
   historical_bucket_id  = local.enabled ? data.aws_s3_bucket.historical_facts[0].id : ""
   historical_bucket_arn = local.enabled ? data.aws_s3_bucket.historical_facts[0].arn : ""

@@ -50,7 +50,7 @@ def test_module_exists_and_is_disabled_by_default():
     assert (MODULE_DIR / "README.md").exists()
     assert (MODULE_DIR / "glue.tf").exists()
     assert (MODULE_DIR / "athena.tf").exists()
-    assert not (MODULE_DIR / "monitoring.tf").exists()
+    assert (MODULE_DIR / "monitoring.tf").exists()
     assert not (MODULE_DIR / "iam.tf").exists()
     variables = read(MODULE_DIR / "variables.tf")
     assert "variable \"enable_historical_analytics\"" in variables
@@ -71,6 +71,15 @@ def test_dev_wires_analytics_disabled_and_collection_enabled():
     assert "enable_historical_facts = false" not in historical_facts
     assert "enable_historical_facts = true" in operational_api
     assert "enable_historical_facts = false" not in text
+    assert (
+        "enable_historical_analytics_dashboard = ("
+        in operational_api
+        or "enable_historical_analytics_dashboard =" in operational_api
+    )
+    assert (
+        "module.historical_analytics.enable_historical_analytics"
+        in operational_api
+    )
 
 
 def test_dev_outputs_are_safe_when_disabled():
@@ -87,6 +96,8 @@ def test_dev_outputs_are_safe_when_disabled():
     assert 'output "historical_analytics_hazard_geometry_table_name"' in outputs
     assert 'output "historical_analytics_workgroup_name"' in outputs
     assert "module.historical_analytics.workgroup_name" in outputs
+    assert 'output "historical_analytics_dashboard_name"' in outputs
+    assert "module.historical_analytics.dashboard_name" in outputs
     assert "query_role" not in outputs
     assert "named_query" not in outputs
 
@@ -422,6 +433,126 @@ def test_result_reuse_is_not_a_workgroup_setting():
     assert "ResultReuseByAgeConfiguration.Enabled = false" in readme
 
 
+def test_monitoring_resources_are_gated():
+    monitoring = read(MODULE_DIR / "monitoring.tf")
+    outputs = read(MODULE_DIR / "outputs.tf")
+    assert 'resource "aws_cloudwatch_dashboard" "historical_analytics"' in monitoring
+    assert 'resource "aws_cloudwatch_event_rule" "query_failures"' in monitoring
+    assert 'resource "aws_cloudwatch_event_target" "query_failures"' in monitoring
+    assert 'resource "aws_cloudwatch_log_group" "query_failures"' in monitoring
+    assert 'resource "aws_cloudwatch_log_resource_policy"' in monitoring
+    assert 'resource "aws_cloudwatch_log_metric_filter" "query_failures"' in monitoring
+    assert 'resource "aws_cloudwatch_metric_alarm" "query_failures"' in monitoring
+    assert monitoring.count("count = local.enabled ? 1 : 0") >= 7
+    assert "aws_sns" not in monitoring
+    assert "aws_lambda" not in monitoring
+    assert 'alarm_name          = "${var.name_prefix}-historical-analytics-zero' not in monitoring
+    assert "IncomingRecords" not in monitoring
+    assert (
+        'value = local.enabled ? aws_cloudwatch_dashboard.historical_analytics[0].dashboard_name : ""'
+        in outputs
+    )
+
+
+def test_athena_failure_event_pattern_uses_canceled_spelling():
+    monitoring = read(MODULE_DIR / "monitoring.tf")
+    assert '"aws.athena"' in monitoring
+    assert '"Athena Query State Change"' in monitoring
+    assert "workgroupName" in monitoring
+    assert "local.workgroup_name" in monitoring
+    assert '"FAILED"' in monitoring
+    assert '"CANCELED"' in monitoring
+    assert "CANCELLED" not in monitoring
+    assert "currentState" in monitoring
+
+
+def test_eventbridge_logs_resource_policy_matches_repo_pattern():
+    monitoring = read(MODULE_DIR / "monitoring.tf")
+    assert '"events.amazonaws.com"' in monitoring
+    assert "logs:CreateLogStream" in monitoring
+    assert "logs:PutLogEvents" in monitoring
+    assert "aws_iam_role" not in monitoring
+    assert "s3:GetObject" not in monitoring
+    assert "s3:PutObject" not in monitoring
+    assert "athena:StartQueryExecution" not in monitoring
+    assert "/aws/events/${var.name_prefix}-historical-analytics-query-failures" in (
+        read(MODULE_DIR / "locals.tf")
+    )
+    assert "retention_in_days = 3" in monitoring
+    principals = monitoring.split("principals")[1].split("actions")[0]
+    assert "events.amazonaws.com" in principals
+    assert "lambda.amazonaws.com" not in principals
+
+
+def test_query_failure_metric_and_alarm():
+    monitoring = read(MODULE_DIR / "monitoring.tf")
+    locals_text = read(MODULE_DIR / "locals.tf")
+    assert 'query_failure_metric_name    = "HistoricalAnalyticsQueryFailed"' in locals_text
+    assert 'wilvor_metric_namespace      = "Wilvor/Pipeline"' in locals_text
+    assert 'WorkGroup = "$.detail.workgroupName"' in monitoring
+    assert 'value     = "1"' in monitoring
+    assert 'treat_missing_data  = local.analytics_alarm_defaults.treat_missing_data' in monitoring
+    assert 'treat_missing_data  = "notBreaching"' in locals_text
+    assert "threshold           = 1" in locals_text
+    assert "evaluation_periods  = 1" in locals_text
+    assert "period              = 300" in locals_text
+    assert "aws_sns_topic" not in monitoring
+    assert "alarm_actions" not in monitoring
+    alarm = monitoring.split('resource "aws_cloudwatch_metric_alarm" "query_failures"')[1]
+    alarm = alarm.split('resource "aws_cloudwatch_dashboard"')[0]
+    assert "ProcessedBytes" not in alarm
+    assert "metric_name         = local.query_failure_metric_name" in alarm
+
+
+def test_analytics_dashboard_metrics_and_contract_text():
+    monitoring = read(MODULE_DIR / "monitoring.tf")
+    assert 'dashboard_name = local.dashboard_name' in monitoring
+    assert 'dashboard_name         = "${var.name_prefix}-historical-analytics"' in (
+        read(MODULE_DIR / "locals.tf")
+    )
+    assert "AWS/Athena" in monitoring
+    assert "ProcessedBytes" in monitoring
+    assert "TotalExecutionTime" in monitoring
+    assert "EngineExecutionTime" in monitoring
+    assert "QueryPlanningTime" in monitoring
+    assert "QueryQueueTime" in monitoring
+    assert "WorkGroup" in monitoring
+    assert "DPUCount" not in monitoring
+    assert "BucketSizeBytes" in monitoring
+    assert "NumberOfObjects" in monitoring
+    assert "StandardStorage" in monitoring
+    assert "AllStorageTypes" in monitoring
+    assert "period = 86400" in monitoring
+    assert "NOT VERIFIED_ZERO" in monitoring
+    assert "evaluate_collection_window" in monitoring
+    assert "best effort" in monitoring
+    assert "10 GiB" in monitoring
+    assert "3-day" in monitoring
+    assert "$" not in monitoring or "billed" in monitoring
+    assert "0.00" not in monitoring
+    assert "USD" not in monitoring
+    assert "row-count" not in monitoring.lower()
+    assert "aws_glue_crawler" not in monitoring
+
+
+def test_operational_api_analytics_dashboard_is_gated():
+    api = read(REPO_ROOT / "modules" / "operational_api" / "api.tf")
+    variables = read(REPO_ROOT / "modules" / "operational_api" / "variables.tf")
+    assert "variable \"enable_historical_analytics_dashboard\"" in variables
+    assert "default     = false" in variables
+    assert (
+        'var.enable_historical_analytics_dashboard ? ["historical-analytics"] : []'
+        in api
+    )
+    assert "ENABLE_HISTORICAL_ANALYTICS_DASHBOARD" in api
+    assert "athena:StartQueryExecution" not in api
+    assert "athena:GetQueryExecution" not in api
+    assert "athena:GetQueryResults" not in api
+    uncond = api.split("var.enable_historical_analytics_dashboard ?")[0]
+    assert '"historical-analytics"' not in uncond
+    assert "cloudwatch:GetDashboard" in api
+
+
 def test_data_plane_root_is_unchanged():
     main = read(DATA_PLANE_MAIN)
     assert 'source = "../../modules/historical_facts_data"' in main
@@ -447,7 +578,7 @@ def test_readme_documents_ownership_and_lifecycle():
         "3-day",
         "dev-down",
         "DEACTIVATE",
-        "does **not** create crawlers, dashboards, runtime query IAM roles",
+        "does **not** create crawlers, runtime query IAM roles",
         "historical-data-down.ps1",
         "enable_historical_analytics",
         "OpenX",
@@ -465,5 +596,12 @@ def test_readme_documents_ownership_and_lifecycle():
         "10737418240",
         "expected_bucket_owner",
         "athena-results/",
-    ):
-        assert needle in readme
+        "best effort",
+        "CANCELED",
+        "GetQueryExecution",
+        "HistoricalAnalyticsQueryFailed",
+        "notBreaching",
+            "ENABLE_HISTORICAL_ANALYTICS_DASHBOARD",
+            "not `CANCELLED`",
+        ):
+            assert needle in readme

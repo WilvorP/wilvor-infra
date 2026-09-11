@@ -387,3 +387,7 @@ output "historical_analytics_hazard_geometry_table_name" {
 output "historical_analytics_workgroup_name" {
   value = module.historical_analytics.workgroup_name
 }
+
+output "historical_analytics_dashboard_name" {
+  value = module.historical_analytics.dashboard_name
+}
