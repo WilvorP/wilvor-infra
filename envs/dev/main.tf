@@ -132,6 +132,17 @@ module "historical_facts" {
   )
 }
 
+module "historical_analytics" {
+  source = "../../modules/historical_analytics"
+
+  name_prefix = local.name_prefix
+  aws_region  = var.aws_region
+  account_id  = data.aws_caller_identity.current.account_id
+  tags        = local.common_tags
+
+  enable_historical_analytics = false
+}
+
 module "metar" {
   source = "../../modules/metar"
 

@@ -355,3 +355,11 @@ output "historical_facts_coverage_lambda_arn" {
 output "historical_facts_dashboard_name" {
   value = module.historical_facts.dashboard_name
 }
+
+output "enable_historical_analytics" {
+  value = module.historical_analytics.enable_historical_analytics
+}
+
+output "historical_analytics_results_bucket_name" {
+  value = module.historical_analytics.results_bucket_name
+}
