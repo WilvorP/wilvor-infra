@@ -29,11 +29,27 @@ def module_text() -> str:
     )
 
 
-def test_dev_historical_facts_remain_disabled():
+def _dev_module_block(text: str, module_name: str) -> str:
+    marker = f'module "{module_name}" {{'
+    assert marker in text
+    after = text.split(marker, 1)[1]
+    next_module = after.find('\nmodule "')
+    if next_module == -1:
+        return after
+    return after[:next_module]
+
+
+def test_dev_historical_facts_collection_is_enabled():
     text = read(DEV_MAIN)
-    assert 'source = "../../modules/historical_facts"' in text
-    assert "enable_historical_facts = false" in text
-    assert "enable_historical_facts = true" not in text
+    historical_facts = _dev_module_block(text, "historical_facts")
+    operational_api = _dev_module_block(text, "operational_api")
+
+    assert 'source = "../../modules/historical_facts"' in historical_facts
+    assert "enable_historical_facts = true" in historical_facts
+    assert "enable_historical_facts = false" not in historical_facts
+    assert "enable_historical_facts = true" in operational_api
+    assert "enable_historical_facts = false" not in operational_api
+    assert "enable_historical_facts = false" not in text
     assert "historical_facts_force_destroy" not in text
 
 
