@@ -203,7 +203,7 @@ budget.
 Result reuse is **not** a workgroup setting. AWS defaults it to
 disabled. Each `StartQueryExecution` must choose it.
 
-There is no query executor in this phase. Future 2A.2e validation and
+There is no query executor in this phase. 2A.2e validation and
 the Phase 2B deterministic executor must submit:
 
 `ResultReuseByAgeConfiguration.Enabled = false`
@@ -258,3 +258,45 @@ Custom metric: `Wilvor/Pipeline` / `HistoricalAnalyticsQueryFailed`
 The Operational API registers catalog id `historical-analytics` only
 when `ENABLE_HISTORICAL_ANALYTICS_DASHBOARD=true`. While disabled, that
 id returns 404 (not 500). The API has no Athena query permissions.
+
+## Validation (Phase 2A.2e)
+
+Operator tooling lives in `validation/` and
+`scripts/validate_historical_analytics.ps1`.
+
+It runs **only after** approved 2A.2f enable/apply. It is not a
+deployment step and not a Phase 2B query API.
+
+- Fixed SQL templates only. No `-Sql` / `-Query` parameter.
+- Every `StartQueryExecution` sets
+  `ResultReuseByAgeConfiguration.Enabled = false`.
+- Result `OutputLocation` must start with
+  `s3://<results-bucket>/athena-results/`.
+- Exact S3 gzip JSONL line count must equal Athena `COUNT(*)`.
+- Canonical Key/Size/ETag snapshots must be unchanged after queries.
+- Geometry is validated as RegexSerDe `json_record` with
+  `POLYGON`/`MULTIPOLYGON` → GeoJSON `Polygon`/`MultiPolygon`.
+- Hazard version and geometry identities are compared as sets.
+- Partition pruning evidence uses `DataScannedInBytes`.
+- Athena empty results are **`SQL_EMPTY`**, never `VERIFIED_ZERO`.
+- Coverage evaluator remains authoritative.
+- No 2A.2 query IAM role exists. Live validation uses operator SSO.
+- This script must not be used as an AI query surface.
+
+Dry-run makes no AWS calls:
+
+```powershell
+.\scripts\validate_historical_analytics.ps1 -ValidationDate 2026-09-11 -DryRun
+```
+
+### Frontend Vitest (2A.2d carry-forward)
+
+The `historical-analytics` dashboard catalog test was added in 2A.2d.
+The implementing environment did not have Node/npm on PATH. Before
+Phase 2A.2 is declared fully complete, run the frontend catalog test in
+CI or an environment with Node:
+
+```powershell
+cd dashboard
+npm test -- src/config/cloudwatchDashboards.test.ts
+```

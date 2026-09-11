@@ -178,7 +178,8 @@ query failure.
 - **2A.1b:** EventBridge / Firehose / S3 persistence.
 - **2A.1c:** collection metadata, horizons, and observability (this package
   owns only the pure contracts/evaluator).
-- **2A.2:** Glue / Athena.
+- **2A.2:** Glue / Athena catalog. Operator validation of catalog
+  fidelity lives outside this package and does not determine coverage.
 - **2B:** deterministic historical queries.
 - **2C:** analytics ToolResult adapters.
 

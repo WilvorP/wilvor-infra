@@ -51,6 +51,7 @@ def test_module_exists_and_is_disabled_by_default():
     assert (MODULE_DIR / "glue.tf").exists()
     assert (MODULE_DIR / "athena.tf").exists()
     assert (MODULE_DIR / "monitoring.tf").exists()
+    assert (MODULE_DIR / "validation").is_dir()
     assert not (MODULE_DIR / "iam.tf").exists()
     variables = read(MODULE_DIR / "variables.tf")
     assert "variable \"enable_historical_analytics\"" in variables
