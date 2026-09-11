@@ -114,7 +114,7 @@ module "historical_facts" {
   account_id  = data.aws_caller_identity.current.account_id
   tags        = local.common_tags
 
-  enable_historical_facts = false
+  enable_historical_facts = true
 
   event_bus_name = local.default_event_bus_name
   event_bus_arn  = local.default_event_bus_arn
@@ -791,7 +791,7 @@ module "operational_api" {
 
   api_throttling_rate_limit = 25
 
-  enable_historical_facts = false
+  enable_historical_facts = true
 
   tags = local.common_tags
 }
