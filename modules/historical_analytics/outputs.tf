@@ -37,3 +37,7 @@ output "hazard_version_table_name" {
 output "hazard_geometry_table_name" {
   value = local.enabled ? aws_glue_catalog_table.hazard_geometry[0].name : ""
 }
+
+output "workgroup_name" {
+  value = local.enabled ? aws_athena_workgroup.historical_analytics[0].name : ""
+}

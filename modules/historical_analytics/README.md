@@ -1,4 +1,4 @@
-# Historical analytics foundation (Phase 2A.2b)
+# Historical analytics foundation (Phase 2A.2c)
 
 This module is the **disabled-by-default** recreatable analytics
 foundation. It currently owns:
@@ -7,9 +7,10 @@ foundation. It currently owns:
 - a gated read-only lookup of the persistent historical facts bucket
 - a disposable Athena query-results S3 bucket
 - an explicit Glue database and four external tables (no crawler)
+- one dedicated Athena SQL workgroup
 
-It does **not** create Athena workgroups, crawlers, dashboards,
-runtime query IAM roles, or named query APIs.
+It does **not** create crawlers, dashboards, runtime query IAM roles,
+named query APIs, or query executors.
 
 ## Ownership boundary
 
@@ -155,5 +156,55 @@ schema versions.
 ### Coverage / zeros
 
 Athena answers which rows are present. `COUNT(*) = 0` is not a
-verified historical zero. `evaluate_collection_window` remains
-authoritative. No Athena workgroup exists until Phase 2A.2c.
+verified historical zero and is not `VERIFIED_ZERO`.
+`evaluate_collection_window` remains authoritative.
+
+## Athena workgroup (Phase 2A.2c)
+
+Name: `${name_prefix}-historical-analytics`
+(`wilvor-dev-historical-analytics` in dev).
+
+The workgroup is a **cost and control boundary** over the already
+cataloged historical facts. It is not a query API and it does not
+decide collection completeness.
+
+| Setting | Value |
+| --- | --- |
+| State | `ENABLED` |
+| Engine | Athena engine version 3 |
+| Enforce workgroup configuration | `true` |
+| CloudWatch query metrics | `true` |
+| Requester pays | `false` |
+| Per-query scan cutoff | `10737418240` (10 GiB) |
+
+`enforce_workgroup_configuration = true` prevents clients from
+redirecting results away from the controlled derived location.
+
+Result location is the **disposable** results bucket only:
+
+`s3://<results-bucket>/athena-results/`
+
+That prefix is not the canonical historical bucket and must never use
+`dataset=`, `metadata/`, or `errors/`. Canonical history remains
+read-only.
+
+Result encryption is `SSE_S3`. `expected_bucket_owner` is the account
+id. If the results bucket owner does not match, Athena fails the
+result write rather than writing elsewhere. The results bucket already
+uses `BucketOwnerEnforced`; this workgroup does not set ACLs.
+
+Exceeding the 10 GiB per-query cutoff **cancels/fails that query**. It
+does not change historical truth and is not a workgroup-wide scan
+budget.
+
+### Result reuse
+
+Result reuse is **not** a workgroup setting. AWS defaults it to
+disabled. Each `StartQueryExecution` must choose it.
+
+There is no query executor in this phase. Future 2A.2e validation and
+the Phase 2B deterministic executor must submit:
+
+`ResultReuseByAgeConfiguration.Enabled = false`
+
+Do not assume a Terraform workgroup flag disables reuse.

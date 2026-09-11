@@ -383,3 +383,7 @@ output "historical_analytics_hazard_version_table_name" {
 output "historical_analytics_hazard_geometry_table_name" {
   value = module.historical_analytics.hazard_geometry_table_name
 }
+
+output "historical_analytics_workgroup_name" {
+  value = module.historical_analytics.workgroup_name
+}

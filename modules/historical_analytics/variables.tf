@@ -32,6 +32,17 @@ variable "result_retention_days" {
   }
 }
 
+variable "bytes_scanned_cutoff_per_query" {
+  type        = number
+  default     = 10737418240
+  description = "Per-query Athena scan cutoff in bytes. Queries that exceed this are cancelled. Default is 10 GiB (10737418240). This is not a workgroup-wide budget and does not change historical truth."
+
+  validation {
+    condition     = var.bytes_scanned_cutoff_per_query >= 10000000
+    error_message = "bytes_scanned_cutoff_per_query must be at least 10000000 bytes (Athena minimum)."
+  }
+}
+
 variable "projection_year_min" {
   type        = number
   default     = 2026

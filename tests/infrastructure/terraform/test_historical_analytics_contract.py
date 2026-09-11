@@ -49,7 +49,7 @@ def test_module_exists_and_is_disabled_by_default():
     assert (MODULE_DIR / "outputs.tf").exists()
     assert (MODULE_DIR / "README.md").exists()
     assert (MODULE_DIR / "glue.tf").exists()
-    assert not (MODULE_DIR / "athena.tf").exists()
+    assert (MODULE_DIR / "athena.tf").exists()
     assert not (MODULE_DIR / "monitoring.tf").exists()
     assert not (MODULE_DIR / "iam.tf").exists()
     variables = read(MODULE_DIR / "variables.tf")
@@ -85,8 +85,10 @@ def test_dev_outputs_are_safe_when_disabled():
     assert 'output "historical_analytics_risk_table_name"' in outputs
     assert 'output "historical_analytics_hazard_version_table_name"' in outputs
     assert 'output "historical_analytics_hazard_geometry_table_name"' in outputs
-    assert "athena_workgroup" not in outputs
+    assert 'output "historical_analytics_workgroup_name"' in outputs
+    assert "module.historical_analytics.workgroup_name" in outputs
     assert "query_role" not in outputs
+    assert "named_query" not in outputs
 
 
 def test_result_bucket_naming_is_separate_from_canonical_facts():
@@ -166,10 +168,12 @@ def test_historical_bucket_lookup_is_gated():
 
 def test_no_athena_query_role_or_sql_tool():
     text = module_text().lower()
-    assert "aws_athena_workgroup" not in text
+    assert "aws_athena_named_query" not in text
+    assert "aws_athena_prepared_statement" not in text
     assert "aws_glue_crawler" not in text
     assert "aws_iam_role" not in text
     assert "aws_dynamodb" not in text
+    assert "startqueryexecution" not in text
     assert "execute_sql" not in text
     assert "run_query" not in text
     assert "query_athena" not in text
@@ -346,6 +350,78 @@ def test_schema_version_parameters_are_v1_constants():
     assert 'geometry_schema_version = "wilvor.historical.hazard_geometry_fact.v1"' in locals_text
 
 
+def test_athena_workgroup_is_gated_and_named():
+    athena = read(MODULE_DIR / "athena.tf")
+    locals_text = read(MODULE_DIR / "locals.tf")
+    outputs = read(MODULE_DIR / "outputs.tf")
+    text = module_text()
+    assert text.count('resource "aws_athena_workgroup"') == 1
+    assert 'resource "aws_athena_workgroup" "historical_analytics"' in athena
+    assert "count = local.enabled ? 1 : 0" in athena
+    assert 'workgroup_name         = "${var.name_prefix}-historical-analytics"' in locals_text
+    assert "name        = local.workgroup_name" in athena
+    assert 'state       = "ENABLED"' in athena
+    assert "aws_athena_named_query" not in text
+    assert "aws_athena_prepared_statement" not in text
+    assert "aws_iam_role" not in text
+    assert (
+        'value = local.enabled ? aws_athena_workgroup.historical_analytics[0].name : ""'
+        in outputs
+    )
+    assert 'output "workgroup_name"' in outputs
+    assert 'output "query_role"' not in outputs
+
+
+def test_athena_workgroup_controls_and_cutoff():
+    athena = read(MODULE_DIR / "athena.tf")
+    variables = read(MODULE_DIR / "variables.tf")
+    assert "enforce_workgroup_configuration    = true" in athena
+    assert "publish_cloudwatch_metrics_enabled = true" in athena
+    assert "requester_pays_enabled             = false" in athena
+    assert "bytes_scanned_cutoff_per_query     = var.bytes_scanned_cutoff_per_query" in athena
+    assert "variable \"bytes_scanned_cutoff_per_query\"" in variables
+    assert "default     = 10737418240" in variables
+    assert "10000000" in variables
+    assert "bytes_scanned_cutoff_per_query must be at least 10000000 bytes" in variables
+    assert "10000000000" not in variables
+    assert "10000000000" not in athena
+
+
+def test_athena_results_use_disposable_bucket_only():
+    athena = read(MODULE_DIR / "athena.tf")
+    locals_text = read(MODULE_DIR / "locals.tf")
+    assert 'athena_results_prefix  = "athena-results/"' in locals_text
+    assert (
+        'output_location       = "s3://${aws_s3_bucket.athena_results[0].id}/${local.athena_results_prefix}"'
+        in athena
+    )
+    assert "local.historical_bucket_id" not in athena
+    assert "historical-facts-" not in athena
+    assert "dataset=" not in athena
+    assert "metadata/" not in athena
+    assert "errors/" not in athena
+    assert 'encryption_option = "SSE_S3"' in athena
+    assert "expected_bucket_owner = var.account_id" in athena
+    assert "acl_configuration" not in athena
+    assert "s3_acl_option" not in athena
+
+
+def test_athena_engine_is_version_3():
+    athena = read(MODULE_DIR / "athena.tf")
+    assert 'selected_engine_version = "Athena engine version 3"' in athena
+    assert "Auto" not in athena
+
+
+def test_result_reuse_is_not_a_workgroup_setting():
+    text = module_text()
+    readme = read(MODULE_DIR / "README.md")
+    assert "result_reuse" not in text.lower()
+    assert "ResultReuseByAgeConfiguration" not in text
+    assert "reuse" not in read(MODULE_DIR / "athena.tf").lower()
+    assert "Result reuse is **not** a workgroup setting" in readme
+    assert "ResultReuseByAgeConfiguration.Enabled = false" in readme
+
+
 def test_data_plane_root_is_unchanged():
     main = read(DATA_PLANE_MAIN)
     assert 'source = "../../modules/historical_facts_data"' in main
@@ -371,7 +447,7 @@ def test_readme_documents_ownership_and_lifecycle():
         "3-day",
         "dev-down",
         "DEACTIVATE",
-        "does **not** create Athena workgroups",
+        "does **not** create crawlers, dashboards, runtime query IAM roles",
         "historical-data-down.ps1",
         "enable_historical_analytics",
         "OpenX",
@@ -383,5 +459,11 @@ def test_readme_documents_ownership_and_lifecycle():
         "materialized_at_utc",
         "COUNT(*) = 0",
         "evaluate_collection_window",
+        "ResultReuseByAgeConfiguration.Enabled = false",
+        "wilvor-dev-historical-analytics",
+        "Athena engine version 3",
+        "10737418240",
+        "expected_bucket_owner",
+        "athena-results/",
     ):
         assert needle in readme
