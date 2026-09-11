@@ -17,3 +17,23 @@ output "historical_bucket_name" {
 output "historical_bucket_arn" {
   value = local.historical_bucket_arn
 }
+
+output "database_name" {
+  value = local.enabled ? aws_glue_catalog_database.historical_facts[0].name : ""
+}
+
+output "encounter_table_name" {
+  value = local.enabled ? aws_glue_catalog_table.structured["encounter"].name : ""
+}
+
+output "risk_table_name" {
+  value = local.enabled ? aws_glue_catalog_table.structured["risk"].name : ""
+}
+
+output "hazard_version_table_name" {
+  value = local.enabled ? aws_glue_catalog_table.structured["hazard_version"].name : ""
+}
+
+output "hazard_geometry_table_name" {
+  value = local.enabled ? aws_glue_catalog_table.hazard_geometry[0].name : ""
+}

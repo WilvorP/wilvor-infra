@@ -363,3 +363,23 @@ output "enable_historical_analytics" {
 output "historical_analytics_results_bucket_name" {
   value = module.historical_analytics.results_bucket_name
 }
+
+output "historical_analytics_glue_database_name" {
+  value = module.historical_analytics.database_name
+}
+
+output "historical_analytics_encounter_table_name" {
+  value = module.historical_analytics.encounter_table_name
+}
+
+output "historical_analytics_risk_table_name" {
+  value = module.historical_analytics.risk_table_name
+}
+
+output "historical_analytics_hazard_version_table_name" {
+  value = module.historical_analytics.hazard_version_table_name
+}
+
+output "historical_analytics_hazard_geometry_table_name" {
+  value = module.historical_analytics.hazard_geometry_table_name
+}
