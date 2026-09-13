@@ -487,6 +487,31 @@ Do not manually remove state entries until the remaining resources and destroy e
 
 ---
 
+## `validate_historical_query_runtime.py`
+
+Operator runner for Phase 2B deterministic historical analytics.
+It injects AWS clients into `HistoricalAnalyticsOperations` and calls
+only the four closed V1 operations. It is not a generic SQL tool.
+
+```powershell
+$env:PYTHONPATH = "functions\shared"
+python scripts\validate_historical_query_runtime.py --action dry-run `
+    --operation summarize_historical_encounters `
+    --start-utc 2026-09-11T00:15:00Z `
+    --end-utc 2026-09-11T01:30:00Z `
+    --as-of-utc 2026-09-13T20:53:48Z `
+    --account-id 123456789012
+```
+
+Closed actions: `dry-run`, `inspect-coverage`, `run-operation`,
+`snapshot-canonical`, `compare-snapshot`, `iam-proof`, `list-results`.
+
+Dry-run makes zero AWS calls. Live `run-operation` uses operator SSO
+and does **not** prove the unattached query IAM policy. There is no
+`--sql` / `--query-string` interface.
+
+---
+
 # Planned testing additions
 
 The lifecycle scripts are Phase 1 of the infrastructure testing framework.

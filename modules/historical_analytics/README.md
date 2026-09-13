@@ -100,7 +100,8 @@ It is **not** attached to any principal in 2B.5. There is no
 - Future Agent API gets its own Lambda-trust role and will attach this
   policy ARN later. That attachment is **not** part of 2B.5
 - Operator SSO used by live validation does **not** prove this managed
-  policy. 2B.6 owns live/deployed authorization checks
+  policy. 2B.6 retrieved and simulated the deployed document; it did
+  not attach the policy to the operator or create a Lambda role.
 
 Permissions describe only the deterministic historical query path:
 
@@ -124,8 +125,10 @@ credentials to resolve those bucket locations. It is not used by the
 Python executor client.
 
 Static Terraform tests prove intended policy structure. They do not
-prove effective AWS authorization. 2B.6 may retrieve or simulate the
-deployed policy against exact allow/deny pairs.
+prove effective AWS authorization. 2B.6 retrieved the deployed default
+policy version and simulated explicit allow/deny pairs. Simulation is
+identity-policy logic only: it does not prove SCPs, permissions
+boundaries, resource policies, or a future Lambda principal.
 
 ## Glue catalog (Phase 2A.2b)
 
@@ -355,6 +358,29 @@ Dry-run makes no AWS calls:
 ```powershell
 .\scripts\validate_historical_analytics.ps1 -ValidationDate 2026-09-11 -DryRun
 ```
+
+## Phase 2B closure (2B.6)
+
+Deterministic historical analytics is complete:
+
+- four V1 operations through `HistoricalAnalyticsOperations`
+- authoritative pre/post coverage certification
+- fixed SQL only, bounded Athena executor, result reuse disabled
+- least-privilege unattached query policy
+- live operator validation via
+  `scripts/validate_historical_query_runtime.py`
+- persistent facts/metadata survived normal `dev-down`
+
+Custom runtime CloudWatch metrics were **not** added. There is no
+deployed Agent API/Lambda to emit them. 2B observability remains the
+existing Athena workgroup dashboard, S3 result-bucket widgets, and
+EventBridge FAILED/CANCELED → `Wilvor/Pipeline`
+`HistoricalAnalyticsQueryFailed` alarm. That monitoring is
+observability only, never query-correctness evidence.
+
+Operator SSO proved runtime behavior. It did **not** prove future
+Lambda-role authorization. No Agent API and no LLM exist yet.
+Phase 2C is next.
 
 ### Frontend Vitest (2A.2d carry-forward)
 

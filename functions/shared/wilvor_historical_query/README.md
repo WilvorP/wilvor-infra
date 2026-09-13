@@ -9,23 +9,24 @@ authoritative coverage metadata, and returns typed V1 domain results.
 
 **2B.1 — implemented:** fixed registry and SQL renderer.
 
-**2B.2 — implemented:** bounded deterministic Athena executor. Offline
-fake-client unit tests only. Live AWS validation has **not** happened.
+**2B.2 — implemented:** bounded deterministic Athena executor.
 
 **2B.3 — implemented:** authoritative coverage metadata store and
-fail-closed coverage gate. Offline fake-S3 unit tests only. No Athena
-call is made by this layer.
+fail-closed coverage gate.
 
 **2B.4 — implemented:** four deterministic V1 historical operations.
-Offline fake coverage-gate and fake-executor unit tests only.
 
 **2B.5 — implemented:** reusable, unattached historical analytics query
 IAM policy in `modules/historical_analytics`. No execution role, no
-attachment, no Operational API change. Static Terraform tests only.
+attachment, no Operational API change.
+
+**2B.6 — implemented:** operator live-validation runner
+`scripts/validate_historical_query_runtime.py`, deployed-policy
+simulation, disposable lifecycle proof. Phase 2B is complete. There is
+still no Agent API, no Lambda execution role, and no LLM.
 
 **Still not implemented:**
 
-- **2B.6:** live validation / observability / lifecycle
 - **Phase 2C:** `wilvor_ai` ToolResult adapters
 
 ## Authority boundary
