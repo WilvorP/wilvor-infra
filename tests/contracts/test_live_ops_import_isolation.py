@@ -60,6 +60,8 @@ assert hasattr(wilvor_ai, 'ToolInputField')
 assert hasattr(wilvor_ai, 'SourceCompleteness')
 assert hasattr(wilvor_ai, 'MatchCardinality')
 assert hasattr(wilvor_ai, 'QueryExecutionTrace')
+assert hasattr(wilvor_ai, 'SpecialistRequest')
+assert hasattr(wilvor_ai, 'ModelDecision')
 assert not hasattr(wilvor_ai, 'HISTORICAL_ANALYTICS_TOOLS')
 assert not hasattr(wilvor_ai, 'HistoricalAnalyticsOperations')
 """

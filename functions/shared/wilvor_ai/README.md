@@ -312,7 +312,7 @@ Adapters do not expose AWS, SQL, query ids, or current/geography fallback.
 
 Phase 2C is complete. The following are not implemented yet:
 
-- model-backed Historical Analytics Specialist
+- model-backed Historical Analytics Specialist runtime
 - Master Agent
 - Agent API
 - LLM/provider integration
@@ -320,11 +320,101 @@ Phase 2C is complete. The following are not implemented yet:
 - query-policy attachment to a future Agent API role
 - hybrid current + historical synthesis
 
+## Phase 3A-preflight provider-neutral specialist contracts
+
+Phase 3A-preflight adds provider-neutral types only. It does not implement a
+specialist runtime, tool-calling loop, dispatcher, evidence verifier,
+deterministic renderer, fake provider, or any LLM/provider SDK. Provider
+choice remains deferred. Core packages still do not import AWS or model
+SDKs.
+
+`ToolInputField` now carries optional generic `value_type` and
+`description` for later provider-neutral schema generation. Default
+`STRING` and a missing description are omitted from `to_dict()` so
+established `{name, required}` payloads remain accepted. This metadata is
+not JSON Schema, not an enum allowlist, not min/max, and not domain
+validation. Historical catalog types/descriptions are populated in 3A.1.
+
+New modules `wilvor_ai.specialist_contracts` and `wilvor_ai.model_contracts`
+are dependency-free and root-exported. `import wilvor_ai` remains
+contracts-only: it does not load `historical_analytics`, `live_ops`,
+`wilvor_historical_query`, or provider SDKs.
+
+Trusted invocation context is `HistoricalSpecialistTrustedContext` with
+only `as_of_utc`. That value is the requested deterministic evaluation
+instant that will be injected into historical tools if they execute. It is
+not automatically `SpecialistResult` evidence.
+
+A future Historical Analytics Specialist constructor binds dependencies:
+
+```text
+HistoricalAnalyticsSpecialist(
+    provider=ModelProvider,
+    operations=HistoricalAnalyticsOperations,
+)
+```
+
+then:
+
+```text
+run(request: SpecialistRequest, context: HistoricalSpecialistTrustedContext)
+    -> SpecialistResult
+```
+
+`run()` does not accept provider, operations, or AWS clients. A later
+Master Agent does not need to know how Athena, coverage, S3, Glue, or
+`HistoricalAnalyticsOperations` are constructed.
+
+`ModelDecision` is a discriminated union: exactly one of `TOOL_CALLS`,
+`FINAL_CLAIMS`, `UNSUPPORTED`, or `REFUSAL`. Mixed or empty decisions are
+rejected at construction. `REFUSAL` means the provider/model did not
+perform a valid turn; a future runtime should normally map it to
+`PROVIDER_FAILED`, not `UNSUPPORTED`. `UNSUPPORTED` is a specialist
+capability judgment with a closed `UnsupportedReason`.
+
+V1 model-generated operational prose is not part of these contracts.
+`ModelDecision` and typed claims have no `answer` / `candidate_answer` /
+`claim_text`. `SpecialistResult.answer` will later hold deterministic
+renderer output from verified claims, not copied model wording.
+
+Claims are typed records (`EXACT_COUNT`, `LOWER_BOUND_COUNT`,
+`VERIFIED_ZERO`, `HISTORICAL_WINDOW`, `RECORD_IDENTITY`, `LIMITATION`,
+`UNAVAILABLE`). Each references `tool_call_id`. `metric_id` is a bounded
+code string; the future historical verifier owns the allowed metric
+catalog. `UNSUPPORTED` is a status/reason, not an evidence claim.
+
+Mandatory safety limitations are deterministic. A later specialist must
+independently propagate applicable `ToolResult` limitations, including
+`RESULT_TRUNCATED`, `HAZARD_VERSION_WINDOW_LIMITATION`, coverage/query
+unavailability, and mapping integrity failures. A model `LIMITATION` claim
+cannot suppress those by omission. `PARTIAL`, `UNAVAILABLE`, and
+`VERIFIED_ZERO` proof requirements remain deterministic
+status/evidence semantics.
+
+`SpecialistResult.evaluated_as_of_utc` is optional evidence-backed
+evaluation time from executed `ToolResult`s. The contract constructor does
+not copy trusted `as_of_utc` onto it. Unsupported or provider failure
+before tools, and pre-operation `INVALID_REQUEST` results with
+`ToolResult.as_of_utc is None`, leave it `None`. 3A.2 derives the value.
+
+Future 3A.2 list policy for `list_historical_encounters` (not implemented
+here; Phase 2B `LIST_DEFAULT_LIMIT=100` and `LIST_MAX_LIMIT=200` stay
+unchanged): omitted limit may become an explicit specialist default of 20;
+supplied `1..25` executes unchanged; supplied `>25` is rejected with zero
+historical operations for that call and one bounded correction. No silent
+clamping. `ToolInputField` does not encode that max.
+
+`ModelTurnRequest` is deliberately narrow (`user_text`, optional
+`instruction_ref`) so 3A.1 can add tool schemas and projections later
+without baking a vendor chat transcript now.
+
+Phase 3A is not complete.
+
 ## Tests
 
 Run the offline contract suite from the repository root, including Phase 0
-contracts, Phase 1E Live Operations adapter tests, and Phase 2C historical
-adapter tests:
+contracts, Phase 1E Live Operations adapter tests, Phase 2C historical
+adapter tests, and Phase 3A-preflight specialist contracts:
 
 ```powershell
 python -m pytest tests/contracts -q -p no:cacheprovider

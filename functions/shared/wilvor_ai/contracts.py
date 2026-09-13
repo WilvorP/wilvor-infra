@@ -23,6 +23,7 @@ AUTHORITY_SCHEMA_VERSION = "wilvor.ai.authority.v1"
 # Field-allowlist names and provenance tokens are bounded identifiers.
 # They are not provider JSON Schema, SQL, or AWS configuration.
 TOOL_INPUT_FIELD_NAME_MAX_LENGTH = 64
+TOOL_INPUT_FIELD_DESCRIPTION_MAX_LENGTH = 512
 PROVENANCE_TOKEN_MAX_LENGTH = 256
 TOOL_INPUT_FIELD_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
@@ -75,6 +76,21 @@ class ToolResultStatus(str, Enum):
 
 class AgentAuthorityMode(str, Enum):
     READ_ONLY_ADVISORY = "READ_ONLY_ADVISORY"
+
+
+class ToolInputValueType(str, Enum):
+    """Generic catalog value type for later provider-neutral schema generation.
+
+    This is not JSON Schema, a provider type, an enum allowlist, or domain
+    validation. Domain request contracts remain authoritative.
+    """
+
+    STRING = "STRING"
+    INTEGER = "INTEGER"
+    NUMBER = "NUMBER"
+    BOOLEAN = "BOOLEAN"
+    OBJECT = "OBJECT"
+    ARRAY = "ARRAY"
 
 
 class AgentCapability(str, Enum):
@@ -306,6 +322,12 @@ class ToolInputField:
     OpenAI function schema, JSON Schema, a provider schema, a type
     validator, or a replacement for domain request validation.
 
+    ``value_type`` and ``description`` are optional generic schema metadata
+    for a later provider-neutral builder. They do not encode min/max, enum
+    values, regex, or domain request validation. Default ``STRING`` and a
+    missing description omit those keys so established ``{name, required}``
+    payloads stay compatible.
+
     Future provider-schema generation must use a trusted catalog or bound
     adapter surface. It must not introspect unbound functions that accept
     trusted runtime context.
@@ -313,6 +335,8 @@ class ToolInputField:
 
     name: str
     required: bool
+    value_type: ToolInputValueType = ToolInputValueType.STRING
+    description: str | None = None
 
     def __post_init__(self) -> None:
         errors = _validate_bounded_text(
@@ -330,23 +354,53 @@ class ToolInputField:
         if not isinstance(self.required, bool):
             errors.append("invalid_required")
 
+        if not isinstance(self.value_type, ToolInputValueType):
+            errors.append("invalid_value_type")
+
+        errors.extend(
+            _validate_bounded_text(
+                self.description,
+                "description",
+                optional=True,
+                max_length=TOOL_INPUT_FIELD_DESCRIPTION_MAX_LENGTH,
+            )
+        )
+
         if errors:
             raise ContractValidationError(errors)
 
     def to_dict(self) -> dict[str, JsonValue]:
-        return {
+        payload: dict[str, JsonValue] = {
             "name": self.name,
             "required": self.required,
         }
+        # Default STRING and unset description are omitted so established
+        # allowlist objects keep their existing {name, required} wire shape.
+        if self.value_type is not ToolInputValueType.STRING:
+            payload["value_type"] = self.value_type.value
+        if self.description is not None:
+            payload["description"] = self.description
+        return payload
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ToolInputField":
         if not isinstance(data, Mapping):
             raise ContractValidationError("invalid_tool_input_field")
 
+        if "value_type" in data:
+            value_type = _parse_enum(
+                ToolInputValueType,
+                data["value_type"],
+                "value_type",
+            )
+        else:
+            value_type = ToolInputValueType.STRING
+
         return cls(
             name=_required(data, "name"),
             required=_required(data, "required"),
+            value_type=value_type,
+            description=data["description"] if "description" in data else None,
         )
 
 

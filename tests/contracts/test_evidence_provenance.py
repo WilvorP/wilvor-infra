@@ -17,6 +17,7 @@ from wilvor_ai import (
     SourceCompleteness,
     TemporalScope,
     ToolInputField,
+    ToolInputValueType,
     ToolResult,
     ToolResultStatus,
 )
@@ -60,10 +61,52 @@ def test_tool_input_field_required_and_optional_round_trip():
     required = ToolInputField(name="start_utc", required=True)
     optional = ToolInputField(name="aircraft_id", required=False)
 
+    assert required.value_type is ToolInputValueType.STRING
+    assert required.description is None
     assert required.to_dict() == {"name": "start_utc", "required": True}
     assert optional.to_dict() == {"name": "aircraft_id", "required": False}
     assert ToolInputField.from_dict(required.to_dict()) == required
     assert ToolInputField.from_dict(optional.to_dict()) == optional
+    assert ToolInputField.from_dict({"name": "start_utc", "required": True}) == required
+
+
+def test_tool_input_field_integer_type_and_description_round_trip():
+    field = ToolInputField(
+        name="limit",
+        required=False,
+        value_type=ToolInputValueType.INTEGER,
+        description="Maximum historical encounter rows to return",
+    )
+
+    assert field.to_dict() == {
+        "name": "limit",
+        "required": False,
+        "value_type": "INTEGER",
+        "description": "Maximum historical encounter rows to return",
+    }
+    assert ToolInputField.from_dict(field.to_dict()) == field
+
+
+def test_tool_input_field_rejects_invalid_value_type():
+    assert_validation_error(
+        "invalid_value_type",
+        lambda: ToolInputField(
+            name="start_utc",
+            required=True,
+            value_type="STRING",
+        ),
+    )
+
+
+def test_tool_input_field_rejects_blank_description():
+    assert_validation_error(
+        "invalid_description",
+        lambda: ToolInputField(
+            name="start_utc",
+            required=True,
+            description=" ",
+        ),
+    )
 
 
 @pytest.mark.parametrize(

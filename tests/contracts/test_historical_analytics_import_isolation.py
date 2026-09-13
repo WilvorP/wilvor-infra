@@ -57,6 +57,8 @@ assert 'openai' not in sys.modules
 assert 'anthropic' not in sys.modules
 assert 'langgraph' not in sys.modules
 assert hasattr(wilvor_ai, 'ToolResult')
+assert hasattr(wilvor_ai, 'SpecialistRequest')
+assert hasattr(wilvor_ai, 'ModelDecision')
 assert not hasattr(wilvor_ai, 'HISTORICAL_ANALYTICS_TOOLS')
 assert not hasattr(wilvor_ai, 'HistoricalAnalyticsAdapter')
 assert not hasattr(wilvor_ai, 'map_historical_query_response')
