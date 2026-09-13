@@ -251,10 +251,14 @@ visualization generation, an Agent API/runtime, API Gateway changes, an `/ai`
 page, dashboard changes, DynamoDB changes, IAM, Terraform, deployment, or
 production infrastructure.
 
-Phase 2C-preflight only adds the AI-visible field allowlist and generic
-Evidence provenance contracts. It does not implement historical adapters,
-`HISTORICAL_ANALYTICS_TOOLS`, an Analytics Specialist, or an Agent API.
-Phase 2C is not complete.
+Phase 2C-preflight adds the AI-visible field allowlist and generic
+Evidence provenance contracts. Phase 2C.1 adds
+`wilvor_ai.historical_analytics_mapping`, which translates an already-returned
+`HistoricalQueryResponse` into a Phase 0 `ToolResult`. First-class `Evidence`
+is the provenance authority. Completeness is not freshness. Historical
+callable adapters, `HISTORICAL_ANALYTICS_TOOLS`, an Analytics Specialist, and
+an Agent API are not implemented. `import wilvor_ai` does not load the
+mapping module. No LLM/provider integration exists. Phase 2C is not complete.
 
 ## Tests
 

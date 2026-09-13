@@ -52,6 +52,7 @@ assert 'anthropic' not in sys.modules
 assert 'langgraph' not in sys.modules
 assert 'wilvor_ai.live_ops' not in sys.modules
 assert 'wilvor_ai.historical_analytics' not in sys.modules
+assert 'wilvor_ai.historical_analytics_mapping' not in sys.modules
 assert 'wilvor_historical_query' not in sys.modules
 assert 'botocore' not in sys.modules
 assert hasattr(wilvor_ai, 'ToolResult')
