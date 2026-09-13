@@ -173,6 +173,85 @@ boto3 or read the wall clock.
 Phase 2B/2C must distinguish verified zero facts, unproven collection, and
 query failure.
 
+## Phase 2B-preflight query contracts
+
+This package now owns AWS-free historical analytics **contracts and window
+rules** in `query_contracts.py` and `query_windows.py`. It does **not**
+execute queries. SQL templates, Athena, S3, and IAM belong in a later
+`wilvor_historical_query` runtime. Phase 2C owns `wilvor_ai` adapters.
+
+Dependency direction:
+
+`wilvor_historical` <- `wilvor_historical_query` <- Phase 2C adapters
+
+### V1 operation catalog
+
+Exactly four operations. No geometry, geography, or arbitrary SQL operation.
+
+- `summarize_historical_encounters` (first later implementation)
+- `summarize_historical_risks`
+- `summarize_historical_hazard_versions`
+- `list_historical_encounters`
+
+Requests require an explicit historical window. There is no implicit "all
+history" and no implicit current/now request.
+
+### Window rules
+
+`[start_utc, end_utc)` is UTC-only, canonical `Z`. Naive timestamps and
+non-UTC offsets are rejected, not converted. `start` must precede `end`.
+V1 maximum duration is 7 days. `touched_utc_dates` returns the exact UTC
+calendar dates touched by that half-open interval. It does not generate SQL.
+
+### VERIFIED_ZERO
+
+`VERIFIED_ZERO` means coverage is `EVALUABLE` **and** the operation-specific
+**exact** semantic match count is 0.
+
+- Summaries: exact semantic match count = `physical_record_count`
+- Complete lists (`<= N` matches): exact semantic match count = returned rows
+- Truncated lists (`N+1` fetched): semantic count is **not exact**. Status is
+  `RESULT_TRUNCATED`, `semantic_match_count` is null, and
+  `minimum_match_count = N + 1`. LIMIT N+1 cannot claim an exact total.
+
+`is_verified_zero(coverage, semantic_match_count)` does not accept executor
+`rows_returned`. Unknown/null semantic counts cannot be verified zero.
+A COUNT query that returns one result row with value 0 is still
+`VERIFIED_ZERO` when coverage is `EVALUABLE` and the exact semantic count is
+0. Non-`EVALUABLE` coverage can never be `VERIFIED_ZERO`.
+Physical row counts are not encounter, aircraft, hazard, or risk-entity
+counts.
+
+Caller-supplied V1 ID filters are field-specific (`aircraft_id`, `hazard_id`,
+`encounter_id`). Output-only `dedup_id` may contain `|`; request IDs do not
+accept `|`.
+
+### Coverage authority
+
+`evaluate_collection_window` remains completeness authority. Its evaluability
+values stay `NOT_ACTIVE` / `NOT_YET_EVALUABLE` / `EVALUABLE` /
+`GAP_OR_UNCERTAIN`. Future inconsistent epoch ownership uses status
+`COVERAGE_BLOCKED` with reason `EPOCH_AMBIGUOUS`. That is not a fifth
+evaluability value.
+
+Until a deterministic metadata index exists, the future coverage store must
+load **all** control records under `metadata/epoch/`, `activation/`,
+`deactivation/`, `coverage/`, `gaps/`, `resolutions/`, and `incidents/`,
+then filter in memory. Do not rely on a bounded S3 listing of the requested
+window. If activation/deactivation pairing is needed, reuse or refactor
+helpers in `wilvor_historical.coverage`; do not duplicate evaluator
+semantics in the AWS runtime.
+
+### What V1 does not support
+
+No airport, callsign, state, region, California, geometry, or current
+containment request fields. Encounter facts store no aircraft/intersection
+coordinates, so later geometry work cannot claim an impact occurred inside a
+region from encounter + hazard polygon alone.
+
+Future list SQL ordering is code-owned (`event_time_utc`, `record_id`,
+`dedup_id` ascending) and is not a request field.
+
 ## Later phases
 
 - **2A.1b:** EventBridge / Firehose / S3 persistence.
@@ -180,7 +259,8 @@ query failure.
   owns only the pure contracts/evaluator).
 - **2A.2:** Glue / Athena catalog. Operator validation of catalog
   fidelity lives outside this package and does not determine coverage.
-- **2B:** deterministic historical queries.
+- **2B-preflight:** query contracts and window semantics (this package).
+- **2B.1+:** deterministic SQL/runtime in `wilvor_historical_query`.
 - **2C:** analytics ToolResult adapters.
 
 No AI, Glue, Athena, S3, or Firehose belongs in this package.

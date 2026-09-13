@@ -40,6 +40,8 @@ def test_package_source_has_no_aws_ai_or_currentness_imports():
         "langgraph",
         "openai",
         "anthropic",
+        "athena",
+        "pyathena",
     )
     for path in PACKAGE_DIR.glob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
@@ -66,6 +68,9 @@ assert not any(
 )
 assert hasattr(wilvor_historical, 'fact_from_event')
 assert hasattr(wilvor_historical, 'build_hazard_geometry_fact')
+assert hasattr(wilvor_historical, 'is_verified_zero')
+assert hasattr(wilvor_historical, 'touched_utc_dates')
+assert 'athena' not in sys.modules
 """
     completed = _run_isolated(script)
     assert completed.returncode == 0, completed.stderr + completed.stdout

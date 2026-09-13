@@ -1,8 +1,8 @@
 """Deterministic historical operational fact contracts.
 
 This package maps already-produced operational data into versioned
-historical facts. It does not persist facts, query AWS, or decide
-operational currentness.
+historical facts and owns AWS-free historical query contracts. It does
+not persist facts, query AWS, or decide operational currentness.
 """
 
 from .contracts import (
@@ -40,6 +40,19 @@ from .from_events import (
     build_risk_fact,
     fact_from_event,
 )
+from .query_contracts import (
+    V1_HISTORICAL_OPERATIONS,
+    HistoricalOperation,
+    HistoricalQueryError,
+    HistoricalQueryStatus,
+    is_verified_zero,
+)
+from .query_windows import (
+    MAX_QUERY_WINDOW_DAYS,
+    QueryWindowError,
+    parse_query_window,
+    touched_utc_dates,
+)
 
 __all__ = [
     "COLLECTION_CONTROL_DATASET",
@@ -69,4 +82,13 @@ __all__ = [
     "build_hazard_version_fact",
     "build_risk_fact",
     "fact_from_event",
+    "V1_HISTORICAL_OPERATIONS",
+    "HistoricalOperation",
+    "HistoricalQueryError",
+    "HistoricalQueryStatus",
+    "MAX_QUERY_WINDOW_DAYS",
+    "QueryWindowError",
+    "is_verified_zero",
+    "parse_query_window",
+    "touched_utc_dates",
 ]
