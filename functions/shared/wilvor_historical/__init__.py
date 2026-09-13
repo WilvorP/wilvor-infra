@@ -22,6 +22,7 @@ from .contracts import (
 from .coverage import (
     DEFAULT_COLLECTION_EVALUATION_POLICY,
     CollectionEvaluationPolicy,
+    collection_epoch_active_intervals,
     evaluate_collection_window,
     required_streams_for,
 )
@@ -63,6 +64,7 @@ __all__ = [
     "CollectionEvaluationPolicy",
     "Evaluability",
     "HistoricalCoverageError",
+    "collection_epoch_active_intervals",
     "evaluate_collection_window",
     "required_streams_for",
     "COORDINATES_AXIS_LONLAT",

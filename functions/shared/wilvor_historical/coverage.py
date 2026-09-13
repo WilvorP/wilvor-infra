@@ -20,6 +20,7 @@ from .coverage_contracts import (
     STAGING_STATE,
     CollectionActivationRecord,
     CollectionDeactivationRecord,
+    CollectionEpochRecord,
     CollectionGapRecord,
     CollectionGapResolutionRecord,
     CollectionProbeRecord,
@@ -541,6 +542,19 @@ def _active_intervals(
     return [(start, end or far_future) for start, end in periods]
 
 
+def collection_epoch_active_intervals(
+    activations: Sequence[CollectionActivationRecord],
+    deactivations: Sequence[CollectionDeactivationRecord],
+) -> tuple[tuple[datetime, datetime], ...]:
+    """Closed active intervals for one epoch.
+
+    This is the sole activation/deactivation pairing used by
+    ``evaluate_collection_window`` and the Phase 2B.3 coverage gate.
+    """
+
+    return tuple(_active_intervals(_build_active_periods(activations, deactivations)))
+
+
 def _effective_recovery(
     gap: CollectionGapRecord,
     resolutions: Sequence[CollectionGapResolutionRecord],
@@ -609,6 +623,43 @@ def missing_probe_resolution_dedup_id(
     if not gap:
         raise HistoricalCoverageError("gap_dedup_id is required")
     return f"resolved|{epoch}|{gap}|RESOLVED_PROVEN"
+
+
+def collection_epoch_from_dict(payload: dict[str, Any]) -> CollectionEpochRecord:
+    return CollectionEpochRecord(
+        control_schema_version=payload["control_schema_version"],
+        record_type=ControlRecordType(payload["record_type"]),
+        collection_epoch_id=payload["collection_epoch_id"],
+        bucket_name=payload["bucket_name"],
+        created_at_utc=payload["created_at_utc"],
+        dedup_id=payload["dedup_id"],
+    )
+
+
+def collection_activation_from_dict(
+    payload: dict[str, Any],
+) -> CollectionActivationRecord:
+    return CollectionActivationRecord(
+        control_schema_version=payload["control_schema_version"],
+        record_type=ControlRecordType(payload["record_type"]),
+        collection_epoch_id=payload["collection_epoch_id"],
+        enabled_at_utc=payload["enabled_at_utc"],
+        created_at_utc=payload["created_at_utc"],
+        dedup_id=payload["dedup_id"],
+    )
+
+
+def collection_deactivation_from_dict(
+    payload: dict[str, Any],
+) -> CollectionDeactivationRecord:
+    return CollectionDeactivationRecord(
+        control_schema_version=payload["control_schema_version"],
+        record_type=ControlRecordType(payload["record_type"]),
+        collection_epoch_id=payload["collection_epoch_id"],
+        deactivated_at_utc=payload["deactivated_at_utc"],
+        created_at_utc=payload["created_at_utc"],
+        dedup_id=payload["dedup_id"],
+    )
 
 
 def collection_gap_from_dict(payload: dict[str, Any]) -> CollectionGapRecord:
@@ -822,8 +873,9 @@ def evaluate_collection_window(
             reason="window_ends_after_as_of",
         )
 
-    periods = _build_active_periods(epoch_activations, epoch_deactivations)
-    active_slices = _active_intervals(periods)
+    active_slices = list(
+        collection_epoch_active_intervals(epoch_activations, epoch_deactivations)
+    )
     inactive_in_window = uncovered_slices(start, end, active_slices)
     active_in_window = uncovered_slices(start, end, inactive_in_window)
     fully_inactive = not active_in_window

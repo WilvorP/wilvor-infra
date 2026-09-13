@@ -59,8 +59,12 @@ def test_query_package_source_has_no_aws_or_ai_imports():
         assert imported.isdisjoint(forbidden), path
     assert "wilvor_historical" in _imported_roots(PACKAGE_DIR / "query_sql.py")
     assert "wilvor_historical" in _imported_roots(PACKAGE_DIR / "query_registry.py")
+    assert "wilvor_historical" in _imported_roots(PACKAGE_DIR / "coverage_store.py")
+    assert "wilvor_historical" in _imported_roots(PACKAGE_DIR / "coverage_gate.py")
     assert "wilvor_historical" not in _imported_roots(PACKAGE_DIR / "executor.py")
     assert "wilvor_historical" not in _imported_roots(PACKAGE_DIR / "errors.py")
+    assert "executor" not in _imported_roots(PACKAGE_DIR / "coverage_store.py")
+    assert "executor" not in _imported_roots(PACKAGE_DIR / "coverage_gate.py")
 
 
 def test_historical_package_still_does_not_import_query_runtime():
@@ -89,6 +93,8 @@ assert hasattr(wilvor_historical_query, 'render_historical_operation')
 assert hasattr(wilvor_historical_query, 'AthenaExecutor')
 assert hasattr(wilvor_historical_query, 'InternalQueryId')
 assert hasattr(wilvor_historical_query, 'render_fixed_query')
+assert hasattr(wilvor_historical_query, 'CoverageGate')
+assert hasattr(wilvor_historical_query, 'CoverageStore')
 assert not hasattr(wilvor_historical_query, 'execute_sql')
 assert not hasattr(wilvor_historical_query.AthenaExecutor, 'execute')
 assert not hasattr(wilvor_historical_query, '_execute_rendered')
@@ -141,3 +147,20 @@ def test_executor_has_no_raw_sql_or_coverage_hooks():
     assert not hasattr(executor.AthenaExecutor, "execute_query_string")
     signature = inspect.signature(executor.AthenaExecutor.execute_fixed)
     assert list(signature.parameters) == ["self", "query_id", "request"]
+
+
+def test_coverage_modules_do_not_import_or_call_the_executor():
+    from wilvor_historical_query import coverage_gate, coverage_store
+
+    for module in (coverage_gate, coverage_store):
+        source = inspect.getsource(module)
+        assert "AthenaExecutor" not in source
+        assert "execute_fixed" not in source
+        assert "render_fixed_query" not in source
+        assert "datetime.now" not in source
+        assert "datetime.utcnow" not in source
+        assert "time.time(" not in source
+        assert "is_verified_zero" not in source
+    assert "evaluate_collection_window" in inspect.getsource(coverage_gate)
+    assert "evaluate_collection_window" not in inspect.getsource(coverage_store)
+    assert "evaluate_collection_window" not in inspect.getsource(executor)

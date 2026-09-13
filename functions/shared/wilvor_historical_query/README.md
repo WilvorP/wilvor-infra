@@ -11,9 +11,12 @@ through an injected, bounded Athena client.
 **2B.2 — implemented:** bounded deterministic Athena executor. Offline
 fake-client unit tests only. Live AWS validation has **not** happened.
 
+**2B.3 — implemented:** authoritative coverage metadata store and
+fail-closed coverage gate. Offline fake-S3 unit tests only. No Athena
+call is made by this layer.
+
 **Still not implemented:**
 
-- **2B.3:** coverage S3 loader / gate
 - **2B.4:** domain operations
 - **2B.5:** query IAM policy
 - **2B.6:** live validation / observability
@@ -215,7 +218,54 @@ database, output location, generic typed rows (`column -> str | None`),
 
 The executor does **not** determine `VERIFIED_ZERO`. It does not call
 `evaluate_collection_window` or `is_verified_zero`. A successful
-aggregate row containing zero is just query data. Coverage (2B.3) and
-semantic interpretation (2B.4) come later.
+aggregate row containing zero is just query data.
 
 Default logging of rendered SQL is not added in this subphase.
+
+## Coverage store and gate (2B.3)
+
+Phase 2A.1 `evaluate_collection_window` remains the sole completeness
+authority. The 2B.3 layer only loads persisted control evidence and
+calls that evaluator.
+
+Metadata keys are partitioned by write/created time. V1 therefore lists
+**all** objects under:
+
+`metadata/epoch/`, `metadata/activation/`, `metadata/deactivation/`,
+`metadata/coverage/`, `metadata/gaps/`, `metadata/resolutions/`,
+`metadata/incidents/`
+
+It does not restrict listing to the requested historical dates, a
+current epoch, or a newest-N-days horizon. There is no metadata cache
+or coverage index yet.
+
+Phase 2A.1 writers persist `*.json` control records only. They do not
+create S3 folder-marker objects under the authoritative prefixes. A
+listed key ending in `/` is malformed coverage metadata and fails
+closed, including zero-byte and non-zero trailing-slash objects.
+Unexpected empty objects also fail closed. Listing fails closed on a
+truncated page without `NextContinuationToken`, a repeated or cyclic
+continuation token, or the same object key appearing twice in one
+load. Distinct keys with similar record content are not deduplicated.
+
+`as_of_utc` is injected by the caller. The store/gate do not read the
+wall clock.
+
+Ownership uses the same activation/deactivation pairing as the
+evaluator (`collection_epoch_active_intervals`):
+
+- sequential non-overlapping epochs are sliced and each owned slice is
+  evaluated separately
+- overlapping active periods → block with reason `EPOCH_AMBIGUOUS`
+  (`Evaluability` stays `None`; this is not a fifth evaluability value)
+- any inactive remainder of the requested window → `NOT_ACTIVE`
+- zero epoch records → `COVERAGE_STORE_UNAVAILABLE`
+
+A required-dataset result other than `EVALUABLE` blocks the whole
+future operation. Unrelated-stream gaps (for example geometry) do not
+contaminate an encounter-only request.
+
+The coverage layer does not instantiate `AthenaExecutor`, render SQL,
+or inspect fact row counts. 2B.4 will run this gate first and call the
+executor only when `allowed_to_query` is true. Domain operations and
+`VERIFIED_ZERO` are not implemented here.

@@ -29,6 +29,7 @@ from wilvor_historical.coverage import (
     domain_3b_canonical_interval,
     domain_3b_gap_record,
     domain_3b_impairments_from_metrics,
+    collection_epoch_active_intervals,
     evaluate_collection_window,
     parse_control_jsonl,
     pre_firehose_bound_seconds,
@@ -407,6 +408,20 @@ def test_bound_gap_from_incident_blocks_evaluable():
     again = bound_gap_from_incident(incident, collection_epoch_id=EPOCH)
     assert again.dedup_id == bound.dedup_id
     assert again.to_dict() == bound.to_dict()
+
+
+def test_collection_epoch_active_intervals_match_evaluator_pairing():
+    intervals = collection_epoch_active_intervals(
+        [_activation("2026-07-18T00:00:00Z")],
+        [_deactivation("2026-07-18T11:00:00Z")],
+    )
+    assert intervals == ((_utc("2026-07-18T00:00:00Z"), _utc("2026-07-18T11:00:00Z")),)
+    open_intervals = collection_epoch_active_intervals(
+        [_activation("2026-07-18T00:00:00Z")],
+        (),
+    )
+    assert open_intervals[0][0] == _utc("2026-07-18T00:00:00Z")
+    assert open_intervals[0][1] > _utc("2026-07-18T12:15:00Z")
 
 
 def test_window_before_activation_is_not_active():

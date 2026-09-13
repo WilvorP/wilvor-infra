@@ -1,10 +1,18 @@
-"""Deterministic historical analytics query registry and bounded Athena executor.
+"""Deterministic historical analytics query registry, executor, and coverage gate.
 
-Phase 2B.1 owns fixed-query SQL. Phase 2B.2 executes those rendered
-queries through an injected Athena client. This package does not load
-coverage, orchestrate domain operations, or adapt ToolResults.
+Phase 2B.1 owns fixed-query SQL. Phase 2B.2 executes rendered queries
+through an injected Athena client. Phase 2B.3 loads coverage metadata
+and gates Athena. This package does not orchestrate domain operations
+or adapt ToolResults.
 """
 
+from .coverage_gate import CoverageGate, CoverageGateResult
+from .coverage_store import (
+    CoverageStore,
+    CoverageStoreConfig,
+    CoverageStoreError,
+    CoverageStoreErrorCode,
+)
 from .errors import AthenaExecutorError, AthenaExecutorErrorCode
 from .executor import (
     AthenaExecutor,
@@ -30,6 +38,12 @@ from .query_registry import (
 from .query_sql import HistoricalQueryRenderError, sql_string_literal
 
 __all__ = [
+    "CoverageGate",
+    "CoverageGateResult",
+    "CoverageStore",
+    "CoverageStoreConfig",
+    "CoverageStoreError",
+    "CoverageStoreErrorCode",
     "AthenaExecutor",
     "AthenaExecutorConfig",
     "AthenaExecutorError",
