@@ -42,6 +42,14 @@ output "workgroup_name" {
   value = local.enabled ? aws_athena_workgroup.historical_analytics[0].name : ""
 }
 
+output "query_policy_name" {
+  value = local.enabled ? aws_iam_policy.query[0].name : ""
+}
+
+output "query_policy_arn" {
+  value = local.enabled ? aws_iam_policy.query[0].arn : ""
+}
+
 output "dashboard_name" {
   value = local.enabled ? aws_cloudwatch_dashboard.historical_analytics[0].dashboard_name : ""
 }

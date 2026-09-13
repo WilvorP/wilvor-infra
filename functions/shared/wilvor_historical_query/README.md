@@ -19,9 +19,12 @@ call is made by this layer.
 **2B.4 — implemented:** four deterministic V1 historical operations.
 Offline fake coverage-gate and fake-executor unit tests only.
 
+**2B.5 — implemented:** reusable, unattached historical analytics query
+IAM policy in `modules/historical_analytics`. No execution role, no
+attachment, no Operational API change. Static Terraform tests only.
+
 **Still not implemented:**
 
-- **2B.5:** query IAM policy
 - **2B.6:** live validation / observability / lifecycle
 - **Phase 2C:** `wilvor_ai` ToolResult adapters
 

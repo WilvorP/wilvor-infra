@@ -11,7 +11,9 @@ foundation. It currently owns:
 - operational CloudWatch observability (dashboard, FAILED/CANCELED alarm)
 
 It does **not** create crawlers, runtime query IAM roles, named query
-APIs, or query executors.
+APIs, or query executors. Phase 2B.5 adds one reusable, **unattached**
+customer-managed query policy. No execution role or attachment exists
+in this module.
 
 ## Ownership boundary
 
@@ -60,6 +62,7 @@ enables historical analytics, so normal `dev-up` recreates:
 - Glue catalog (database and four external tables)
 - Athena workgroup
 - Athena results bucket
+- unattached historical analytics query IAM policy
 - analytics monitoring / dashboard
 
 The Athena workgroup uses `force_destroy = true` because normal query
@@ -71,7 +74,8 @@ artifacts. Canonical historical S3 is never owned by this module.
 
 1. DEACTIVATEs historical collection when collection is enabled
 2. destroys `envs/dev`, including this module's disposable Glue catalog,
-   workgroup, results bucket, and analytics monitoring
+   workgroup, results bucket, unattached query IAM policy, and
+   analytics monitoring
 3. leaves the persistent historical facts bucket intact
 
 There is no `historical-data-down.ps1`. Ordinary `dev-down` / `dev-reset`
@@ -80,8 +84,48 @@ must not target `envs/dev-historical-data`.
 ## Enablement
 
 The module default for `enable_historical_analytics` remains `false`.
-`envs/dev` intentionally enables historical analytics. No runtime
-analytics query IAM exists yet; Phase 2B owns that.
+`envs/dev` intentionally enables historical analytics.
+
+## Query IAM policy (Phase 2B.5)
+
+Name: `${name_prefix}-historical-analytics-query`
+(`wilvor-dev-historical-analytics-query` in dev).
+
+This is a disposable `aws_iam_policy` owned by this module / `envs/dev`.
+It is **not** attached to any principal in 2B.5. There is no
+`aws_iam_role`, trust policy, or `sts:AssumeRole` here.
+
+- Operational API, dashboard API, coverage_control, ingestion, and
+  human SSO do **not** receive this policy
+- Future Agent API gets its own Lambda-trust role and will attach this
+  policy ARN later. That attachment is **not** part of 2B.5
+- Operator SSO used by live validation does **not** prove this managed
+  policy. 2B.6 owns live/deployed authorization checks
+
+Permissions describe only the deterministic historical query path:
+
+| Area | Scope |
+| --- | --- |
+| Athena | `StartQueryExecution`, `GetQueryExecution`, `GetQueryResults`, `StopQueryExecution` on this module's workgroup only |
+| Glue | `GetDatabase` / `GetTable` on the catalog, historical database, and V1 tables `encounter`, `risk`, `hazard_version` |
+| Canonical facts bucket | read-only `GetObject` on those three `dataset=` prefixes plus the seven 2A.1 metadata prefixes; `ListBucket` constrained to those prefixes |
+| Results bucket | `GetBucketLocation` / prefix-limited `ListBucket`; object `GetObject` / `PutObject` / multipart abort-parts under `athena-results/` only |
+
+`hazard_geometry` is cataloged but **not** in this V1 query policy.
+Canonical writes, result-object deletes, named queries, crawlers, KMS,
+CloudWatch, logs, IAM, STS, and Lambda invoke are absent.
+
+Athena tables use partition projection (`projection.enabled = true`).
+This policy therefore does not grant `glue:GetPartitions`.
+
+`s3:GetBucketLocation` is granted on the canonical source bucket and
+the results bucket because Athena query execution uses the caller's
+credentials to resolve those bucket locations. It is not used by the
+Python executor client.
+
+Static Terraform tests prove intended policy structure. They do not
+prove effective AWS authorization. 2B.6 may retrieve or simulate the
+deployed policy against exact allow/deny pairs.
 
 ## Glue catalog (Phase 2A.2b)
 
@@ -301,7 +345,9 @@ deployment step and not a Phase 2B query API.
 - Partition pruning evidence uses `DataScannedInBytes`.
 - Athena empty results are **`SQL_EMPTY`**, never `VERIFIED_ZERO`.
 - Coverage evaluator remains authoritative.
-- No 2A.2 query IAM role exists. Live validation uses operator SSO.
+- No 2A.2 / 2B.5 query IAM role exists. The 2B.5 managed policy is
+  unattached. Live validation uses operator SSO and does not itself
+  prove that managed policy.
 - This script must not be used as an AI query surface.
 
 Dry-run makes no AWS calls:

@@ -52,7 +52,7 @@ def test_module_exists_and_is_disabled_by_default():
     assert (MODULE_DIR / "athena.tf").exists()
     assert (MODULE_DIR / "monitoring.tf").exists()
     assert (MODULE_DIR / "validation").is_dir()
-    assert not (MODULE_DIR / "iam.tf").exists()
+    assert (MODULE_DIR / "iam.tf").exists()
     variables = read(MODULE_DIR / "variables.tf")
     assert "variable \"enable_historical_analytics\"" in variables
     assert "default     = false" in variables
@@ -101,6 +101,9 @@ def test_dev_outputs_are_safe_when_disabled():
     assert "module.historical_analytics.dashboard_name" in outputs
     assert "query_role" not in outputs
     assert "named_query" not in outputs
+    assert 'output "historical_analytics_query_policy_arn"' in outputs
+    assert "module.historical_analytics.query_policy_arn" in outputs
+    assert 'output "historical_analytics_query_policy_name"' in outputs
 
 
 def test_result_bucket_naming_is_separate_from_canonical_facts():
@@ -180,12 +183,26 @@ def test_historical_bucket_lookup_is_gated():
 
 def test_no_athena_query_role_or_sql_tool():
     text = module_text().lower()
+    iam = read(MODULE_DIR / "iam.tf").lower()
+    non_iam = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted(MODULE_DIR.glob("*.tf"))
+        if path.name != "iam.tf"
+    ).lower()
     assert "aws_athena_named_query" not in text
     assert "aws_athena_prepared_statement" not in text
     assert "aws_glue_crawler" not in text
     assert "aws_iam_role" not in text
+    assert "aws_iam_role_policy" not in text
+    assert "aws_iam_policy_attachment" not in text
+    assert "aws_iam_role_policy_attachment" not in text
+    assert "aws_iam_user" not in text
+    assert "aws_iam_group" not in text
+    assert text.count('resource "aws_iam_policy"') == 1
+    assert 'resource "aws_iam_policy" "query"' in text
     assert "aws_dynamodb" not in text
-    assert "startqueryexecution" not in text
+    assert "startqueryexecution" not in non_iam
+    assert "athena:startqueryexecution" in iam
     assert "execute_sql" not in text
     assert "run_query" not in text
     assert "query_athena" not in text
@@ -341,15 +358,29 @@ def test_glue_does_not_write_canonical_history():
     text = module_text()
     glue = read(MODULE_DIR / "glue.tf")
     results = read(MODULE_DIR / "results_bucket.tf")
+    iam = read(MODULE_DIR / "iam.tf")
+    non_iam = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted(MODULE_DIR.glob("*.tf"))
+        if path.name != "iam.tf"
+    )
     assert 'resource "aws_s3_bucket" "historical_facts"' not in text
     assert "aws_s3_object" not in text
     assert "aws_s3_bucket_object" not in text
-    assert "s3:PutObject" not in text
+    assert "s3:PutObject" not in non_iam
     assert "s3:DeleteObject" not in text
     assert "aws_s3_bucket_policy" not in text
     assert "local.historical_bucket_id" in glue
     assert 'resource "aws_s3_bucket" "athena_results"' in results
     assert "force_destroy = true" in results
+    # 2B.5 may PutObject only on the disposable Athena results prefix.
+    assert '"s3:PutObject"' in iam
+    assert "data.aws_s3_bucket.historical_facts" not in iam.split(
+        'sid    = "AthenaResultsObjectsAccess"'
+    )[1]
+    assert "aws_s3_bucket.athena_results[0].arn" in iam.split(
+        'sid    = "AthenaResultsObjectsAccess"'
+    )[1]
 
 
 def test_schema_version_parameters_are_v1_constants():

@@ -6,7 +6,49 @@ locals {
   glue_database_name     = "${replace(var.name_prefix, "-", "_")}_historical_facts"
   workgroup_name         = "${var.name_prefix}-historical-analytics"
   athena_results_prefix  = "athena-results/"
+  query_policy_name      = "${var.name_prefix}-historical-analytics-query"
   dashboard_name         = "${var.name_prefix}-historical-analytics"
+
+  query_v1_datasets = [
+    "encounter",
+    "risk",
+    "hazard_version",
+  ]
+
+  query_coverage_metadata_prefixes = [
+    "metadata/epoch/",
+    "metadata/activation/",
+    "metadata/deactivation/",
+    "metadata/coverage/",
+    "metadata/gaps/",
+    "metadata/resolutions/",
+    "metadata/incidents/",
+  ]
+
+  query_canonical_list_prefixes = concat(
+    flatten([
+      for dataset in local.query_v1_datasets : [
+        "dataset=${dataset}/",
+        "dataset=${dataset}/*",
+      ]
+    ]),
+    flatten([
+      for prefix in local.query_coverage_metadata_prefixes : [
+        prefix,
+        "${prefix}*",
+      ]
+    ]),
+  )
+
+  query_canonical_object_prefixes = concat(
+    [for dataset in local.query_v1_datasets : "dataset=${dataset}/*"],
+    [for prefix in local.query_coverage_metadata_prefixes : "${prefix}*"],
+  )
+
+  query_results_list_prefixes = [
+    local.athena_results_prefix,
+    "${local.athena_results_prefix}*",
+  ]
 
   query_failure_log_group_name = "/aws/events/${var.name_prefix}-historical-analytics-query-failures"
   wilvor_metric_namespace      = "Wilvor/Pipeline"

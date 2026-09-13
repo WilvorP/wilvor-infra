@@ -388,6 +388,14 @@ output "historical_analytics_workgroup_name" {
   value = module.historical_analytics.workgroup_name
 }
 
+output "historical_analytics_query_policy_arn" {
+  value = module.historical_analytics.query_policy_arn
+}
+
+output "historical_analytics_query_policy_name" {
+  value = module.historical_analytics.query_policy_name
+}
+
 output "historical_analytics_dashboard_name" {
   value = module.historical_analytics.dashboard_name
 }
