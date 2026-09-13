@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -15,6 +16,7 @@ from wilvor_ai.contracts import (
     ContractValidationError,
     FreshnessStatus,
     TemporalScope,
+    ToolInputField,
     ToolResult,
     ToolResultStatus,
 )
@@ -560,6 +562,28 @@ def test_json_round_trip_preserves_empty_none_false_zero_unknown():
     _round_trip(empty)
 
 
+_LIVE_OPS_CALLABLES = {
+    "search_current_hazards": search_current_hazards,
+    "search_current_impacts": search_current_impacts,
+    "search_current_encounters": search_current_encounters,
+    "get_observed_network_state": get_observed_network_state,
+    "get_aircraft_operational_context": get_aircraft_operational_context,
+    "get_hazard_operational_context": get_hazard_operational_context,
+    "get_airport_operational_context": get_airport_operational_context,
+    "find_aircraft_by_callsign": find_aircraft_by_callsign,
+}
+
+_TRUSTED_RUNTIME_FIELDS = frozenset(
+    {
+        "call",
+        "tables",
+        "now_epoch",
+        "tool_call_id",
+        "correlation_id",
+    }
+)
+
+
 def test_catalog_has_exactly_eight_read_only_retrieve_tools():
     names = [item.name for item in LIVE_OPS_TOOLS]
     assert names == [
@@ -581,6 +605,44 @@ def test_catalog_has_exactly_eight_read_only_retrieve_tools():
         assert spec.description
         assert "route" not in spec.description.lower()
         assert "instead" not in spec.description.lower()
+
+
+def test_catalog_input_fields_match_domain_kwargs_and_exclude_trusted_context():
+    assert [item.name for item in LIVE_OPS_TOOLS] == list(_LIVE_OPS_CALLABLES)
+    for spec in LIVE_OPS_TOOLS:
+        fn = _LIVE_OPS_CALLABLES[spec.name]
+        parameters = [
+            parameter
+            for name, parameter in inspect.signature(fn).parameters.items()
+            if name != "call"
+        ]
+        assert all(isinstance(item, ToolInputField) for item in spec.input_fields)
+        assert [item.name for item in spec.input_fields] == [
+            parameter.name for parameter in parameters
+        ]
+        assert [item.required for item in spec.input_fields] == [
+            parameter.default is inspect.Parameter.empty for parameter in parameters
+        ]
+        assert _TRUSTED_RUNTIME_FIELDS.isdisjoint(
+            item.name for item in spec.input_fields
+        )
+        source = inspect.getsource(fn)
+        assert "boto3" not in source
+        assert "inspect.signature" not in source
+
+
+def test_live_ops_evidence_wire_shape_omits_unset_provenance():
+    result = get_observed_network_state(_call(fixtures.tables()))
+    for item in result.evidence:
+        payload = item.to_dict()
+        assert "completeness" not in payload
+        assert "match_cardinality" not in payload
+        assert "query_executions" not in payload
+        assert "error_code" not in payload
+        assert item.completeness is None
+        assert item.match_cardinality is None
+        assert item.query_executions == ()
+        assert item.error_code is None
 
 
 def test_live_ops_call_rejects_blank_id_and_non_int_epoch():

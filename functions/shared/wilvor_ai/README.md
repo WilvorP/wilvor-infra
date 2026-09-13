@@ -59,11 +59,26 @@ tool execution, or aggregation.
 - source confidence where applicable;
 - limitations;
 - the originating tool-call ID;
-- temporal scope.
+- temporal scope;
+- optional first-class deterministic provenance: `SourceCompleteness`,
+  `MatchCardinality`, `QueryExecutionTrace` records, and `error_code`.
 
 Zero source records are valid for a verified no-match query or an unavailable
 source. Optional source versions and event timestamps remain `None` when they
 are unavailable; the contract never fabricates them.
+
+Optional provenance is generic deterministic-tool evidence. It is not a
+historical-only metadata blob. Completeness describes source fitness for a
+requested evaluation window and is never freshness. When every optional
+provenance field is unset, `Evidence.to_dict()` omits those keys so
+established `wilvor.ai.evidence.v1` objects keep their existing wire shape.
+Missing keys deserialize to `None` / `()`.
+
+First-class `Evidence` is the authoritative provenance surface. A future
+verifier must not depend solely on `ToolResult.data["evidence"]` or
+`ToolResult.data["coverage"]`. `ToolResult.data` remains the deterministic
+application/result payload. Phase 2C historical adapters are not implemented
+in this preflight.
 
 Confidence is represented as `HIGH`, `MEDIUM`, `LOW`, or `UNKNOWN`. These
 values retain their supplied meaning. Phase 0 does not calculate or reconcile
@@ -209,6 +224,20 @@ All eight are `READ_ONLY_ADVISORY` with
 `RETRIEVE_DETERMINISTIC_OPERATIONAL_CONTEXT`. There is no ninth convenience
 tool, no provider schema, and no routing or prompt logic.
 
+Each catalog entry now carries `input_fields`: the authoritative AI-visible
+field allowlist. `ToolInputField` names the model-controlled arguments only.
+It is not OpenAI function schema, JSON Schema, a provider schema, a type
+validator, or a replacement for domain request validation. Trusted runtime
+context (`call`, `tables`, `now_epoch`, `tool_call_id`, `correlation_id`) is
+not part of that allowlist.
+
+A future model/provider integration must build tool schemas from the trusted
+catalog or a later bound adapter surface. It must not introspect unbound
+Live Ops functions with `inspect.signature`, because those callables still
+accept `LiveOpsCall`. Phase 2C historical adapters are not implemented yet
+and will use bound methods plus the same allowlist contract. No
+LLM/provider exists in this preflight.
+
 All V1 Live Ops evidence uses `FreshnessStatus.UNKNOWN` with
 `FRESHNESS_NOT_ESTABLISHED`. `CURRENT` is not `FRESH`. Confirmed-zero results
 remain distinguishable from unevaluated-zero `PARTIAL` results.
@@ -221,6 +250,11 @@ Athena, Glue, generated SQL, decision tools, evidence-verifier execution,
 visualization generation, an Agent API/runtime, API Gateway changes, an `/ai`
 page, dashboard changes, DynamoDB changes, IAM, Terraform, deployment, or
 production infrastructure.
+
+Phase 2C-preflight only adds the AI-visible field allowlist and generic
+Evidence provenance contracts. It does not implement historical adapters,
+`HISTORICAL_ANALYTICS_TOOLS`, an Analytics Specialist, or an Agent API.
+Phase 2C is not complete.
 
 ## Tests
 

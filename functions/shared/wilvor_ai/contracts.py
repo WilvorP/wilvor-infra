@@ -8,6 +8,7 @@ authorization.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
@@ -18,6 +19,12 @@ EVIDENCE_SCHEMA_VERSION = "wilvor.ai.evidence.v1"
 TOOL_RESULT_SCHEMA_VERSION = "wilvor.ai.tool_result.v1"
 FINAL_RESPONSE_SCHEMA_VERSION = "wilvor.ai.response.v1"
 AUTHORITY_SCHEMA_VERSION = "wilvor.ai.authority.v1"
+
+# Field-allowlist names and provenance tokens are bounded identifiers.
+# They are not provider JSON Schema, SQL, or AWS configuration.
+TOOL_INPUT_FIELD_NAME_MAX_LENGTH = 64
+PROVENANCE_TOKEN_MAX_LENGTH = 256
+TOOL_INPUT_FIELD_NAME_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_]*$")
 
 JsonScalar = str | int | float | bool | None
 JsonValue = JsonScalar | list["JsonValue"] | dict[str, "JsonValue"]
@@ -174,6 +181,8 @@ def _validate_text(
 def _validate_string_tuple(
     value: Any,
     field_name: str,
+    *,
+    max_length: int | None = None,
 ) -> list[str]:
     if not isinstance(value, tuple):
         return [f"invalid_{field_name}"]
@@ -181,7 +190,55 @@ def _validate_string_tuple(
     if any(not isinstance(item, str) or not item.strip() for item in value):
         return [f"invalid_{field_name}"]
 
+    if max_length is not None and any(len(item) > max_length for item in value):
+        return [f"invalid_{field_name}"]
+
     return []
+
+
+def _validate_bounded_text(
+    value: Any,
+    field_name: str,
+    *,
+    optional: bool = False,
+    max_length: int = PROVENANCE_TOKEN_MAX_LENGTH,
+) -> list[str]:
+    errors = _validate_text(value, field_name, optional=optional)
+    if errors or value is None:
+        return errors
+
+    if len(value) > max_length:
+        return [f"invalid_{field_name}"]
+
+    return []
+
+
+def _validate_optional_count(value: Any, field_name: str) -> list[str]:
+    if value is None:
+        return []
+
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        return [f"invalid_{field_name}"]
+
+    return []
+
+
+def _optional_nested(
+    data: Mapping[str, Any],
+    field_name: str,
+    factory: Any,
+) -> Any:
+    if field_name not in data:
+        return None
+
+    value = data[field_name]
+    if value is None:
+        return None
+
+    if not isinstance(value, Mapping):
+        raise ContractValidationError(f"invalid_{field_name}")
+
+    return factory(value)
 
 
 def _validate_utc(
@@ -242,6 +299,240 @@ def _sequence(
 
 
 @dataclass(frozen=True)
+class ToolInputField:
+    """AI-visible field allowlist entry for a deterministic tool.
+
+    This is the catalog field name a future model may supply. It is not
+    OpenAI function schema, JSON Schema, a provider schema, a type
+    validator, or a replacement for domain request validation.
+
+    Future provider-schema generation must use a trusted catalog or bound
+    adapter surface. It must not introspect unbound functions that accept
+    trusted runtime context.
+    """
+
+    name: str
+    required: bool
+
+    def __post_init__(self) -> None:
+        errors = _validate_bounded_text(
+            self.name,
+            "name",
+            max_length=TOOL_INPUT_FIELD_NAME_MAX_LENGTH,
+        )
+        if (
+            isinstance(self.name, str)
+            and self.name.strip()
+            and TOOL_INPUT_FIELD_NAME_PATTERN.fullmatch(self.name) is None
+        ):
+            errors.append("invalid_name")
+
+        if not isinstance(self.required, bool):
+            errors.append("invalid_required")
+
+        if errors:
+            raise ContractValidationError(errors)
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        return {
+            "name": self.name,
+            "required": self.required,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "ToolInputField":
+        if not isinstance(data, Mapping):
+            raise ContractValidationError("invalid_tool_input_field")
+
+        return cls(
+            name=_required(data, "name"),
+            required=_required(data, "required"),
+        )
+
+
+@dataclass(frozen=True)
+class SourceCompleteness:
+    """Fitness of a deterministic source for a requested evaluation window.
+
+    Completeness is not freshness. Status is a generic source vocabulary,
+    not a historical Evaluability import.
+    """
+
+    status: str | None = None
+    reason: str | None = None
+    epoch_ids: tuple[str, ...] = ()
+    evaluated_as_of_utc: str | None = None
+
+    def __post_init__(self) -> None:
+        errors = _validate_bounded_text(self.status, "status", optional=True)
+        errors.extend(_validate_bounded_text(self.reason, "reason", optional=True))
+        errors.extend(
+            _validate_string_tuple(
+                self.epoch_ids,
+                "epoch_ids",
+                max_length=PROVENANCE_TOKEN_MAX_LENGTH,
+            )
+        )
+        errors.extend(
+            _validate_utc(
+                self.evaluated_as_of_utc,
+                "evaluated_as_of_utc",
+                optional=True,
+            )
+        )
+
+        if errors:
+            raise ContractValidationError(errors)
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        return {
+            "status": self.status,
+            "reason": self.reason,
+            "epoch_ids": list(self.epoch_ids),
+            "evaluated_as_of_utc": self.evaluated_as_of_utc,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "SourceCompleteness":
+        if not isinstance(data, Mapping):
+            raise ContractValidationError("invalid_source_completeness")
+
+        epoch_ids = data["epoch_ids"] if "epoch_ids" in data else ()
+        return cls(
+            status=data["status"] if "status" in data else None,
+            reason=data["reason"] if "reason" in data else None,
+            epoch_ids=tuple(_sequence(epoch_ids, "epoch_ids")),
+            evaluated_as_of_utc=(
+                data["evaluated_as_of_utc"]
+                if "evaluated_as_of_utc" in data
+                else None
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class MatchCardinality:
+    """Exact or bounded match count established by a deterministic source.
+
+    UNKNOWN: all fields None.
+    EXACT: is_exact True, exact_count >= 0, minimum_count None.
+    LOWER BOUND: is_exact False, exact_count None, minimum_count >= 0.
+    """
+
+    exact_count: int | None = None
+    is_exact: bool | None = None
+    minimum_count: int | None = None
+
+    def __post_init__(self) -> None:
+        errors = _validate_optional_count(self.exact_count, "exact_count")
+        errors.extend(
+            _validate_optional_count(self.minimum_count, "minimum_count")
+        )
+
+        if self.is_exact is not None and not isinstance(self.is_exact, bool):
+            errors.append("invalid_is_exact")
+
+        if self.is_exact is True:
+            if self.exact_count is None:
+                errors.append("exact_requires_exact_count")
+            if self.minimum_count is not None:
+                errors.append("exact_forbids_minimum_count")
+        elif self.is_exact is False:
+            if self.exact_count is not None:
+                errors.append("inexact_forbids_exact_count")
+            if self.minimum_count is None:
+                errors.append("inexact_requires_minimum_count")
+        elif self.exact_count is not None or self.minimum_count is not None:
+            errors.append("unknown_cardinality_forbids_counts")
+
+        if errors:
+            raise ContractValidationError(errors)
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        return {
+            "exact_count": self.exact_count,
+            "is_exact": self.is_exact,
+            "minimum_count": self.minimum_count,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "MatchCardinality":
+        if not isinstance(data, Mapping):
+            raise ContractValidationError("invalid_match_cardinality")
+
+        return cls(
+            exact_count=data["exact_count"] if "exact_count" in data else None,
+            is_exact=data["is_exact"] if "is_exact" in data else None,
+            minimum_count=(
+                data["minimum_count"] if "minimum_count" in data else None
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class QueryExecutionTrace:
+    """One deterministic query execution consulted to produce evidence.
+
+    query_id is a closed identity. This is not an Athena client contract
+    and must not carry SQL, OutputLocation, or database credentials.
+    """
+
+    query_id: str
+    execution_id: str | None = None
+    rows_returned: int | None = None
+    bytes_scanned: int | None = None
+    engine_scope: str | None = None
+
+    def __post_init__(self) -> None:
+        errors = _validate_bounded_text(self.query_id, "query_id")
+        errors.extend(
+            _validate_bounded_text(
+                self.execution_id,
+                "execution_id",
+                optional=True,
+            )
+        )
+        errors.extend(_validate_optional_count(self.rows_returned, "rows_returned"))
+        errors.extend(_validate_optional_count(self.bytes_scanned, "bytes_scanned"))
+        errors.extend(
+            _validate_bounded_text(
+                self.engine_scope,
+                "engine_scope",
+                optional=True,
+            )
+        )
+
+        if errors:
+            raise ContractValidationError(errors)
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        return {
+            "query_id": self.query_id,
+            "execution_id": self.execution_id,
+            "rows_returned": self.rows_returned,
+            "bytes_scanned": self.bytes_scanned,
+            "engine_scope": self.engine_scope,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "QueryExecutionTrace":
+        if not isinstance(data, Mapping):
+            raise ContractValidationError("invalid_query_execution_trace")
+
+        return cls(
+            query_id=_required(data, "query_id"),
+            execution_id=data["execution_id"] if "execution_id" in data else None,
+            rows_returned=(
+                data["rows_returned"] if "rows_returned" in data else None
+            ),
+            bytes_scanned=(
+                data["bytes_scanned"] if "bytes_scanned" in data else None
+            ),
+            engine_scope=data["engine_scope"] if "engine_scope" in data else None,
+        )
+
+
+@dataclass(frozen=True)
 class SourceRecord:
     record_id: str
     source_version: str | None
@@ -297,6 +588,10 @@ class Evidence:
     tool_call_id: str
     temporal_scope: TemporalScope
     schema_version: str = EVIDENCE_SCHEMA_VERSION
+    completeness: SourceCompleteness | None = None
+    match_cardinality: MatchCardinality | None = None
+    query_executions: tuple[QueryExecutionTrace, ...] = ()
+    error_code: str | None = None
 
     def __post_init__(self) -> None:
         errors: list[str] = []
@@ -309,6 +604,13 @@ class Evidence:
             )
         )
         errors.extend(_validate_string_tuple(self.limitations, "limitations"))
+        errors.extend(
+            _validate_bounded_text(
+                self.error_code,
+                "error_code",
+                optional=True,
+            )
+        )
 
         if self.schema_version != EVIDENCE_SCHEMA_VERSION:
             errors.append("invalid_schema_version")
@@ -327,6 +629,24 @@ class Evidence:
         if not isinstance(self.temporal_scope, TemporalScope):
             errors.append("invalid_temporal_scope")
 
+        if self.completeness is not None and not isinstance(
+            self.completeness,
+            SourceCompleteness,
+        ):
+            errors.append("invalid_completeness")
+
+        if self.match_cardinality is not None and not isinstance(
+            self.match_cardinality,
+            MatchCardinality,
+        ):
+            errors.append("invalid_match_cardinality")
+
+        if not isinstance(self.query_executions, tuple) or any(
+            not isinstance(item, QueryExecutionTrace)
+            for item in self.query_executions
+        ):
+            errors.append("invalid_query_executions")
+
         if (
             self.freshness_status
             in {FreshnessStatus.UNKNOWN, FreshnessStatus.UNAVAILABLE}
@@ -338,7 +658,7 @@ class Evidence:
             raise ContractValidationError(errors)
 
     def to_dict(self) -> dict[str, JsonValue]:
-        return {
+        payload: dict[str, JsonValue] = {
             "schema_version": self.schema_version,
             "source": self.source,
             "source_records": [
@@ -351,6 +671,19 @@ class Evidence:
             "tool_call_id": self.tool_call_id,
             "temporal_scope": self.temporal_scope.value,
         }
+        # Unset optional provenance is omitted so established v1 Evidence
+        # wire objects stay byte-compatible with existing fixtures.
+        if self.completeness is not None:
+            payload["completeness"] = self.completeness.to_dict()
+        if self.match_cardinality is not None:
+            payload["match_cardinality"] = self.match_cardinality.to_dict()
+        if self.query_executions:
+            payload["query_executions"] = [
+                item.to_dict() for item in self.query_executions
+            ]
+        if self.error_code is not None:
+            payload["error_code"] = self.error_code
+        return payload
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "Evidence":
@@ -365,6 +698,16 @@ class Evidence:
             _required(data, "limitations"),
             "limitations",
         )
+        if "query_executions" in data:
+            executions = tuple(
+                QueryExecutionTrace.from_dict(item)
+                for item in _sequence(
+                    data["query_executions"],
+                    "query_executions",
+                )
+            )
+        else:
+            executions = ()
 
         return cls(
             source=_required(data, "source"),
@@ -390,6 +733,18 @@ class Evidence:
                 "temporal_scope",
             ),
             schema_version=_required(data, "schema_version"),
+            completeness=_optional_nested(
+                data,
+                "completeness",
+                SourceCompleteness.from_dict,
+            ),
+            match_cardinality=_optional_nested(
+                data,
+                "match_cardinality",
+                MatchCardinality.from_dict,
+            ),
+            query_executions=executions,
+            error_code=data["error_code"] if "error_code" in data else None,
         )
 
 

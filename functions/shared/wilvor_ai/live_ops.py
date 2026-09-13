@@ -13,6 +13,7 @@ from typing import Any
 from wilvor_ai.contracts import (
     AgentAuthorityMode,
     AgentCapability,
+    ToolInputField,
     ToolResult,
 )
 from wilvor_ai import live_ops_mapping as mapping
@@ -40,16 +41,39 @@ class LiveOpsCall:
 
 @dataclass(frozen=True)
 class LiveOpsToolSpec:
+    """Catalog entry for a Live Operations tool.
+
+    `input_fields` is the authoritative AI-visible field allowlist. It is
+    not provider JSON Schema. Future schema generation must use this
+    catalog, not `inspect.signature` of the unbound functions, because
+    those callables still accept trusted `LiveOpsCall` runtime context.
+    """
+
     name: str
     description: str
     authority_mode: AgentAuthorityMode
     capabilities: tuple[AgentCapability, ...]
+    input_fields: tuple[ToolInputField, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.input_fields, tuple) or any(
+            not isinstance(item, ToolInputField) for item in self.input_fields
+        ):
+            raise TypeError("input_fields must be a tuple of ToolInputField")
 
 
 _READ_ONLY = AgentAuthorityMode.READ_ONLY_ADVISORY
 _RETRIEVE = (
     AgentCapability.RETRIEVE_DETERMINISTIC_OPERATIONAL_CONTEXT,
 )
+
+
+def _optional_fields(*names: str) -> tuple[ToolInputField, ...]:
+    return tuple(ToolInputField(name=name, required=False) for name in names)
+
+
+def _required_field(name: str) -> tuple[ToolInputField, ...]:
+    return (ToolInputField(name=name, required=True),)
 
 
 def search_current_hazards(
@@ -233,54 +257,74 @@ def find_aircraft_by_callsign(
     )
 
 
+_HAZARD_FILTER_FIELDS = _optional_fields(
+    "region",
+    "product_type",
+    "hazard_type",
+    "hazard_ids",
+)
+
 LIVE_OPS_TOOLS = (
     LiveOpsToolSpec(
         name="search_current_hazards",
         description="Retrieve currently matching hazards, optionally by region or type.",
         authority_mode=_READ_ONLY,
         capabilities=_RETRIEVE,
+        input_fields=_HAZARD_FILTER_FIELDS,
     ),
     LiveOpsToolSpec(
         name="search_current_impacts",
         description="Retrieve currently matching hazard-aircraft impacts.",
         authority_mode=_READ_ONLY,
         capabilities=_RETRIEVE,
+        input_fields=_HAZARD_FILTER_FIELDS,
     ),
     LiveOpsToolSpec(
         name="search_current_encounters",
         description="Retrieve currently matching aircraft-hazard encounters.",
         authority_mode=_READ_ONLY,
         capabilities=_RETRIEVE,
+        input_fields=_optional_fields(
+            "aircraft_id",
+            "callsign",
+            "hazard_id",
+            "hazard_ids",
+        ),
     ),
     LiveOpsToolSpec(
         name="get_observed_network_state",
         description="Retrieve the observed current operational ID inventory.",
         authority_mode=_READ_ONLY,
         capabilities=_RETRIEVE,
+        input_fields=(),
     ),
     LiveOpsToolSpec(
         name="get_aircraft_operational_context",
         description="Retrieve operational context for a known aircraft ID.",
         authority_mode=_READ_ONLY,
         capabilities=_RETRIEVE,
+        input_fields=_required_field("aircraft_id"),
     ),
     LiveOpsToolSpec(
         name="get_hazard_operational_context",
         description="Retrieve operational context for a known hazard ID.",
         authority_mode=_READ_ONLY,
         capabilities=_RETRIEVE,
+        input_fields=_required_field("hazard_id"),
     ),
     LiveOpsToolSpec(
         name="get_airport_operational_context",
         description="Retrieve operational context for a known airport ID.",
         authority_mode=_READ_ONLY,
         capabilities=_RETRIEVE,
+        input_fields=_required_field("airport_id"),
     ),
     LiveOpsToolSpec(
         name="find_aircraft_by_callsign",
         description="Retrieve current aircraft identities matching a callsign.",
         authority_mode=_READ_ONLY,
         capabilities=_RETRIEVE,
+        input_fields=_required_field("callsign"),
     ),
 )
 

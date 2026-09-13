@@ -51,7 +51,16 @@ assert 'openai' not in sys.modules
 assert 'anthropic' not in sys.modules
 assert 'langgraph' not in sys.modules
 assert 'wilvor_ai.live_ops' not in sys.modules
+assert 'wilvor_ai.historical_analytics' not in sys.modules
+assert 'wilvor_historical_query' not in sys.modules
+assert 'botocore' not in sys.modules
 assert hasattr(wilvor_ai, 'ToolResult')
+assert hasattr(wilvor_ai, 'ToolInputField')
+assert hasattr(wilvor_ai, 'SourceCompleteness')
+assert hasattr(wilvor_ai, 'MatchCardinality')
+assert hasattr(wilvor_ai, 'QueryExecutionTrace')
+assert not hasattr(wilvor_ai, 'HISTORICAL_ANALYTICS_TOOLS')
+assert not hasattr(wilvor_ai, 'HistoricalAnalyticsOperations')
 """
     completed = _run_isolated(script)
     assert completed.returncode == 0, completed.stderr
