@@ -36,11 +36,19 @@ Coverage-certified `VERIFIED_ZERO` mapping, first-class Evidence
 provenance, and completeness ≠ freshness are preserved. AWS, SQL, query
 ids, and current/geography fallback are not exposed.
 
+**Phase 2C — complete:** AI-safe historical `ToolResult` mapping, bound
+`HistoricalAnalyticsAdapter`, and the four-tool
+`HISTORICAL_ANALYTICS_TOOLS` catalog. The catalog is ready for a future
+specialist. Phase 2B remains the deterministic authority.
+
 **Still not implemented:**
 
-- model-backed Analytics Specialist
+- model-backed Historical Analytics Specialist
+- Master Agent
 - Agent API / runtime AWS composition
-- Lambda execution role attached to an AI runtime
+- LLM/provider integration
+- Lambda execution role / query-policy attachment to a future Agent API
+- hybrid current + historical synthesis
 
 ## Authority boundary
 

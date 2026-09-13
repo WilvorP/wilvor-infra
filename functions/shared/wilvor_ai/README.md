@@ -245,10 +245,16 @@ remain distinguishable from unevaluated-zero `PARTIAL` results.
 
 ## Phase 2C Historical Analytics adapters
 
+Phase 2C is complete: AI-safe historical `ToolResult` mapping, a bound
+adapter, and the four-tool historical catalog. It does not implement a
+model-backed specialist.
+
 Phase 2C.2 exposes the four Phase 2B historical operations through a bound
 adapter. Trusted runtime constructs `HistoricalAnalyticsCall` and
 `HistoricalAnalyticsAdapter`. Model-visible arguments are only
 `HistoricalAnalyticsToolSpec.input_fields`.
+`HISTORICAL_ANALYTICS_TOOLS` is ready for a future specialist. It is not
+itself a specialist, Master Agent, or Agent API.
 
 The catalog is exactly four retrieve-only tools:
 
@@ -304,13 +310,21 @@ Adapters do not expose AWS, SQL, query ids, or current/geography fallback.
 `historical_analytics`, `historical_analytics_mapping`, or
 `wilvor_historical_query`.
 
-An Analytics Specialist, model/provider integration, and Agent API are not
-implemented. Phase 2C is not complete.
+Phase 2C is complete. The following are not implemented yet:
+
+- model-backed Historical Analytics Specialist
+- Master Agent
+- Agent API
+- LLM/provider integration
+- runtime Lambda composition
+- query-policy attachment to a future Agent API role
+- hybrid current + historical synthesis
 
 ## Tests
 
 Run the offline contract suite from the repository root, including Phase 0
-contracts and Phase 1E Live Operations adapter tests:
+contracts, Phase 1E Live Operations adapter tests, and Phase 2C historical
+adapter tests:
 
 ```powershell
 python -m pytest tests/contracts -q -p no:cacheprovider

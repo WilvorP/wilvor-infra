@@ -379,8 +379,14 @@ EventBridge FAILED/CANCELED → `Wilvor/Pipeline`
 observability only, never query-correctness evidence.
 
 Operator SSO proved runtime behavior. It did **not** prove future
-Lambda-role authorization. No Agent API and no LLM exist yet.
-Phase 2C is next.
+Lambda-role authorization.
+
+Phase 2C is complete as an offline AI-safe adapter layer:
+`HistoricalQueryResponse` → `ToolResult`, bound
+`HistoricalAnalyticsAdapter`, and `HISTORICAL_ANALYTICS_TOOLS`. That
+catalog is ready for a future specialist. No model-backed specialist,
+Master Agent, Agent API, LLM/provider integration, runtime Lambda
+composition, or query-policy attachment exists yet.
 
 ### Frontend Vitest (2A.2d carry-forward)
 

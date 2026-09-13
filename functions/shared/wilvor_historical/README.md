@@ -178,11 +178,12 @@ query failure.
 This package now owns AWS-free historical analytics **contracts and window
 rules** in `query_contracts.py` and `query_windows.py`. It does **not**
 execute queries. SQL templates, Athena, S3, and IAM belong in a later
-`wilvor_historical_query` runtime. Phase 2C owns `wilvor_ai` adapters.
+`wilvor_historical_query` runtime. Phase 2C adapters in `wilvor_ai`
+consume those operations; they do not live in this package.
 
 Dependency direction:
 
-`wilvor_historical` <- `wilvor_historical_query` <- Phase 2C adapters
+`wilvor_historical` <- `wilvor_historical_query` <- `wilvor_ai.historical_analytics`
 
 ### V1 operation catalog
 
@@ -275,6 +276,11 @@ canonical string.
 - **2B.1:** fixed-query registry and SQL renderer in
   `wilvor_historical_query`. No Athena execution.
 - **2B.2+:** Athena execution, coverage store, and operations.
-- **2C:** analytics ToolResult adapters.
+  Phase 2B deterministic historical analytics is COMPLETE.
+- **2C:** AI-safe historical `ToolResult` mapping, bound adapter, and
+  four-tool catalog. Phase 2C is COMPLETE. A model-backed Historical
+  Analytics Specialist, Master Agent, Agent API, LLM/provider
+  integration, runtime Lambda composition, and hybrid synthesis are
+  not implemented.
 
 No AI, Glue, Athena, S3, or Firehose belongs in this package.

@@ -160,6 +160,16 @@ def _round_trip(result: ToolResult) -> ToolResult:
     return restored
 
 
+def _assert_payload_does_not_contradict_evidence(result: ToolResult) -> None:
+    """Application data may echo domain status/error; Evidence remains authority."""
+
+    assert "coverage" not in result.data
+    assert "evidence" not in result.data
+    payload_error = result.data.get("error")
+    if result.evidence and payload_error is not None:
+        assert payload_error["code"] == result.evidence[0].error_code
+
+
 def test_verified_zero_maps_to_not_found_with_first_class_proof():
     response = HistoricalQueryResponse(
         status=HistoricalQueryStatus.VERIFIED_ZERO,
@@ -194,9 +204,10 @@ def test_verified_zero_maps_to_not_found_with_first_class_proof():
     assert evidence.query_timestamp_utc == AS_OF
     assert evidence.completeness.evaluated_as_of_utc == AS_OF
     assert "rows_returned" not in result.data
-    assert "coverage" not in result.data
-    assert "evidence" not in result.data
+    _assert_payload_does_not_contradict_evidence(result)
     assert result.data["status"] == "VERIFIED_ZERO"
+    assert result.data["error"] is None
+    assert evidence.error_code is None
 
 
 @pytest.mark.parametrize(
@@ -241,6 +252,8 @@ def test_inconsistent_verified_zero_fails_closed(kwargs):
     assert MAPPING_INTEGRITY_FAILED in result.limitations
     assert result.evidence[0].error_code == MAPPING_INTEGRITY_FAILED
     assert result.data["status"] == "VERIFIED_ZERO"
+    assert result.data["error"] is None
+    _assert_payload_does_not_contradict_evidence(result)
 
 
 def test_succeeded_maps_success_and_omits_source_records():
@@ -560,8 +573,10 @@ def test_blocked_and_failure_statuses_never_look_certified(
         assert result.status is ToolResultStatus.UNAVAILABLE
         assert result.evidence[0].error_code == error_code
         assert result.evidence[0].confidence is ConfidenceLevel.UNKNOWN
+        assert result.data["error"]["code"] == result.evidence[0].error_code
     assert result.data["status"] == status.value
     assert result.correlation_id is None
+    _assert_payload_does_not_contradict_evidence(result)
 
 
 def test_coverage_blocked_epoch_ambiguous_does_not_invent_evaluability():
@@ -611,6 +626,7 @@ def test_invalid_request_helper_is_unknown_without_as_of_or_traces():
         "message": INVALID_REQUEST_CODE,
     }
     assert INVALID_REQUEST_CODE in result.limitations
+    _assert_payload_does_not_contradict_evidence(result)
 
 
 def test_as_of_is_evaluation_instant_not_event_time():
