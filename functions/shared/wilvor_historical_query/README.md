@@ -25,16 +25,29 @@ attachment, no Operational API change.
 simulation, disposable lifecycle proof. Phase 2B is complete. There is
 still no Agent API, no Lambda execution role, and no LLM.
 
+**2C.1 — implemented:** `HistoricalQueryResponse` → Phase 0 `ToolResult`
+mapping in `wilvor_ai.historical_analytics_mapping`.
+
+**2C.2 — implemented:** bound `HistoricalAnalyticsAdapter` and the closed
+`HISTORICAL_ANALYTICS_TOOLS` catalog in `wilvor_ai.historical_analytics`.
+Trusted runtime supplies `HistoricalAnalyticsOperations`, `as_of_utc`, and
+`tool_call_id`. Catalog `input_fields` is the model-visible allowlist.
+Coverage-certified `VERIFIED_ZERO` mapping, first-class Evidence
+provenance, and completeness ≠ freshness are preserved. AWS, SQL, query
+ids, and current/geography fallback are not exposed.
+
 **Still not implemented:**
 
-- **Phase 2C:** `wilvor_ai` ToolResult adapters
+- model-backed Analytics Specialist
+- Agent API / runtime AWS composition
+- Lambda execution role attached to an AI runtime
 
 ## Authority boundary
 
 ```
 wilvor_historical
     <- wilvor_historical_query
-    <- future Phase 2C adapters
+    <- wilvor_ai.historical_analytics
 ```
 
 `wilvor_historical` never imports this package. Phase 2B-preflight
@@ -323,4 +336,6 @@ Coverage mapping:
 Hazard-version responses include the materialization/event-time
 limitation. They do not reinterpret `valid_from_utc` / `valid_to_utc`.
 
-No AI adapters, HTTP API, IAM, or observability are added here.
+Phase 2C adapters consume this package. They do not change these
+operations, render SQL, or instantiate AWS clients. A model-backed
+specialist and Agent API are not implemented here.

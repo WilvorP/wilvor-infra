@@ -19,8 +19,10 @@ from wilvor_ai.contracts import (
 )
 from wilvor_ai.historical_analytics_mapping import (
     HISTORICAL_FRESHNESS_NOT_ESTABLISHED,
+    INVALID_REQUEST_CODE,
     MAPPING_INTEGRITY_FAILED,
     RESULT_TRUNCATED_LIMITATION,
+    map_historical_invalid_request,
     map_historical_query_response,
 )
 from wilvor_historical.coverage_contracts import Evaluability
@@ -585,6 +587,30 @@ def test_coverage_blocked_epoch_ambiguous_does_not_invent_evaluability():
     assert completeness is not None
     assert completeness.status is None
     assert completeness.reason == COVERAGE_REASON_EPOCH_AMBIGUOUS
+
+
+def test_invalid_request_helper_is_unknown_without_as_of_or_traces():
+    result = _round_trip(
+        map_historical_invalid_request(
+            tool_name="list_historical_encounters",
+            tool_call_id=TOOL_CALL_ID,
+            attempted_scope={"start_utc": WINDOW[0], "end_utc": WINDOW[1]},
+        )
+    )
+
+    assert result.status is ToolResultStatus.UNKNOWN
+    assert result.temporal_scope is TemporalScope.HISTORICAL
+    assert result.tool_call_id == TOOL_CALL_ID
+    assert result.correlation_id is None
+    assert result.as_of_utc is None
+    assert result.evidence == ()
+    assert result.data["status"] == INVALID_REQUEST_CODE
+    assert result.data["result"] is None
+    assert result.data["error"] == {
+        "code": INVALID_REQUEST_CODE,
+        "message": INVALID_REQUEST_CODE,
+    }
+    assert INVALID_REQUEST_CODE in result.limitations
 
 
 def test_as_of_is_evaluation_instant_not_event_time():

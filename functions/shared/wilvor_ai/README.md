@@ -77,8 +77,9 @@ Missing keys deserialize to `None` / `()`.
 First-class `Evidence` is the authoritative provenance surface. A future
 verifier must not depend solely on `ToolResult.data["evidence"]` or
 `ToolResult.data["coverage"]`. `ToolResult.data` remains the deterministic
-application/result payload. Phase 2C historical adapters are not implemented
-in this preflight.
+application/result payload. Phase 2C.2 publishes bound historical adapters
+and `HISTORICAL_ANALYTICS_TOOLS`; those modules are imported explicitly
+and are not part of `import wilvor_ai`.
 
 Confidence is represented as `HIGH`, `MEDIUM`, `LOW`, or `UNKNOWN`. These
 values retain their supplied meaning. Phase 0 does not calculate or reconcile
@@ -234,13 +235,47 @@ not part of that allowlist.
 A future model/provider integration must build tool schemas from the trusted
 catalog or a later bound adapter surface. It must not introspect unbound
 Live Ops functions with `inspect.signature`, because those callables still
-accept `LiveOpsCall`. Phase 2C historical adapters are not implemented yet
-and will use bound methods plus the same allowlist contract. No
-LLM/provider exists in this preflight.
+accept `LiveOpsCall`. Phase 2C historical adapters use constructor-bound
+methods plus the same `input_fields` allowlist contract. No LLM/provider
+exists in this phase.
 
 All V1 Live Ops evidence uses `FreshnessStatus.UNKNOWN` with
 `FRESHNESS_NOT_ESTABLISHED`. `CURRENT` is not `FRESH`. Confirmed-zero results
 remain distinguishable from unevaluated-zero `PARTIAL` results.
+
+## Phase 2C Historical Analytics adapters
+
+Phase 2C.2 exposes the four Phase 2B historical operations through a bound
+adapter. Trusted runtime constructs `HistoricalAnalyticsCall` and
+`HistoricalAnalyticsAdapter`. Model-visible arguments are only
+`HistoricalAnalyticsToolSpec.input_fields`.
+
+The catalog is exactly four retrieve-only tools:
+
+- `summarize_historical_encounters`
+- `summarize_historical_risks`
+- `summarize_historical_hazard_versions`
+- `list_historical_encounters`
+
+All four are `READ_ONLY_ADVISORY` with `RETRIEVE_HISTORICAL_ANALYTICS`.
+There is no fifth internal risk-distribution tool, no SQL/query tool, and
+no current-state or geography tool. The catalog is not merged with
+`LIVE_OPS_TOOLS`.
+
+`HistoricalAnalyticsOperations` remains the domain authority. The adapter
+constructs the existing Phase 2B request contracts, injects the bound
+`as_of_utc`, and maps every `HistoricalQueryResponse` through
+`map_historical_query_response`. Request-construction failures return
+`UNKNOWN` / `INVALID_REQUEST` without calling operations and without
+fabricating `as_of_utc`, coverage, traces, or a certified zero.
+
+Coverage-certified `VERIFIED_ZERO` maps to `NOT_FOUND` and keeps
+first-class exact-zero / `EVALUABLE` proof. Completeness is not freshness.
+First-class `Evidence` is the provenance surface. AWS clients, SQL, query
+ids, workgroups, and current/geography fallback are not exposed.
+
+Consumers import `wilvor_ai.historical_analytics` explicitly. A
+model-backed specialist and Agent API are not implemented.
 
 ## Deliberately not implemented
 
@@ -255,10 +290,22 @@ Phase 2C-preflight adds the AI-visible field allowlist and generic
 Evidence provenance contracts. Phase 2C.1 adds
 `wilvor_ai.historical_analytics_mapping`, which translates an already-returned
 `HistoricalQueryResponse` into a Phase 0 `ToolResult`. First-class `Evidence`
-is the provenance authority. Completeness is not freshness. Historical
-callable adapters, `HISTORICAL_ANALYTICS_TOOLS`, an Analytics Specialist, and
-an Agent API are not implemented. `import wilvor_ai` does not load the
-mapping module. No LLM/provider integration exists. Phase 2C is not complete.
+is the provenance authority. Completeness is not freshness.
+
+Phase 2C.2 adds the bound Historical Analytics adapter and the closed
+four-tool catalog in `wilvor_ai.historical_analytics`. Trusted runtime
+constructs `HistoricalAnalyticsCall` with `HistoricalAnalyticsOperations`,
+`as_of_utc`, and `tool_call_id`. The adapter methods accept only catalog
+`input_fields`. `HISTORICAL_ANALYTICS_TOOLS` is the specialist-facing
+allowlist; it is not combined with `LIVE_OPS_TOOLS`. Coverage-certified
+`VERIFIED_ZERO` maps to `NOT_FOUND` with first-class exact-zero proof.
+Adapters do not expose AWS, SQL, query ids, or current/geography fallback.
+`import wilvor_ai` remains contracts-only and does not load
+`historical_analytics`, `historical_analytics_mapping`, or
+`wilvor_historical_query`.
+
+An Analytics Specialist, model/provider integration, and Agent API are not
+implemented. Phase 2C is not complete.
 
 ## Tests
 

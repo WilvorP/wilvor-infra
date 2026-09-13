@@ -28,6 +28,8 @@ from wilvor_historical.query_contracts import (
     ListEncountersResult,
 )
 
+INVALID_REQUEST_CODE = HistoricalQueryStatus.INVALID_REQUEST.value
+
 
 HISTORICAL_FRESHNESS_NOT_ESTABLISHED = "HISTORICAL_FRESHNESS_NOT_ESTABLISHED"
 MAPPING_INTEGRITY_FAILED = "HISTORICAL_MAPPING_INCOHERENT"
@@ -113,6 +115,42 @@ def map_historical_query_response(
         evidence=evidence,
         as_of_utc=as_of_utc,
         limitations=limitations,
+        correlation_id=None,
+    )
+
+
+def map_historical_invalid_request(
+    *,
+    tool_name: str,
+    tool_call_id: str,
+    attempted_scope: dict[str, object] | None = None,
+) -> ToolResult:
+    """Map a pre-operation request-construction failure.
+
+    No HistoricalQueryResponse exists yet, so this helper does not invent
+    coverage, query traces, or a certified zero. Trusted ``as_of_utc`` is
+    not copied: the domain never evaluated it.
+    """
+
+    return ToolResult(
+        tool_name=tool_name,
+        tool_call_id=tool_call_id,
+        status=ToolResultStatus.UNKNOWN,
+        temporal_scope=TemporalScope.HISTORICAL,
+        data={
+            "status": INVALID_REQUEST_CODE,
+            "operation": tool_name,
+            "requested_scope": attempted_scope or {},
+            "result": None,
+            "limitations": [],
+            "error": {
+                "code": INVALID_REQUEST_CODE,
+                "message": INVALID_REQUEST_CODE,
+            },
+        },
+        evidence=(),
+        as_of_utc=None,
+        limitations=(INVALID_REQUEST_CODE,),
         correlation_id=None,
     )
 
