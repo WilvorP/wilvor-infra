@@ -42,9 +42,15 @@ from wilvor_historical_query import (
     get_query_definition,
     public_query_definitions,
     public_query_ids,
+    render_fixed_query,
     render_historical_operation,
 )
 from wilvor_historical_query import query_registry
+from wilvor_historical_query.query_registry import (
+    LIST_MAX_DATA_ROWS,
+    RISK_LEVEL_DISTRIBUTION_MAX_DATA_ROWS,
+    SUMMARY_MAX_DATA_ROWS,
+)
 
 
 WINDOW = ("2026-09-11T00:00:00Z", "2026-09-12T00:00:00Z")
@@ -335,6 +341,116 @@ def test_rendering_is_byte_for_byte_deterministic():
     assert "time.time" not in source
     assert "uuid" not in source
     assert "random" not in source
+
+
+def test_code_owned_max_data_rows_are_fixed():
+    assert SUMMARY_MAX_DATA_ROWS == 1
+    assert RISK_LEVEL_DISTRIBUTION_MAX_DATA_ROWS == 1000
+    assert LIST_MAX_DATA_ROWS == 201
+    assert (
+        get_query_definition(InternalQueryId.SUMMARIZE_HISTORICAL_ENCOUNTERS)
+        .max_data_rows
+        == 1
+    )
+    assert (
+        get_query_definition(InternalQueryId.SUMMARIZE_HISTORICAL_RISKS)
+        .max_data_rows
+        == 1
+    )
+    assert (
+        get_query_definition(InternalQueryId.SUMMARIZE_HISTORICAL_RISKS_BY_LEVEL)
+        .max_data_rows
+        == 1000
+    )
+    assert (
+        get_query_definition(InternalQueryId.SUMMARIZE_HISTORICAL_HAZARD_VERSIONS)
+        .max_data_rows
+        == 1
+    )
+    assert (
+        get_query_definition(InternalQueryId.LIST_HISTORICAL_ENCOUNTERS)
+        .max_data_rows
+        == 201
+    )
+    list_rendered = render_historical_operation(
+        ListHistoricalEncountersRequest(
+            start_utc=WINDOW[0],
+            end_utc=WINDOW[1],
+            aircraft_id="abc123",
+            limit=25,
+        )
+    )
+    assert list_rendered.queries[0].max_data_rows == 26
+    summary = render_historical_operation(
+        SummarizeHistoricalEncountersRequest(
+            start_utc=WINDOW[0],
+            end_utc=WINDOW[1],
+        )
+    )
+    assert summary.queries[0].max_data_rows == 1
+    risks = render_historical_operation(
+        SummarizeHistoricalRisksRequest(
+            start_utc=WINDOW[0],
+            end_utc=WINDOW[1],
+        )
+    )
+    assert [item.max_data_rows for item in risks.queries] == [1, 1000]
+
+
+def test_render_fixed_query_enforces_request_compatibility():
+    encounters = SummarizeHistoricalEncountersRequest(
+        start_utc=WINDOW[0],
+        end_utc=WINDOW[1],
+    )
+    risks = SummarizeHistoricalRisksRequest(
+        start_utc=WINDOW[0],
+        end_utc=WINDOW[1],
+    )
+    listed = ListHistoricalEncountersRequest(
+        start_utc=WINDOW[0],
+        end_utc=WINDOW[1],
+        aircraft_id="abc123",
+        limit=10,
+    )
+    rendered = render_fixed_query(
+        InternalQueryId.SUMMARIZE_HISTORICAL_ENCOUNTERS,
+        encounters,
+    )
+    assert rendered.query_id is InternalQueryId.SUMMARIZE_HISTORICAL_ENCOUNTERS
+    assert rendered.sql == render_historical_operation(encounters).queries[0].sql
+    by_level = render_fixed_query(
+        InternalQueryId.SUMMARIZE_HISTORICAL_RISKS_BY_LEVEL,
+        risks,
+    )
+    assert by_level.query_id is InternalQueryId.SUMMARIZE_HISTORICAL_RISKS_BY_LEVEL
+    assert by_level.max_data_rows == 1000
+    listed_rendered = render_fixed_query(
+        InternalQueryId.LIST_HISTORICAL_ENCOUNTERS,
+        listed,
+    )
+    assert listed_rendered.max_data_rows == 11
+    with pytest.raises(
+        HistoricalQueryRenderError,
+        match="does not belong to the supplied request",
+    ):
+        render_fixed_query(
+            InternalQueryId.SUMMARIZE_HISTORICAL_ENCOUNTERS,
+            risks,
+        )
+    with pytest.raises(
+        HistoricalQueryRenderError,
+        match="does not belong to the supplied request",
+    ):
+        render_fixed_query(
+            InternalQueryId.SUMMARIZE_HISTORICAL_RISKS_BY_LEVEL,
+            encounters,
+        )
+    with pytest.raises(HistoricalQueryRenderError, match="unknown historical query"):
+        render_fixed_query("summarize_historical_encounters", encounters)
+    assert InternalQueryId.SUMMARIZE_HISTORICAL_RISKS_BY_LEVEL.value not in {
+        item.value for item in HistoricalOperation
+    }
+    assert len(HistoricalOperation) == 4
 
 
 def test_query_definitions_have_no_sql_field_for_callers_to_fill():

@@ -1,7 +1,23 @@
-# Historical analytics query registry (Phase 2B.1)
+# Historical analytics query registry and executor
 
 `wilvor_historical_query` renders deterministic Athena SQL for a closed
-set of historical analytics queries. It does **not** execute queries.
+set of historical analytics queries and executes those rendered queries
+through an injected, bounded Athena client.
+
+## Current status
+
+**2B.1 — implemented:** fixed registry and SQL renderer.
+
+**2B.2 — implemented:** bounded deterministic Athena executor. Offline
+fake-client unit tests only. Live AWS validation has **not** happened.
+
+**Still not implemented:**
+
+- **2B.3:** coverage S3 loader / gate
+- **2B.4:** domain operations
+- **2B.5:** query IAM policy
+- **2B.6:** live validation / observability
+- **Phase 2C:** `wilvor_ai` adapters
 
 ## Authority boundary
 
@@ -15,9 +31,10 @@ wilvor_historical
 contracts and `touched_utc_dates` stay AWS-free.
 
 This package may import `wilvor_historical`. It must not import
-`boto3`, `botocore`, or `wilvor_ai`.
+`boto3`, `botocore`, or `wilvor_ai`. The executor does not create an
+AWS client on import. Tests inject a fake Athena client.
 
-## Fixed-query registry only
+## Fixed-query registry (2B.1)
 
 Public V1 identities are exactly:
 
@@ -33,10 +50,7 @@ a typed Phase 2B-preflight request object.
 `summarize_historical_risks` is one domain operation that renders **two**
 internal fixed queries: the aggregate summary and a code-owned
 `GROUP BY risk_level` distribution. Callers cannot choose the grouping
-column. Operation-level `QueryEvidence` carries a
-`query_executions` tuple so both Athena execution ids, row counts, and
-scanned bytes stay auditable. The distribution query is not a public
-V1 operation.
+column. The distribution query is not a public V1 operation.
 
 No geometry or geography query exists.
 
@@ -112,13 +126,96 @@ Rendered `LIMIT` is `N + 1` for domain limit `N` in `1..200`. That
 proves only `true matches >= N + 1` when truncated. It does not compute
 an exact total.
 
+Executor `max_data_rows` for a list query is the same `N + 1`. That is
+a safety bound, not the domain `RESULT_TRUNCATED` contract.
+
 Selected columns are the `HistoricalEncounterRecord` allowlist. No
 `SELECT *`. No current DynamoDB enrichment.
 
-## Later phases (not implemented here)
+## Bounded Athena executor (2B.2)
 
-- **2B.2:** Athena execution
-- **2B.3:** coverage-store gating
-- **2B.4:** operation orchestration
-- **2B.5:** query IAM
-- **Phase 2C:** `wilvor_ai` ToolResult adapters
+`AthenaExecutor.execute_fixed(query_id=..., request=...)` is the only
+production execution entry point. Callers supply a closed
+`InternalQueryId` and a typed historical request. The executor renders
+through the 2B.1 registry and then executes that internal
+`RenderedQuery`. There is no public `execute_sql` / `run_sql` /
+`execute(RenderedQuery)` / raw-SQL API.
+
+`InternalQueryId` has the five code-owned statements, including internal
+`summarize_historical_risks_by_level`. That identity is not a fifth
+`HistoricalOperation`. The query id must belong to the supplied request
+type or the executor fails with `INVALID_REQUEST` before
+`StartQueryExecution`.
+
+Deployment values are composed into `AthenaExecutorConfig` and are
+**not** historical request fields:
+
+- dedicated historical `workgroup`
+- dedicated historical Glue `database`
+- `expected_results_prefix` = `s3://<results-bucket>/athena-results/`
+  (trailing `/` is required or normalized)
+- `timeout_seconds` default `180`
+- `poll_interval_seconds` default `2`
+
+A query caller cannot choose workgroup, database, `OutputLocation`, or
+result reuse.
+
+Every `StartQueryExecution` sends:
+
+- `QueryString` = the 2B.1 rendered SQL
+- `QueryExecutionContext.Database` = configured database
+- `WorkGroup` = configured workgroup
+- `ResultReuseConfiguration.ResultReuseByAgeConfiguration.Enabled = false`
+
+The executor does **not** pass `ResultConfiguration.OutputLocation`.
+The workgroup owns output location.
+
+Polling uses `GetQueryExecution` as the authoritative state source.
+Athena API states are `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, and
+`CANCELLED`. That last spelling is **not** the EventBridge query-state
+filter `CANCELED`. Clock and sleep are injectable. The loop is bounded
+by monotonic elapsed time.
+
+On timeout the executor calls `StopQueryExecution` for the exact
+`QueryExecutionId` and fails with `QUERY_TIMEOUT`. A stop failure is
+secondary diagnostic context; timeout is never converted into success.
+
+After `SUCCEEDED`, and before `GetQueryResults`, the executor verifies:
+
+- `WorkGroup` equals the configured workgroup
+- `QueryExecutionContext.Database` equals the configured database
+- `ResultConfiguration.OutputLocation` is present and starts with the
+  exact derived prefix (trailing `/` prevents `athena-results-evil/`)
+- when GetQueryExecution returns `Query`, it must exactly equal the
+  internally rendered SQL
+
+It does not inspect or write S3. Unexpected locations are not rewritten.
+
+Result pages are consumed with `NextToken`. On the first page,
+`ResultSetMetadata.ColumnInfo` and the first row's cell values must both
+equal `output_columns` exactly and in order. Only that validated header
+row is discarded. A first row of data is rejected, not silently dropped.
+Later pages treat every row as data. A header-only first page is a
+legitimate zero-data result (`rows_returned = 0`); that is not
+`VERIFIED_ZERO`. SQL NULL in a **data** cell (missing `VarCharValue`)
+stays `None`. Exceeding the code-owned `max_data_rows` bound fails with
+`RESULT_LIMIT_EXCEEDED` rather than silent truncation.
+
+Code-owned bounds:
+
+- encounter / risk / hazard summaries: `1`
+- risk-level distribution: `1000` (open stored labels; not assumed to
+  be three risk levels)
+- list encounters: `requested_limit + 1`
+
+Success evidence includes `query_id`, `query_execution_id`, workgroup,
+database, output location, generic typed rows (`column -> str | None`),
+`rows_returned` (data rows only), and `data_scanned_bytes`
+(`Statistics.DataScannedInBytes` as `int | None`). No dollar conversion.
+
+The executor does **not** determine `VERIFIED_ZERO`. It does not call
+`evaluate_collection_window` or `is_verified_zero`. A successful
+aggregate row containing zero is just query data. Coverage (2B.3) and
+semantic interpretation (2B.4) come later.
+
+Default logging of rendered SQL is not added in this subphase.

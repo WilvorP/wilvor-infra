@@ -1,4 +1,4 @@
-"""Import isolation for wilvor_historical_query (Phase 2B.1)."""
+"""Import isolation for wilvor_historical_query (Phase 2B.1 / 2B.2)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 
 import wilvor_historical_query
-from wilvor_historical_query import query_registry, query_sql
+from wilvor_historical_query import executor, query_registry, query_sql
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -59,6 +59,8 @@ def test_query_package_source_has_no_aws_or_ai_imports():
         assert imported.isdisjoint(forbidden), path
     assert "wilvor_historical" in _imported_roots(PACKAGE_DIR / "query_sql.py")
     assert "wilvor_historical" in _imported_roots(PACKAGE_DIR / "query_registry.py")
+    assert "wilvor_historical" not in _imported_roots(PACKAGE_DIR / "executor.py")
+    assert "wilvor_historical" not in _imported_roots(PACKAGE_DIR / "errors.py")
 
 
 def test_historical_package_still_does_not_import_query_runtime():
@@ -84,7 +86,12 @@ assert 'botocore' not in sys.modules
 assert 'wilvor_ai' not in sys.modules
 assert 'athena' not in sys.modules
 assert hasattr(wilvor_historical_query, 'render_historical_operation')
+assert hasattr(wilvor_historical_query, 'AthenaExecutor')
+assert hasattr(wilvor_historical_query, 'InternalQueryId')
+assert hasattr(wilvor_historical_query, 'render_fixed_query')
 assert not hasattr(wilvor_historical_query, 'execute_sql')
+assert not hasattr(wilvor_historical_query.AthenaExecutor, 'execute')
+assert not hasattr(wilvor_historical_query, '_execute_rendered')
 assert not hasattr(wilvor_historical_query, 'run_sql')
 assert not hasattr(wilvor_historical_query, 'query_table')
 assert not hasattr(wilvor_historical_query, 'register_query')
@@ -102,7 +109,7 @@ def test_no_generic_sql_api_symbols_exist():
         "execute_query",
         "execute_athena",
     }
-    for module in (wilvor_historical_query, query_registry, query_sql):
+    for module in (wilvor_historical_query, query_registry, query_sql, executor):
         names = set(dir(module))
         assert names.isdisjoint(forbidden)
         source = inspect.getsource(module)
@@ -110,7 +117,27 @@ def test_no_generic_sql_api_symbols_exist():
         assert "def run_sql" not in source
         assert "def query_table" not in source
         assert "def register_query" not in source
-        assert "StartQueryExecution" not in source
         assert "boto3" not in source
         assert "time.time(" not in source
         assert "datetime.now(" not in source
+        assert "evaluate_collection_window" not in source
+        assert "is_verified_zero" not in source
+    for module in (wilvor_historical_query, query_registry, query_sql):
+        source = inspect.getsource(module)
+        assert "StartQueryExecution" not in source
+
+
+def test_executor_has_no_raw_sql_or_coverage_hooks():
+    source = inspect.getsource(executor)
+    assert "def execute_sql" not in source
+    assert "def run_sql" not in source
+    assert "evaluate_collection_window" not in source
+    assert "is_verified_zero" not in source
+    assert "boto3" not in source
+    assert "client(" not in source
+    assert hasattr(executor.AthenaExecutor, "execute_fixed")
+    assert not hasattr(executor.AthenaExecutor, "execute")
+    assert not hasattr(executor.AthenaExecutor, "execute_sql")
+    assert not hasattr(executor.AthenaExecutor, "execute_query_string")
+    signature = inspect.signature(executor.AthenaExecutor.execute_fixed)
+    assert list(signature.parameters) == ["self", "query_id", "request"]

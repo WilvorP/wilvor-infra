@@ -25,6 +25,7 @@ from wilvor_historical.query_contracts import (
     INTERNAL_QUERY_ID_SUMMARIZE_RISKS,
     INTERNAL_QUERY_ID_SUMMARIZE_RISKS_BY_LEVEL,
     LIST_HISTORICAL_ENCOUNTERS_ORDERING,
+    LIST_MAX_LIMIT,
     EncounterSummaryResult,
     HazardVersionSummaryResult,
     HistoricalEncounterRecord,
@@ -93,6 +94,10 @@ LIST_ENCOUNTER_OUTPUT_COLUMNS = tuple(
     field.name for field in fields(HistoricalEncounterRecord)
 )
 
+SUMMARY_MAX_DATA_ROWS = 1
+RISK_LEVEL_DISTRIBUTION_MAX_DATA_ROWS = 1000
+LIST_MAX_DATA_ROWS = LIST_MAX_LIMIT + 1
+
 _TABLE_BY_DATASET = {
     Dataset.ENCOUNTER: "encounter",
     Dataset.RISK: "risk",
@@ -124,6 +129,7 @@ class QueryDefinition:
     output_columns: tuple[str, ...]
     result_shape: str
     public: bool
+    max_data_rows: int
 
 
 @dataclass(frozen=True)
@@ -136,6 +142,13 @@ class RenderedQuery:
     sql: str
     output_columns: tuple[str, ...]
     result_shape: str
+    max_data_rows: int
+
+    def __post_init__(self) -> None:
+        if isinstance(self.max_data_rows, bool) or self.max_data_rows < 1:
+            raise HistoricalQueryRenderError("invalid max_data_rows")
+        if not isinstance(self.sql, str) or not self.sql.strip():
+            raise HistoricalQueryRenderError("missing rendered SQL")
 
 
 @dataclass(frozen=True)
@@ -154,7 +167,10 @@ def _definition(
     output_columns: tuple[str, ...],
     result_shape: str,
     public: bool,
+    max_data_rows: int,
 ) -> QueryDefinition:
+    if isinstance(max_data_rows, bool) or max_data_rows < 1:
+        raise HistoricalQueryRenderError("invalid max_data_rows")
     return QueryDefinition(
         query_id=query_id,
         operation=operation,
@@ -164,6 +180,7 @@ def _definition(
         output_columns=output_columns,
         result_shape=result_shape,
         public=public,
+        max_data_rows=max_data_rows,
     )
 
 
@@ -176,6 +193,7 @@ _QUERY_DEFINITIONS: Mapping[InternalQueryId, QueryDefinition] = MappingProxyType
             output_columns=ENCOUNTER_SUMMARY_OUTPUT_COLUMNS,
             result_shape=RESULT_SHAPE_ENCOUNTER_SUMMARY,
             public=True,
+            max_data_rows=SUMMARY_MAX_DATA_ROWS,
         ),
         InternalQueryId.SUMMARIZE_HISTORICAL_RISKS: _definition(
             InternalQueryId.SUMMARIZE_HISTORICAL_RISKS,
@@ -184,6 +202,7 @@ _QUERY_DEFINITIONS: Mapping[InternalQueryId, QueryDefinition] = MappingProxyType
             output_columns=RISK_SUMMARY_OUTPUT_COLUMNS,
             result_shape=RESULT_SHAPE_RISK_SUMMARY,
             public=True,
+            max_data_rows=SUMMARY_MAX_DATA_ROWS,
         ),
         InternalQueryId.SUMMARIZE_HISTORICAL_RISKS_BY_LEVEL: _definition(
             InternalQueryId.SUMMARIZE_HISTORICAL_RISKS_BY_LEVEL,
@@ -192,6 +211,7 @@ _QUERY_DEFINITIONS: Mapping[InternalQueryId, QueryDefinition] = MappingProxyType
             output_columns=RISK_LEVEL_DISTRIBUTION_OUTPUT_COLUMNS,
             result_shape=RESULT_SHAPE_RISK_LEVEL_BUCKET,
             public=False,
+            max_data_rows=RISK_LEVEL_DISTRIBUTION_MAX_DATA_ROWS,
         ),
         InternalQueryId.SUMMARIZE_HISTORICAL_HAZARD_VERSIONS: _definition(
             InternalQueryId.SUMMARIZE_HISTORICAL_HAZARD_VERSIONS,
@@ -200,6 +220,7 @@ _QUERY_DEFINITIONS: Mapping[InternalQueryId, QueryDefinition] = MappingProxyType
             output_columns=HAZARD_VERSION_SUMMARY_OUTPUT_COLUMNS,
             result_shape=RESULT_SHAPE_HAZARD_VERSION_SUMMARY,
             public=True,
+            max_data_rows=SUMMARY_MAX_DATA_ROWS,
         ),
         InternalQueryId.LIST_HISTORICAL_ENCOUNTERS: _definition(
             InternalQueryId.LIST_HISTORICAL_ENCOUNTERS,
@@ -208,6 +229,7 @@ _QUERY_DEFINITIONS: Mapping[InternalQueryId, QueryDefinition] = MappingProxyType
             output_columns=LIST_ENCOUNTER_OUTPUT_COLUMNS,
             result_shape=RESULT_SHAPE_ENCOUNTER_RECORD,
             public=True,
+            max_data_rows=LIST_MAX_DATA_ROWS,
         ),
     }
 )
@@ -426,6 +448,22 @@ _REQUEST_OPERATION = MappingProxyType(
     }
 )
 
+_REQUEST_TYPE_BY_QUERY: Mapping[InternalQueryId, type] = MappingProxyType(
+    {
+        InternalQueryId.SUMMARIZE_HISTORICAL_ENCOUNTERS: (
+            SummarizeHistoricalEncountersRequest
+        ),
+        InternalQueryId.SUMMARIZE_HISTORICAL_RISKS: SummarizeHistoricalRisksRequest,
+        InternalQueryId.SUMMARIZE_HISTORICAL_RISKS_BY_LEVEL: (
+            SummarizeHistoricalRisksRequest
+        ),
+        InternalQueryId.SUMMARIZE_HISTORICAL_HAZARD_VERSIONS: (
+            SummarizeHistoricalHazardVersionsRequest
+        ),
+        InternalQueryId.LIST_HISTORICAL_ENCOUNTERS: ListHistoricalEncountersRequest,
+    }
+)
+
 
 def get_query_definition(query_id: InternalQueryId | str) -> QueryDefinition:
     if isinstance(query_id, str):
@@ -457,9 +495,37 @@ def public_query_ids() -> frozenset[str]:
     return frozenset(item.query_id.value for item in public_query_definitions())
 
 
+def render_fixed_query(query_id: InternalQueryId, request: Any) -> RenderedQuery:
+    """Render one closed query for a compatible typed request.
+
+    Compatibility is locked here. Callers cannot supply SQL, table,
+    columns, or a constructed RenderedQuery.
+    """
+
+    if not isinstance(query_id, InternalQueryId):
+        raise HistoricalQueryRenderError("unknown historical query")
+    expected_request_type = _REQUEST_TYPE_BY_QUERY.get(query_id)
+    if expected_request_type is None:
+        raise HistoricalQueryRenderError("unknown historical query")
+    if not isinstance(request, expected_request_type):
+        raise HistoricalQueryRenderError(
+            "fixed query does not belong to the supplied request"
+        )
+    operation = _REQUEST_OPERATION.get(type(request))
+    definition = _QUERY_DEFINITIONS[query_id]
+    if operation is None or definition.operation is not operation:
+        raise HistoricalQueryRenderError(
+            "fixed query does not belong to the supplied request"
+        )
+    return _render_one(query_id, request)
+
+
 def _render_one(query_id: InternalQueryId, request: Any) -> RenderedQuery:
     definition = _QUERY_DEFINITIONS[query_id]
     sql = _RENDERERS[query_id](definition, request)
+    max_data_rows = definition.max_data_rows
+    if query_id is InternalQueryId.LIST_HISTORICAL_ENCOUNTERS:
+        max_data_rows = request.limit + 1
     return RenderedQuery(
         query_id=definition.query_id,
         operation=definition.operation,
@@ -469,6 +535,7 @@ def _render_one(query_id: InternalQueryId, request: Any) -> RenderedQuery:
         sql=sql,
         output_columns=definition.output_columns,
         result_shape=definition.result_shape,
+        max_data_rows=max_data_rows,
     )
 
 
