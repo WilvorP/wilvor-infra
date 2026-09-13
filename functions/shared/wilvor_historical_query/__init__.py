@@ -1,9 +1,9 @@
-"""Deterministic historical analytics query registry, executor, and coverage gate.
+"""Deterministic historical analytics query runtime.
 
 Phase 2B.1 owns fixed-query SQL. Phase 2B.2 executes rendered queries
 through an injected Athena client. Phase 2B.3 loads coverage metadata
-and gates Athena. This package does not orchestrate domain operations
-or adapt ToolResults.
+and gates Athena. Phase 2B.4 orchestrates the four V1 domain operations.
+This package does not adapt ToolResults.
 """
 
 from .coverage_gate import CoverageGate, CoverageGateResult
@@ -35,6 +35,7 @@ from .query_registry import (
     render_fixed_query,
     render_historical_operation,
 )
+from .operations import HistoricalAnalyticsOperations, V1_OPERATION_METHODS
 from .query_sql import HistoricalQueryRenderError, sql_string_literal
 
 __all__ = [
@@ -54,8 +55,10 @@ __all__ = [
     "LIST_ENCOUNTER_OUTPUT_COLUMNS",
     "RISK_LEVEL_DISTRIBUTION_OUTPUT_COLUMNS",
     "RISK_SUMMARY_OUTPUT_COLUMNS",
+    "HistoricalAnalyticsOperations",
     "HistoricalQueryRenderError",
     "InternalQueryId",
+    "V1_OPERATION_METHODS",
     "QueryDefinition",
     "RenderedOperation",
     "RenderedQuery",

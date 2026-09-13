@@ -84,6 +84,10 @@ COVERAGE_STORE_METADATA_PREFIXES = (
 )
 
 COVERAGE_REASON_EPOCH_AMBIGUOUS = "EPOCH_AMBIGUOUS"
+QUERY_RESULT_MALFORMED = "RESULT_MALFORMED"
+HAZARD_VERSION_WINDOW_LIMITATION = (
+    "requested window is materialization/event time, not validity-interval overlap"
+)
 
 FORBIDDEN_QUERY_REQUEST_FIELDS = frozenset(
     {
@@ -589,7 +593,7 @@ class QueryEvidence:
     semantic_match_count_is_exact: bool | None = None
     minimum_match_count: int | None = None
     query_executions: tuple[QueryExecutionEvidence, ...] = ()
-    generated_at_utc: str | None = None
+    evaluated_as_of_utc: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.query_name, HistoricalOperation):
@@ -665,8 +669,8 @@ class QueryEvidence:
             )
         object.__setattr__(
             self,
-            "generated_at_utc",
-            _optional_utc(self.generated_at_utc, "generated_at_utc"),
+            "evaluated_as_of_utc",
+            _optional_utc(self.evaluated_as_of_utc, "evaluated_as_of_utc"),
         )
 
     @property
@@ -1044,3 +1048,149 @@ class ListEncountersResult:
 
 def request_field_names(request_type: type) -> frozenset[str]:
     return frozenset(request_type.__dataclass_fields__)
+
+
+_SUCCESS_QUERY_STATUSES = frozenset(
+    {
+        HistoricalQueryStatus.SUCCEEDED,
+        HistoricalQueryStatus.VERIFIED_ZERO,
+        HistoricalQueryStatus.RESULT_TRUNCATED,
+    }
+)
+
+_RESULT_TYPES = {
+    HistoricalOperation.SUMMARIZE_HISTORICAL_ENCOUNTERS: EncounterSummaryResult,
+    HistoricalOperation.SUMMARIZE_HISTORICAL_RISKS: RiskSummaryResult,
+    HistoricalOperation.SUMMARIZE_HISTORICAL_HAZARD_VERSIONS: HazardVersionSummaryResult,
+    HistoricalOperation.LIST_HISTORICAL_ENCOUNTERS: ListEncountersResult,
+}
+
+_REQUEST_TYPES = {
+    HistoricalOperation.SUMMARIZE_HISTORICAL_ENCOUNTERS: SummarizeHistoricalEncountersRequest,
+    HistoricalOperation.SUMMARIZE_HISTORICAL_RISKS: SummarizeHistoricalRisksRequest,
+    HistoricalOperation.SUMMARIZE_HISTORICAL_HAZARD_VERSIONS: SummarizeHistoricalHazardVersionsRequest,
+    HistoricalOperation.LIST_HISTORICAL_ENCOUNTERS: ListHistoricalEncountersRequest,
+}
+
+
+@dataclass(frozen=True)
+class HistoricalQueryErrorEvidence:
+    """Stable failure diagnostics. Never carries a traceback or raw SQL."""
+
+    code: str
+    message: str
+    query_id: str | None = None
+    query_execution_id: str | None = None
+    athena_state: str | None = None
+    athena_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.code, str) or not self.code.strip():
+            raise HistoricalQueryError("missing error code")
+        if not isinstance(self.message, str) or not self.message.strip():
+            raise HistoricalQueryError("missing error message")
+        object.__setattr__(self, "code", self.code.strip())
+        object.__setattr__(self, "message", self.message.strip())
+        if self.query_id is not None:
+            object.__setattr__(
+                self,
+                "query_id",
+                _optional_stored_literal(self.query_id, "query_id"),
+            )
+        if self.query_execution_id is not None:
+            object.__setattr__(
+                self,
+                "query_execution_id",
+                _optional_evidence_token(self.query_execution_id, "query_execution_id"),
+            )
+        if self.athena_state is not None:
+            object.__setattr__(
+                self,
+                "athena_state",
+                _optional_stored_literal(self.athena_state, "athena_state"),
+            )
+        if self.athena_reason is not None:
+            if not isinstance(self.athena_reason, str) or not self.athena_reason.strip():
+                raise HistoricalQueryError("invalid athena_reason")
+            object.__setattr__(self, "athena_reason", self.athena_reason.strip())
+
+    def to_dict(self) -> dict[str, Any]:
+        return _contract_dict(self)
+
+
+@dataclass(frozen=True)
+class HistoricalQueryResponse:
+    """Deterministic V1 historical analytics response. Not an AI ToolResult."""
+
+    status: HistoricalQueryStatus
+    operation: HistoricalOperation
+    requested_scope: (
+        SummarizeHistoricalEncountersRequest
+        | SummarizeHistoricalRisksRequest
+        | SummarizeHistoricalHazardVersionsRequest
+        | ListHistoricalEncountersRequest
+    )
+    coverage: CoverageEvidence | None
+    evidence: QueryEvidence
+    result: (
+        EncounterSummaryResult
+        | RiskSummaryResult
+        | HazardVersionSummaryResult
+        | ListEncountersResult
+        | None
+    ) = None
+    limitations: tuple[str, ...] = ()
+    error: HistoricalQueryErrorEvidence | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.status, HistoricalQueryStatus):
+            raise HistoricalQueryError("invalid status")
+        if not isinstance(self.operation, HistoricalOperation):
+            raise HistoricalQueryError("invalid operation")
+        expected_request = _REQUEST_TYPES[self.operation]
+        if not isinstance(self.requested_scope, expected_request):
+            raise HistoricalQueryError("requested_scope does not match operation")
+        if not isinstance(self.evidence, QueryEvidence):
+            raise HistoricalQueryError("invalid evidence")
+        if self.evidence.query_name is not self.operation:
+            raise HistoricalQueryError("evidence operation mismatch")
+        if self.coverage is not None and not isinstance(self.coverage, CoverageEvidence):
+            raise HistoricalQueryError("invalid coverage")
+        if not isinstance(self.limitations, tuple) or any(
+            not isinstance(item, str) or not item.strip() for item in self.limitations
+        ):
+            raise HistoricalQueryError("invalid limitations")
+        object.__setattr__(
+            self,
+            "limitations",
+            tuple(item.strip() for item in self.limitations),
+        )
+        if self.error is not None and not isinstance(
+            self.error, HistoricalQueryErrorEvidence
+        ):
+            raise HistoricalQueryError("invalid error")
+        if self.status in _SUCCESS_QUERY_STATUSES:
+            if self.result is None:
+                raise HistoricalQueryError("successful historical response requires a result")
+            if self.error is not None:
+                raise HistoricalQueryError(
+                    "successful historical response cannot carry an error"
+                )
+            if not isinstance(self.result, _RESULT_TYPES[self.operation]):
+                raise HistoricalQueryError("result does not match operation")
+        elif self.result is not None:
+            raise HistoricalQueryError(
+                "unsuccessful historical response cannot carry a result"
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "status": self.status.value,
+            "operation": self.operation.value,
+            "requested_scope": self.requested_scope.to_dict(),
+            "coverage": None if self.coverage is None else self.coverage.to_dict(),
+            "result": None if self.result is None else self.result.to_dict(),
+            "evidence": self.evidence.to_dict(),
+            "limitations": list(self.limitations),
+            "error": None if self.error is None else self.error.to_dict(),
+        }

@@ -14,6 +14,7 @@ from wilvor_historical.query_windows import (
     UtcCalendarDate,
     parse_query_window,
     touched_utc_dates,
+    utc_instant_in_query_window,
 )
 
 
@@ -147,3 +148,11 @@ def test_zero_fraction_is_canonicalized_to_whole_second():
     )
     assert window.start_utc == "2026-09-11T12:00:00Z"
     assert window.end_utc == "2026-09-11T13:00:00Z"
+
+
+def test_utc_instant_uses_whole_second_epoch_membership():
+    window = parse_query_window("2026-09-11T12:00:00Z", "2026-09-11T12:00:01Z")
+    assert utc_instant_in_query_window("2026-09-11T12:00:00Z", window)
+    assert utc_instant_in_query_window("2026-09-11T12:00:00.900000Z", window)
+    assert not utc_instant_in_query_window("2026-09-11T12:00:01Z", window)
+    assert not utc_instant_in_query_window("2026-09-11T11:59:59Z", window)

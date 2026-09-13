@@ -28,11 +28,15 @@ from wilvor_historical.query_contracts import (
     STORED_DEDUP_ID_CHARACTERS,
     V1_HISTORICAL_OPERATIONS,
     CoverageEvidence,
+    HAZARD_VERSION_WINDOW_LIMITATION,
+    QUERY_RESULT_MALFORMED,
     EncounterSummaryResult,
     HazardVersionSummaryResult,
     HistoricalEncounterRecord,
     HistoricalOperation,
     HistoricalQueryError,
+    HistoricalQueryErrorEvidence,
+    HistoricalQueryResponse,
     HistoricalQueryStatus,
     ListEncountersResult,
     ListHistoricalEncountersRequest,
@@ -481,6 +485,8 @@ def test_coverage_evidence_uses_plural_epoch_ids():
     assert "semantic_match_count_is_exact" in names
     assert "minimum_match_count" in names
     assert "query_executions" in names
+    assert "evaluated_as_of_utc" in names
+    assert "generated_at_utc" not in names
     assert "rows_returned" not in names
     assert "query_execution_id" not in names
     assert "workgroup" not in names
@@ -683,3 +689,74 @@ def test_query_modules_have_no_sql_or_aws():
         assert "datetime.now(" not in source
         assert "SELECT" not in source
         assert "StartQueryExecution" not in source
+
+
+def test_query_evidence_evaluated_as_of_is_not_generation_time():
+    evidence = QueryEvidence(
+        query_name=HistoricalOperation.SUMMARIZE_HISTORICAL_ENCOUNTERS,
+        datasets=("encounter",),
+        requested_start_utc=WINDOW[0],
+        requested_end_utc=WINDOW[1],
+        coverage_state=Evaluability.EVALUABLE,
+        collection_epoch_ids=("epoch-1",),
+        semantic_match_count=0,
+        semantic_match_count_is_exact=True,
+        evaluated_as_of_utc="2026-09-13T12:00:00Z",
+    )
+    assert evidence.evaluated_as_of_utc == "2026-09-13T12:00:00Z"
+    assert "generated_at_utc" not in evidence.to_dict()
+    assert not hasattr(evidence, "generated_at_utc")
+
+
+def test_hazard_version_limitation_is_materialization_time():
+    assert "materialization/event time" in HAZARD_VERSION_WINDOW_LIMITATION
+    assert "valid_from_utc" not in HAZARD_VERSION_WINDOW_LIMITATION
+    assert "valid_to_utc" not in HAZARD_VERSION_WINDOW_LIMITATION
+    assert QUERY_RESULT_MALFORMED == "RESULT_MALFORMED"
+
+
+def test_historical_query_response_rejects_result_when_blocked():
+    request = SummarizeHistoricalEncountersRequest(
+        start_utc=WINDOW[0],
+        end_utc=WINDOW[1],
+    )
+    coverage = CoverageEvidence(
+        evaluability=Evaluability.GAP_OR_UNCERTAIN,
+        reason="open_gap",
+        required_horizon_seconds=173760,
+        required_streams=("facts",),
+        collection_epoch_ids=("epoch-a",),
+    )
+    evidence = QueryEvidence(
+        query_name=HistoricalOperation.SUMMARIZE_HISTORICAL_ENCOUNTERS,
+        datasets=("encounter",),
+        requested_start_utc=WINDOW[0],
+        requested_end_utc=WINDOW[1],
+        coverage_state=Evaluability.GAP_OR_UNCERTAIN,
+        collection_epoch_ids=("epoch-a",),
+    )
+    with pytest.raises(HistoricalQueryError, match="cannot carry a result"):
+        HistoricalQueryResponse(
+            status=HistoricalQueryStatus.COVERAGE_BLOCKED,
+            operation=HistoricalOperation.SUMMARIZE_HISTORICAL_ENCOUNTERS,
+            requested_scope=request,
+            coverage=coverage,
+            evidence=evidence,
+            result=EncounterSummaryResult(
+                physical_record_count=0,
+                distinct_encounter_count=0,
+                distinct_aircraft_count=0,
+                distinct_hazard_count=0,
+                distinct_dedup_count=0,
+            ),
+        )
+    blocked = HistoricalQueryResponse(
+        status=HistoricalQueryStatus.COVERAGE_BLOCKED,
+        operation=HistoricalOperation.SUMMARIZE_HISTORICAL_ENCOUNTERS,
+        requested_scope=request,
+        coverage=coverage,
+        evidence=evidence,
+        error=HistoricalQueryErrorEvidence(code="open_gap", message="open_gap"),
+    )
+    assert blocked.result is None
+    assert blocked.to_dict()["result"] is None

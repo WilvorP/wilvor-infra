@@ -1,8 +1,9 @@
-# Historical analytics query registry and executor
+# Historical analytics query runtime
 
 `wilvor_historical_query` renders deterministic Athena SQL for a closed
-set of historical analytics queries and executes those rendered queries
-through an injected, bounded Athena client.
+set of historical analytics queries, executes those rendered queries
+through an injected, bounded Athena client, gates them with
+authoritative coverage metadata, and returns typed V1 domain results.
 
 ## Current status
 
@@ -15,12 +16,14 @@ fake-client unit tests only. Live AWS validation has **not** happened.
 fail-closed coverage gate. Offline fake-S3 unit tests only. No Athena
 call is made by this layer.
 
+**2B.4 — implemented:** four deterministic V1 historical operations.
+Offline fake coverage-gate and fake-executor unit tests only.
+
 **Still not implemented:**
 
-- **2B.4:** domain operations
 - **2B.5:** query IAM policy
-- **2B.6:** live validation / observability
-- **Phase 2C:** `wilvor_ai` adapters
+- **2B.6:** live validation / observability / lifecycle
+- **Phase 2C:** `wilvor_ai` ToolResult adapters
 
 ## Authority boundary
 
@@ -266,6 +269,54 @@ future operation. Unrelated-stream gaps (for example geometry) do not
 contaminate an encounter-only request.
 
 The coverage layer does not instantiate `AthenaExecutor`, render SQL,
-or inspect fact row counts. 2B.4 will run this gate first and call the
-executor only when `allowed_to_query` is true. Domain operations and
-`VERIFIED_ZERO` are not implemented here.
+or inspect fact row counts.
+
+## Domain operations (2B.4)
+
+`HistoricalAnalyticsOperations` injects a `CoverageGate` and
+`AthenaExecutor`. It does not create AWS clients or read the wall
+clock. `as_of_utc` is required and is the same value used for the
+pre-query gate, the post-query gate, and
+`QueryEvidence.evaluated_as_of_utc`. That field is the coverage
+evaluation instant. It is not a response generation timestamp, and
+`generated_at_utc` is not populated from `as_of_utc`.
+
+Successful flow:
+
+1. validate the typed request and injected `as_of_utc`
+2. pre-query coverage gate for the exact window and operation dataset
+3. if not `EVALUABLE`, return a blocked/unavailable response and execute
+   **zero** Athena queries
+4. `executor.execute_fixed(...)` with the closed internal query identity
+   and typed request
+5. strict domain parsing (`result_parsers.py`)
+6. post-query coverage gate with the **same** `as_of_utc` and a fresh
+   metadata load
+7. if post-query is not `EVALUABLE`, discard the Athena result as
+   uncertified
+8. only then `SUCCEEDED` / `VERIFIED_ZERO` / `RESULT_TRUNCATED`
+
+Athena never establishes completeness. `VERIFIED_ZERO` requires
+post-query `EVALUABLE` **and** an exact semantic match count of 0.
+Encounter/risk/hazard summaries use `physical_record_count`. A COUNT
+row containing zero is still one Athena data row. Lists use returned
+row count; `N+1` rows become `RESULT_TRUNCATED` with
+`minimum_match_count = N + 1` and no exact total. There is no second
+COUNT query.
+
+`summarize_historical_risks` is atomic: aggregate first, then
+risk-level distribution, then a required cross-query count check. If
+either query or the consistency parse fails, there is no risk-summary
+result.
+
+Coverage mapping:
+
+- `GAP_OR_UNCERTAIN` / `NOT_ACTIVE` / `NOT_YET_EVALUABLE` →
+  `COVERAGE_BLOCKED`
+- `EPOCH_AMBIGUOUS` → `COVERAGE_BLOCKED`, evaluability `None`
+- store/malformed/pagination/inconsistent → `COVERAGE_STORE_UNAVAILABLE`
+
+Hazard-version responses include the materialization/event-time
+limitation. They do not reinterpret `valid_from_utc` / `valid_to_utc`.
+
+No AI adapters, HTTP API, IAM, or observability are added here.

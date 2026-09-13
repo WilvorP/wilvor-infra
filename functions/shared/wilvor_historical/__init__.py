@@ -42,9 +42,11 @@ from .from_events import (
     fact_from_event,
 )
 from .query_contracts import (
+    HAZARD_VERSION_WINDOW_LIMITATION,
     V1_HISTORICAL_OPERATIONS,
     HistoricalOperation,
     HistoricalQueryError,
+    HistoricalQueryResponse,
     HistoricalQueryStatus,
     is_verified_zero,
 )
@@ -54,6 +56,7 @@ from .query_windows import (
     QueryWindowError,
     parse_query_window,
     touched_utc_dates,
+    utc_instant_in_query_window,
 )
 from .time import canonical_utc_order_key
 
@@ -86,9 +89,11 @@ __all__ = [
     "build_hazard_version_fact",
     "build_risk_fact",
     "fact_from_event",
+    "HAZARD_VERSION_WINDOW_LIMITATION",
     "V1_HISTORICAL_OPERATIONS",
     "HistoricalOperation",
     "HistoricalQueryError",
+    "HistoricalQueryResponse",
     "HistoricalQueryStatus",
     "MAX_QUERY_WINDOW_DAYS",
     "QUERY_WINDOW_PRECISION",
@@ -97,4 +102,5 @@ __all__ = [
     "is_verified_zero",
     "parse_query_window",
     "touched_utc_dates",
+    "utc_instant_in_query_window",
 ]

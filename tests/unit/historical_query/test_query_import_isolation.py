@@ -61,6 +61,8 @@ def test_query_package_source_has_no_aws_or_ai_imports():
     assert "wilvor_historical" in _imported_roots(PACKAGE_DIR / "query_registry.py")
     assert "wilvor_historical" in _imported_roots(PACKAGE_DIR / "coverage_store.py")
     assert "wilvor_historical" in _imported_roots(PACKAGE_DIR / "coverage_gate.py")
+    assert "wilvor_historical" in _imported_roots(PACKAGE_DIR / "operations.py")
+    assert "wilvor_historical" in _imported_roots(PACKAGE_DIR / "result_parsers.py")
     assert "wilvor_historical" not in _imported_roots(PACKAGE_DIR / "executor.py")
     assert "wilvor_historical" not in _imported_roots(PACKAGE_DIR / "errors.py")
     assert "executor" not in _imported_roots(PACKAGE_DIR / "coverage_store.py")
@@ -95,6 +97,7 @@ assert hasattr(wilvor_historical_query, 'InternalQueryId')
 assert hasattr(wilvor_historical_query, 'render_fixed_query')
 assert hasattr(wilvor_historical_query, 'CoverageGate')
 assert hasattr(wilvor_historical_query, 'CoverageStore')
+assert hasattr(wilvor_historical_query, 'HistoricalAnalyticsOperations')
 assert not hasattr(wilvor_historical_query, 'execute_sql')
 assert not hasattr(wilvor_historical_query.AthenaExecutor, 'execute')
 assert not hasattr(wilvor_historical_query, '_execute_rendered')
@@ -164,3 +167,25 @@ def test_coverage_modules_do_not_import_or_call_the_executor():
     assert "evaluate_collection_window" in inspect.getsource(coverage_gate)
     assert "evaluate_collection_window" not in inspect.getsource(coverage_store)
     assert "evaluate_collection_window" not in inspect.getsource(executor)
+
+
+def test_operations_import_gate_and_executor_but_not_ai_or_generic_sql():
+    from wilvor_historical_query import operations
+
+    source = inspect.getsource(operations)
+    assert "CoverageGate" in source
+    assert "AthenaExecutor" in source
+    assert "execute_fixed" in source
+    assert "wilvor_ai" not in source
+    assert "boto3" not in source
+    assert "client(" not in source
+    assert "def execute_sql" not in source
+    assert "render_fixed_query" not in source
+    assert "datetime.now" not in source
+    assert "time.time(" not in source
+    assert operations.V1_OPERATION_METHODS == (
+        "summarize_historical_encounters",
+        "summarize_historical_risks",
+        "summarize_historical_hazard_versions",
+        "list_historical_encounters",
+    )

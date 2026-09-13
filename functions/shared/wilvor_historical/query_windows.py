@@ -120,6 +120,18 @@ def _require_query_utc(value: Any, field_name: str) -> datetime:
         raise QueryWindowError(f"invalid {field_name}") from exc
 
 
+def utc_instant_in_query_window(value: str, window: QueryWindow) -> bool:
+    """True when the instant's whole-second epoch is in ``[start, end)``.
+
+    Stored timestamps may carry microseconds; those share the truncated
+    UTC second used by ``event_time_epoch``. Lexical string comparison
+    is not used.
+    """
+
+    epoch = epoch_from_utc_datetime(parse_utc_datetime(value))
+    return window.start_epoch <= epoch < window.end_epoch
+
+
 def parse_query_window(start_utc: Any, end_utc: Any) -> QueryWindow:
     """Validate and canonicalize a caller-supplied historical window."""
 
