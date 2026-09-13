@@ -140,7 +140,7 @@ module "historical_analytics" {
   account_id  = data.aws_caller_identity.current.account_id
   tags        = local.common_tags
 
-  enable_historical_analytics = false
+  enable_historical_analytics = true
 }
 
 module "metar" {

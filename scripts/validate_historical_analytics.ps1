@@ -89,8 +89,31 @@ function Register-TempPath {
     return $Path
 }
 
+function ConvertTo-ObjectArray {
+    param(
+        [AllowNull()]
+        [AllowEmptyCollection()]
+        [object]$Value
+    )
+
+    if ($null -eq $Value) {
+        return [object[]]@()
+    }
+
+    $items = New-Object System.Collections.Generic.List[object]
+    foreach ($item in @($Value)) {
+        if ($null -ne $item) {
+            $items.Add($item) | Out-Null
+        }
+    }
+    return [object[]]$items.ToArray()
+}
+
 function Invoke-AwsCli {
-    param([Parameter(ValueFromRemainingArguments = $true)][string[]]$AwsArgs)
+    param(
+        [Parameter(Mandatory = $true)]
+        [string[]]$AwsArgs
+    )
 
     if ($script:DryRunActive) {
         throw "DryRun must not call AWS."
@@ -104,7 +127,10 @@ function Invoke-AwsCli {
         if ($LASTEXITCODE -ne 0) {
             throw "aws $($AwsArgs -join ' ') failed with exit code $LASTEXITCODE."
         }
-        return $output
+        if ($null -eq $output) {
+            return ""
+        }
+        return (@($output) | ForEach-Object { [string]$_ }) -join "`n"
     }
     finally {
         $ErrorActionPreference = $previous
@@ -133,7 +159,9 @@ function New-CliInputFile {
 
 function Get-FileUri {
     param([string]$Path)
-    return "file:///" + ($Path -replace '\\', '/')
+
+    $fullPath = [System.IO.Path]::GetFullPath($Path)
+    return "file://$fullPath"
 }
 
 function Invoke-FixedAthenaQuery {
@@ -155,7 +183,7 @@ function Invoke-FixedAthenaQuery {
         }
     }
     $requestPath = New-CliInputFile $request
-    $startRaw = Invoke-AwsCli @(
+    $startRaw = Invoke-AwsCli -AwsArgs @(
         "athena", "start-query-execution",
         "--cli-input-json", (Get-FileUri $requestPath),
         "--output", "json"
@@ -168,7 +196,7 @@ function Invoke-FixedAthenaQuery {
     $deadline = [datetime]::UtcNow.AddSeconds(180)
     $execution = $null
     while ([datetime]::UtcNow -lt $deadline) {
-        $execRaw = Invoke-AwsCli @(
+        $execRaw = Invoke-AwsCli -AwsArgs @(
             "athena", "get-query-execution",
             "--query-execution-id", $queryId,
             "--output", "json"
@@ -199,18 +227,22 @@ function Get-AthenaScalarRows {
         [string]$Label
     )
 
-    $raw = Invoke-AwsCli @(
+    $raw = Invoke-AwsCli -AwsArgs @(
         "athena", "get-query-results",
         "--query-execution-id", $QueryExecutionId,
         "--output", "json"
     )
     $result = Get-JsonObject $raw
-    $rows = @($result.ResultSet.Rows)
+    $rawRows = $null
+    if ($null -ne $result.ResultSet -and $result.ResultSet.PSObject.Properties.Name -contains "Rows") {
+        $rawRows = $result.ResultSet.Rows
+    }
+    $rows = @(ConvertTo-ObjectArray $rawRows)
     if ($rows.Count -lt 2) {
         throw "$Label Athena result had no data rows."
     }
-    $headers = @($rows[0].Data | ForEach-Object { $_.VarCharValue })
-    $values = @($rows[1].Data | ForEach-Object { $_.VarCharValue })
+    $headers = @(ConvertTo-ObjectArray ($rows[0].Data | ForEach-Object { $_.VarCharValue }))
+    $values = @(ConvertTo-ObjectArray ($rows[1].Data | ForEach-Object { $_.VarCharValue }))
     $map = [ordered]@{}
     for ($i = 0; $i -lt $headers.Count; $i++) {
         $map[$headers[$i]] = $values[$i]
@@ -245,7 +277,7 @@ function Get-S3ObjectRecords {
     $records = New-Object System.Collections.Generic.List[object]
     $token = $null
     do {
-        $args = @(
+        $cliArgs = @(
             "s3api", "list-objects-v2",
             "--bucket", $Bucket,
             "--prefix", $Prefix,
@@ -253,11 +285,14 @@ function Get-S3ObjectRecords {
             "--no-paginate"
         )
         if ($token) {
-            $args += @("--continuation-token", $token)
+            $cliArgs += @("--continuation-token", $token)
         }
-        $page = Get-JsonObject (Invoke-AwsCli $args)
-        foreach ($item in @($page.Contents)) {
-            if ($null -eq $item) { continue }
+        $page = Get-JsonObject (Invoke-AwsCli -AwsArgs $cliArgs)
+        $contents = $null
+        if ($null -ne $page -and $page.PSObject.Properties.Name -contains "Contents") {
+            $contents = $page.Contents
+        }
+        foreach ($item in @(ConvertTo-ObjectArray $contents)) {
             $key = [string]$item.Key
             if ([string]::IsNullOrWhiteSpace($key) -or $key.EndsWith("/")) {
                 continue
@@ -276,7 +311,7 @@ function Get-S3ObjectRecords {
         }
     } while ($token)
 
-    return @($records | Sort-Object Key)
+    return @(ConvertTo-ObjectArray ($records | Sort-Object Key))
 }
 
 function Get-JsonlLineCount {
@@ -314,7 +349,7 @@ function Get-PartitionJsonlCount {
         [string]$Dataset
     )
 
-    $objects = Get-S3ObjectRecords -Bucket $Bucket -Prefix $Prefix
+    $objects = @(ConvertTo-ObjectArray (Get-S3ObjectRecords -Bucket $Bucket -Prefix $Prefix))
     if ($objects.Count -eq 0) {
         throw "Canonical partition $Prefix has no objects."
     }
@@ -329,7 +364,7 @@ function Get-PartitionJsonlCount {
                 "wilvor-s3-" + [guid]::NewGuid().ToString("N") + ".json.gz"
             )
         )
-        Invoke-AwsCli @(
+        Invoke-AwsCli -AwsArgs @(
             "s3", "cp",
             "s3://$Bucket/$($object.Key)",
             $local,
@@ -353,7 +388,7 @@ function Test-MonthHasOtherDays {
         [string]$Day
     )
 
-    $objects = Get-S3ObjectRecords -Bucket $Bucket -Prefix $MonthPrefix
+    $objects = @(ConvertTo-ObjectArray (Get-S3ObjectRecords -Bucket $Bucket -Prefix $MonthPrefix))
     foreach ($object in $objects) {
         if ($object.Key -notmatch "/day=$Day/") {
             return $true
@@ -364,7 +399,8 @@ function Test-MonthHasOtherDays {
 
 function Get-SnapshotSignature {
     param([object[]]$Objects)
-    $lines = foreach ($object in ($Objects | Sort-Object Key)) {
+    $items = @(ConvertTo-ObjectArray $Objects)
+    $lines = foreach ($object in ($items | Sort-Object Key)) {
         "{0}|{1}|{2}" -f $object.Key, $object.Size, $object.ETag
     }
     return ($lines -join "`n")
@@ -461,7 +497,7 @@ try {
     }
 
     Write-Step "Preconditions"
-    $identity = Get-JsonObject (Invoke-AwsCli @(
+    $identity = Get-JsonObject (Invoke-AwsCli -AwsArgs @(
             "sts", "get-caller-identity",
             "--profile", $AwsProfile,
             "--region", $AwsRegion,
@@ -480,13 +516,13 @@ try {
     Write-Host "Canonical bucket:   $canonicalBucket"
     Write-Host "Results bucket:     $resultsBucket"
 
-    Invoke-AwsCli @("s3api", "head-bucket", "--bucket", $canonicalBucket) | Out-Null
-    Invoke-AwsCli @("s3api", "head-bucket", "--bucket", $resultsBucket) | Out-Null
-    Invoke-AwsCli @("glue", "get-database", "--name", $database, "--output", "json") | Out-Null
+    Invoke-AwsCli -AwsArgs @("s3api", "head-bucket", "--bucket", $canonicalBucket) | Out-Null
+    Invoke-AwsCli -AwsArgs @("s3api", "head-bucket", "--bucket", $resultsBucket) | Out-Null
+    Invoke-AwsCli -AwsArgs @("glue", "get-database", "--name", $database, "--output", "json") | Out-Null
     foreach ($table in $ApprovedTables) {
-        Invoke-AwsCli @("glue", "get-table", "--database-name", $database, "--name", $table, "--output", "json") | Out-Null
+        Invoke-AwsCli -AwsArgs @("glue", "get-table", "--database-name", $database, "--name", $table, "--output", "json") | Out-Null
     }
-    $wg = Get-JsonObject (Invoke-AwsCli @(
+    $wg = Get-JsonObject (Invoke-AwsCli -AwsArgs @(
             "athena", "get-work-group",
             "--work-group", $workgroup,
             "--output", "json"
@@ -502,7 +538,7 @@ try {
     $before = [ordered]@{}
     foreach ($dataset in $ApprovedTables) {
         $prefix = "dataset=$dataset/year=$($date.Year)/month=$($date.Month)/day=$($date.Day)/"
-        $before[$dataset] = Get-S3ObjectRecords -Bucket $canonicalBucket -Prefix $prefix
+        $before[$dataset] = @(ConvertTo-ObjectArray (Get-S3ObjectRecords -Bucket $canonicalBucket -Prefix $prefix))
     }
 
     Write-Step "Canonical S3 JSONL counts"
@@ -702,7 +738,7 @@ try {
     Write-Step "Canonical object snapshot (after queries)"
     foreach ($dataset in $ApprovedTables) {
         $prefix = "dataset=$dataset/year=$($date.Year)/month=$($date.Month)/day=$($date.Day)/"
-        $after = Get-S3ObjectRecords -Bucket $canonicalBucket -Prefix $prefix
+        $after = @(ConvertTo-ObjectArray (Get-S3ObjectRecords -Bucket $canonicalBucket -Prefix $prefix))
         $beforeSig = Get-SnapshotSignature $before[$dataset]
         $afterSig = Get-SnapshotSignature $after
         if ($beforeSig -ne $afterSig) {

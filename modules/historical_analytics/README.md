@@ -20,11 +20,13 @@ Canonical historical facts are owned exclusively by
 
 - Persistent facts bucket: `force_destroy = false`
 - Disposable Athena query-results bucket: `force_destroy = true`
+- Disposable Athena workgroup: `force_destroy = true`
 
 | Class | Root | Persistence | `force_destroy` |
 | --- | --- | --- | --- |
 | Historical facts bucket | `envs/dev-historical-data` | persistent | `false` |
 | Athena query-results bucket | `envs/dev` (this module) | disposable derived data | `true` |
+| Athena workgroup | `envs/dev` (this module) | disposable query-history control boundary | `true` |
 
 The persistent bucket name is
 
@@ -51,14 +53,25 @@ Tags use `Component = historical-analytics` and
 
 ## Lifecycle
 
-`dev-up` recreates disposable `envs/dev` resources. With analytics still
-disabled, this module creates nothing.
+`dev-up` recreates disposable `envs/dev` resources. The module default
+for `enable_historical_analytics` is `false`. `envs/dev` intentionally
+enables historical analytics, so normal `dev-up` recreates:
+
+- Glue catalog (database and four external tables)
+- Athena workgroup
+- Athena results bucket
+- analytics monitoring / dashboard
+
+The Athena workgroup uses `force_destroy = true` because normal query
+execution history otherwise prevents deletion. The results bucket uses
+`force_destroy = true` because query results are derived disposable
+artifacts. Canonical historical S3 is never owned by this module.
 
 `dev-down -Force`:
 
 1. DEACTIVATEs historical collection when collection is enabled
-2. destroys `envs/dev`, including this module's results bucket if it
-   exists (`force_destroy = true`)
+2. destroys `envs/dev`, including this module's disposable Glue catalog,
+   workgroup, results bucket, and analytics monitoring
 3. leaves the persistent historical facts bucket intact
 
 There is no `historical-data-down.ps1`. Ordinary `dev-down` / `dev-reset`
@@ -66,8 +79,9 @@ must not target `envs/dev-historical-data`.
 
 ## Enablement
 
-`enable_historical_analytics` must remain `false` in `envs/dev` until a
-reviewed analytics enable/apply.
+The module default for `enable_historical_analytics` remains `false`.
+`envs/dev` intentionally enables historical analytics. No runtime
+analytics query IAM exists yet; Phase 2B owns that.
 
 ## Glue catalog (Phase 2A.2b)
 
@@ -177,6 +191,13 @@ decide collection completeness.
 | CloudWatch query metrics | `true` |
 | Requester pays | `false` |
 | Per-query scan cutoff | `10737418240` (10 GiB) |
+| Force destroy | `true` |
+
+The workgroup is disposable with `envs/dev`. Normal validation and
+analytics use leave query-execution history in the workgroup. Without
+`force_destroy = true`, Athena refuses `DeleteWorkGroup` and normal
+`dev-down` teardown is blocked. This does **not** make canonical
+historical facts disposable.
 
 `enforce_workgroup_configuration = true` prevents clients from
 redirecting results away from the controlled derived location.

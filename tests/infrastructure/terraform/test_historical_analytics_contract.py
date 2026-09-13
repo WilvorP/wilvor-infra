@@ -59,15 +59,15 @@ def test_module_exists_and_is_disabled_by_default():
     assert "default = false" in variables or "default     = false" in variables
 
 
-def test_dev_wires_analytics_disabled_and_collection_enabled():
+def test_dev_wires_analytics_enabled_and_collection_enabled():
     text = read(DEV_MAIN)
     analytics = _dev_module_block(text, "historical_analytics")
     historical_facts = _dev_module_block(text, "historical_facts")
     operational_api = _dev_module_block(text, "operational_api")
 
     assert 'source = "../../modules/historical_analytics"' in analytics
-    assert "enable_historical_analytics = false" in analytics
-    assert "enable_historical_analytics = true" not in analytics
+    assert "enable_historical_analytics = true" in analytics
+    assert "enable_historical_analytics = false" not in analytics
     assert "enable_historical_facts = true" in historical_facts
     assert "enable_historical_facts = false" not in historical_facts
     assert "enable_historical_facts = true" in operational_api
@@ -367,12 +367,17 @@ def test_athena_workgroup_is_gated_and_named():
     locals_text = read(MODULE_DIR / "locals.tf")
     outputs = read(MODULE_DIR / "outputs.tf")
     text = module_text()
+    workgroup = athena.split('resource "aws_athena_workgroup" "historical_analytics"')[1]
     assert text.count('resource "aws_athena_workgroup"') == 1
     assert 'resource "aws_athena_workgroup" "historical_analytics"' in athena
     assert "count = local.enabled ? 1 : 0" in athena
     assert 'workgroup_name         = "${var.name_prefix}-historical-analytics"' in locals_text
-    assert "name        = local.workgroup_name" in athena
-    assert 'state       = "ENABLED"' in athena
+    assert "name          = local.workgroup_name" in workgroup or (
+        "name        = local.workgroup_name" in workgroup
+    )
+    assert 'state         = "ENABLED"' in workgroup or 'state       = "ENABLED"' in workgroup
+    assert "force_destroy = true" in workgroup
+    assert "force_destroy = false" not in workgroup
     assert "aws_athena_named_query" not in text
     assert "aws_athena_prepared_statement" not in text
     assert "aws_iam_role" not in text
@@ -576,12 +581,14 @@ def test_readme_documents_ownership_and_lifecycle():
         "envs/dev-historical-data",
         "force_destroy = false",
         "force_destroy = true",
+        "query-execution history",
         "3-day",
         "dev-down",
         "DEACTIVATE",
         "does **not** create crawlers, runtime query IAM roles",
         "historical-data-down.ps1",
         "enable_historical_analytics",
+        "envs/dev` intentionally enables",
         "OpenX",
         "org.apache.hive.hcatalog.data.JsonSerDe",
         "RegexSerDe",

@@ -1,9 +1,10 @@
 resource "aws_athena_workgroup" "historical_analytics" {
   count = local.enabled ? 1 : 0
 
-  name        = local.workgroup_name
-  state       = "ENABLED"
-  description = "Wilvor deterministic historical analytics over canonical historical facts. This workgroup is a cost and control boundary. It is not a query API and does not determine collection completeness."
+  name          = local.workgroup_name
+  state         = "ENABLED"
+  force_destroy = true
+  description   = "Wilvor deterministic historical analytics over canonical historical facts. This workgroup is a cost and control boundary. It is not a query API and does not determine collection completeness."
 
   configuration {
     enforce_workgroup_configuration    = true

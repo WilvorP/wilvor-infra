@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -190,6 +191,297 @@ def test_invalid_date_fails_before_aws():
     output = completed.stdout + completed.stderr
     assert "YYYY-MM-DD" in output or "ParseExact" in output or "VALIDATION FAILED" in output
     assert "start-query-execution" not in output.lower()
+
+
+def _invoke_aws_cli_function_text() -> str:
+    text = read(SCRIPT)
+    match = re.search(
+        r"function Invoke-AwsCli \{.*?\n\}\n\nfunction ",
+        text,
+        re.S,
+    )
+    assert match, "Invoke-AwsCli function not found"
+    return match.group(0).rsplit("function ", 1)[0]
+
+
+def test_invoke_aws_cli_uses_explicit_named_argv_array():
+    function_text = _invoke_aws_cli_function_text()
+    assert "ValueFromRemainingArguments" not in function_text
+    assert "[string[]]$AwsArgs" in function_text
+    assert "Mandatory = $true" in function_text
+    assert '& aws @AwsArgs' in function_text
+    assert '-join "`n"' in function_text
+
+    script = read(SCRIPT)
+    call_sites = [
+        line.strip()
+        for line in script.splitlines()
+        if "Invoke-AwsCli" in line and not line.strip().startswith("function ")
+    ]
+    assert call_sites
+    for site in call_sites:
+        assert "-AwsArgs" in site, site
+
+    s3_fn = script.split("function Get-S3ObjectRecords")[1].split("function Get-JsonlLineCount")[0]
+    assert "$cliArgs" in s3_fn
+    assert re.search(r"\$args\b", s3_fn) is None
+
+
+def test_invoke_aws_cli_argv_is_not_joined_into_one_token():
+    function_text = _invoke_aws_cli_function_text()
+    smoke = (
+        "$ErrorActionPreference = 'Stop'\n"
+        "$global:LASTEXITCODE = 0\n"
+        "$script:DryRunActive = $false\n"
+        "$script:AwsCallCount = 0\n"
+        "$script:Captured = @()\n"
+            "function aws { $script:Captured = @($args); $global:LASTEXITCODE = 0; '{\"ok\":true}' }\n"
+        f"{function_text}\n"
+        "Invoke-AwsCli -AwsArgs @('sts','get-caller-identity','--profile','wilvor-dev') | Out-Null\n"
+        "if ($script:Captured.Count -ne 4) { Write-Output ('COUNT=' + $script:Captured.Count); exit 1 }\n"
+        "if ($script:Captured[0] -ne 'sts') { exit 1 }\n"
+        "Write-Output ('ARGV=' + ($script:Captured -join '|'))\n"
+    )
+    with tempfile.NamedTemporaryFile(
+        "w",
+        suffix=".ps1",
+        delete=False,
+        encoding="utf-8",
+    ) as handle:
+        handle.write(smoke)
+        path = handle.name
+    try:
+        completed = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    finally:
+        Path(path).unlink(missing_ok=True)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "ARGV=sts|get-caller-identity|--profile|wilvor-dev" in completed.stdout
+
+
+def _convert_to_object_array_function_text() -> str:
+    text = read(SCRIPT)
+    match = re.search(
+        r"function ConvertTo-ObjectArray \{.*?\n\}\n\nfunction ",
+        text,
+        re.S,
+    )
+    assert match, "ConvertTo-ObjectArray function not found"
+    return match.group(0).rsplit("function ", 1)[0]
+
+
+def test_s3_collection_call_sites_normalize_arrays():
+    script = read(SCRIPT)
+    assert "function ConvertTo-ObjectArray" in script
+    assignments = [
+        line.strip()
+        for line in script.splitlines()
+        if "Get-S3ObjectRecords" in line and not line.strip().startswith("function ")
+    ]
+    assert assignments
+    for line in assignments:
+        assert "@(ConvertTo-ObjectArray" in line, line
+
+
+def test_convert_to_object_array_zero_one_many_under_strictmode():
+    function_text = _convert_to_object_array_function_text()
+    smoke = (
+        "Set-StrictMode -Version Latest\n"
+        "$ErrorActionPreference = 'Stop'\n"
+        f"{function_text}\n"
+        "$zero = @(ConvertTo-ObjectArray $null)\n"
+        "if ($zero.Count -ne 0) { Write-Output 'ZERO_FAIL'; exit 1 }\n"
+        "$nullish = @(ConvertTo-ObjectArray @($null))\n"
+        "if ($nullish.Count -ne 0) { Write-Output 'NULL_ITEM_FAIL'; exit 1 }\n"
+        "$oneIn = [pscustomobject]@{ Key = 'a'; Size = 1; ETag = 'e' }\n"
+        "$one = @(ConvertTo-ObjectArray $oneIn)\n"
+        "if ($one.Count -ne 1) { Write-Output ('ONE_FAIL=' + $one.Count); exit 1 }\n"
+        "if ($one[0].Key -ne 'a') { exit 1 }\n"
+        "$manyIn = @(\n"
+        "  [pscustomobject]@{ Key = 'a' },\n"
+        "  [pscustomobject]@{ Key = 'b' }\n"
+        ")\n"
+        "$many = @(ConvertTo-ObjectArray $manyIn)\n"
+        "if ($many.Count -ne 2) { Write-Output ('MANY_FAIL=' + $many.Count); exit 1 }\n"
+        "function Get-OneRecord { return [pscustomobject]@{ Key = 'only' } }\n"
+        "$unwrapped = Get-OneRecord\n"
+        "$caught = $false\n"
+        "try { [void]$unwrapped.Count } catch { $caught = $true }\n"
+        "if (-not $caught) { Write-Output 'STRICT_DID_NOT_THROW'; exit 1 }\n"
+        "$wrapped = @(ConvertTo-ObjectArray (Get-OneRecord))\n"
+        "if ($wrapped.Count -ne 1) { Write-Output 'WRAP_FAIL'; exit 1 }\n"
+        "Write-Output 'COLLECTION_SHAPE_OK'\n"
+    )
+    with tempfile.NamedTemporaryFile(
+        "w",
+        suffix=".ps1",
+        delete=False,
+        encoding="utf-8",
+    ) as handle:
+        handle.write(smoke)
+        path = handle.name
+    try:
+        completed = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    finally:
+        Path(path).unlink(missing_ok=True)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "COLLECTION_SHAPE_OK" in completed.stdout
+
+
+def _get_file_uri_function_text() -> str:
+    text = read(SCRIPT)
+    match = re.search(
+        r"function Get-FileUri \{.*?\n\}\n\nfunction ",
+        text,
+        re.S,
+    )
+    assert match, "Get-FileUri function not found"
+    return match.group(0).rsplit("function ", 1)[0]
+
+
+def test_get_file_uri_uses_aws_cli_windows_file_prefix():
+    function_text = _get_file_uri_function_text()
+    assert "GetFullPath" in function_text
+    assert '"file://$fullPath"' in function_text
+    assert "file:///" not in function_text
+    assert "-replace" not in function_text
+
+    smoke = (
+        "Set-StrictMode -Version Latest\n"
+        "$ErrorActionPreference = 'Stop'\n"
+        f"{function_text}\n"
+        "$dir = Join-Path ([System.IO.Path]::GetTempPath()) "
+        "('wilvor-fileuri-' + [guid]::NewGuid().ToString('N') + '\\Temp Folder')\n"
+        "New-Item -ItemType Directory -Force -Path $dir | Out-Null\n"
+        "$path = Join-Path $dir 'request.json'\n"
+        "[System.IO.File]::WriteAllText($path, '{}')\n"
+        "try {\n"
+        "  $uri = Get-FileUri $path\n"
+        "  if ($uri -notmatch '^file://[A-Za-z]:') { Write-Output ('PREFIX=' + $uri); exit 1 }\n"
+        "  if ($uri.StartsWith('file:///')) { Write-Output ('TRIPLE=' + $uri); exit 1 }\n"
+        "  if ($uri -notmatch 'Temp Folder\\\\request\\.json$') { "
+        "    Write-Output ('SPACEPATH=' + $uri); exit 1 "
+        "  }\n"
+        "  Write-Output ('URI=' + $uri)\n"
+        "} finally {\n"
+        "  Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue\n"
+        "}\n"
+    )
+    with tempfile.NamedTemporaryFile(
+        "w",
+        suffix=".ps1",
+        delete=False,
+        encoding="utf-8",
+    ) as handle:
+        handle.write(smoke)
+        path = handle.name
+    try:
+        completed = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    finally:
+        Path(path).unlink(missing_ok=True)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "URI=file://" in completed.stdout
+    assert "file:///" not in completed.stdout.split("URI=", 1)[1]
+
+
+def test_cli_input_json_file_uri_is_one_argv_token():
+    invoke_text = _invoke_aws_cli_function_text()
+    file_uri_text = _get_file_uri_function_text()
+    smoke = (
+        "Set-StrictMode -Version Latest\n"
+        "$ErrorActionPreference = 'Stop'\n"
+        "$global:LASTEXITCODE = 0\n"
+        "$script:DryRunActive = $false\n"
+        "$script:AwsCallCount = 0\n"
+        "$script:Captured = @()\n"
+        "function aws { $script:Captured = @($args); $global:LASTEXITCODE = 0; '{\"ok\":true}' }\n"
+        f"{invoke_text}\n"
+        f"{file_uri_text}\n"
+        "$dir = Join-Path ([System.IO.Path]::GetTempPath()) "
+        "('wilvor-cliarg-' + [guid]::NewGuid().ToString('N') + '\\Temp Folder')\n"
+        "New-Item -ItemType Directory -Force -Path $dir | Out-Null\n"
+        "$path = Join-Path $dir 'request.json'\n"
+        "[System.IO.File]::WriteAllText($path, '{}')\n"
+        "try {\n"
+        "  $uri = Get-FileUri $path\n"
+        "  Invoke-AwsCli -AwsArgs @('athena','start-query-execution',"
+        "'--cli-input-json',$uri) | Out-Null\n"
+        "  if ($script:Captured.Count -ne 4) { "
+        "    Write-Output ('COUNT=' + $script:Captured.Count); exit 1 "
+        "  }\n"
+        "  if ($script:Captured[2] -ne '--cli-input-json') { exit 1 }\n"
+        "  if ($script:Captured[3] -ne $uri) { "
+        "    Write-Output ('TOKEN=' + $script:Captured[3]); exit 1 "
+        "  }\n"
+        "  if ($script:Captured[3].Contains(' ')) { }\n"
+        "  else { Write-Output 'NO_SPACE'; exit 1 }\n"
+        "  Write-Output ('ARGV3=' + $script:Captured[3])\n"
+        "} finally {\n"
+        "  Remove-Item -LiteralPath $dir -Recurse -Force -ErrorAction SilentlyContinue\n"
+        "}\n"
+    )
+    with tempfile.NamedTemporaryFile(
+        "w",
+        suffix=".ps1",
+        delete=False,
+        encoding="utf-8",
+    ) as handle:
+        handle.write(smoke)
+        path = handle.name
+    try:
+        completed = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-File",
+                path,
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    finally:
+        Path(path).unlink(missing_ok=True)
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    assert "ARGV3=file://" in completed.stdout
+    assert "file:///" not in completed.stdout.split("ARGV3=", 1)[1]
 
 
 def test_powershell_parser_accepts_script():
