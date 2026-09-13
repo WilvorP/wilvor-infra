@@ -8,6 +8,7 @@ import pytest
 
 from wilvor_historical.query_windows import (
     MAX_QUERY_WINDOW_DAYS,
+    QUERY_WINDOW_PRECISION,
     QueryWindow,
     QueryWindowError,
     UtcCalendarDate,
@@ -128,3 +129,21 @@ def test_query_window_dataclass_validates():
         end_utc="2026-09-12T00:00:00Z",
     )
     assert window.start_utc == "2026-09-11T00:00:00Z"
+    assert QUERY_WINDOW_PRECISION == "second"
+    assert window.end_epoch - window.start_epoch == 86400
+
+
+def test_fractional_second_window_bounds_are_rejected():
+    with pytest.raises(QueryWindowError, match="start_utc must be whole-second"):
+        parse_query_window("2026-09-11T12:00:00.100000Z", "2026-09-11T13:00:00Z")
+    with pytest.raises(QueryWindowError, match="end_utc must be whole-second"):
+        parse_query_window("2026-09-11T12:00:00Z", "2026-09-11T12:00:00.900000Z")
+
+
+def test_zero_fraction_is_canonicalized_to_whole_second():
+    window = parse_query_window(
+        "2026-09-11T12:00:00.000000Z",
+        "2026-09-11T13:00:00.000000Z",
+    )
+    assert window.start_utc == "2026-09-11T12:00:00Z"
+    assert window.end_utc == "2026-09-11T13:00:00Z"

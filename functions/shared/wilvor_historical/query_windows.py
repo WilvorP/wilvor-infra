@@ -14,6 +14,7 @@ from .contracts import HistoricalFactError
 from .time import (
     HistoricalTimeError,
     canonicalize_utc_z,
+    epoch_from_utc_datetime,
     parse_utc_datetime,
     partition_date_utc,
 )
@@ -21,6 +22,11 @@ from .time import (
 
 MAX_QUERY_WINDOW_DAYS = 7
 MAX_QUERY_WINDOW = timedelta(days=MAX_QUERY_WINDOW_DAYS)
+
+# Query bounds must be exactly representable by persisted event_time_epoch
+# (integer UTC seconds). Stored event_time_utc may still carry microseconds
+# via datetime.isoformat(); those facts share one epoch second.
+QUERY_WINDOW_PRECISION = "second"
 
 
 class QueryWindowError(HistoricalFactError):
@@ -65,6 +71,10 @@ class QueryWindow:
     def __post_init__(self) -> None:
         start = _require_query_utc(self.start_utc, "start_utc")
         end = _require_query_utc(self.end_utc, "end_utc")
+        if start.microsecond != 0:
+            raise QueryWindowError("start_utc must be whole-second UTC")
+        if end.microsecond != 0:
+            raise QueryWindowError("end_utc must be whole-second UTC")
         if start >= end:
             raise QueryWindowError("start_utc must precede end_utc")
         if end - start > MAX_QUERY_WINDOW:
@@ -79,6 +89,14 @@ class QueryWindow:
 
     def end_datetime(self) -> datetime:
         return parse_utc_datetime(self.end_utc)
+
+    @property
+    def start_epoch(self) -> int:
+        return epoch_from_utc_datetime(self.start_datetime())
+
+    @property
+    def end_epoch(self) -> int:
+        return epoch_from_utc_datetime(self.end_datetime())
 
 
 def _require_query_utc(value: Any, field_name: str) -> datetime:

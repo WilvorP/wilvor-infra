@@ -18,6 +18,11 @@ from wilvor_historical.query_contracts import (
     FORBIDDEN_QUERY_REQUEST_FIELDS,
     HAZARD_ID_CHARACTERS,
     LIST_DEFAULT_LIMIT,
+    INTERNAL_QUERY_ID_LIST_ENCOUNTERS,
+    INTERNAL_QUERY_ID_SUMMARIZE_ENCOUNTERS,
+    INTERNAL_QUERY_ID_SUMMARIZE_HAZARD_VERSIONS,
+    INTERNAL_QUERY_ID_SUMMARIZE_RISKS,
+    INTERNAL_QUERY_ID_SUMMARIZE_RISKS_BY_LEVEL,
     LIST_HISTORICAL_ENCOUNTERS_ORDERING,
     LIST_MAX_LIMIT,
     STORED_DEDUP_ID_CHARACTERS,
@@ -32,6 +37,7 @@ from wilvor_historical.query_contracts import (
     ListEncountersResult,
     ListHistoricalEncountersRequest,
     QueryEvidence,
+    QueryExecutionEvidence,
     RiskLevelBucket,
     RiskSummaryResult,
     SummarizeHistoricalEncountersRequest,
@@ -157,7 +163,7 @@ def test_list_limit_bounds_and_non_int_rejected():
 
 def test_list_ordering_is_code_owned_not_a_request_field():
     assert LIST_HISTORICAL_ENCOUNTERS_ORDERING == (
-        "event_time_utc ASC",
+        "canonical_event_time_utc ASC",
         "record_id ASC",
         "dedup_id ASC",
     )
@@ -174,6 +180,11 @@ def test_requests_reject_invalid_windows():
     with pytest.raises(HistoricalQueryError, match="start_utc is not UTC"):
         SummarizeHistoricalRisksRequest(
             start_utc="2026-09-11T00:00:00-04:00",
+            end_utc=WINDOW[1],
+        )
+    with pytest.raises(HistoricalQueryError, match="whole-second"):
+        SummarizeHistoricalEncountersRequest(
+            start_utc="2026-09-11T12:00:00.100000Z",
             end_utc=WINDOW[1],
         )
 
@@ -342,9 +353,15 @@ def test_evaluable_count_row_with_zero_is_verified_zero_status():
         collection_epoch_ids=("epoch-1",),
         semantic_match_count=summary.semantic_match_count,
         semantic_match_count_is_exact=True,
-        rows_returned=1,
+        query_executions=(
+            QueryExecutionEvidence(
+                query_id=INTERNAL_QUERY_ID_SUMMARIZE_ENCOUNTERS,
+                rows_returned=1,
+            ),
+        ),
     )
-    assert evidence.rows_returned == 1
+    assert evidence.query_executions[0].rows_returned == 1
+    assert "rows_returned" not in {item.name for item in fields(QueryEvidence)}
     assert evidence.semantic_match_count == 0
     assert evidence.semantic_match_count_is_exact is True
     assert is_verified_zero(
@@ -463,7 +480,171 @@ def test_coverage_evidence_uses_plural_epoch_ids():
     assert "semantic_match_count" in names
     assert "semantic_match_count_is_exact" in names
     assert "minimum_match_count" in names
-    assert "rows_returned" in names
+    assert "query_executions" in names
+    assert "rows_returned" not in names
+    assert "query_execution_id" not in names
+    assert "workgroup" not in names
+    execution_names = {item.name for item in fields(QueryExecutionEvidence)}
+    assert "sql" not in execution_names
+    assert "rows_returned" in execution_names
+    assert "data_scanned_bytes" in execution_names
+    assert "query_execution_id" in execution_names
+
+
+def test_blocked_operation_may_have_zero_executions():
+    evidence = QueryEvidence(
+        query_name=HistoricalOperation.SUMMARIZE_HISTORICAL_ENCOUNTERS,
+        datasets=("encounter",),
+        requested_start_utc=WINDOW[0],
+        requested_end_utc=WINDOW[1],
+        coverage_state=Evaluability.GAP_OR_UNCERTAIN,
+        collection_epoch_ids=("epoch-1",),
+        query_executions=(),
+    )
+    assert evidence.query_executions == ()
+    assert evidence.data_scanned_bytes == 0
+    assert evidence.semantic_match_count is None
+
+
+def test_single_query_operation_carries_one_execution():
+    execution = QueryExecutionEvidence(
+        query_id=INTERNAL_QUERY_ID_SUMMARIZE_ENCOUNTERS,
+        query_execution_id="exec-encounter-1",
+        rows_returned=1,
+        data_scanned_bytes=4096,
+        workgroup="wilvor-dev-historical-analytics",
+    )
+    evidence = QueryEvidence(
+        query_name=HistoricalOperation.SUMMARIZE_HISTORICAL_ENCOUNTERS,
+        datasets=("encounter",),
+        requested_start_utc=WINDOW[0],
+        requested_end_utc=WINDOW[1],
+        coverage_state=Evaluability.EVALUABLE,
+        collection_epoch_ids=("epoch-1",),
+        semantic_match_count=0,
+        semantic_match_count_is_exact=True,
+        query_executions=(execution,),
+    )
+    assert len(evidence.query_executions) == 1
+    assert evidence.query_executions[0].query_execution_id == "exec-encounter-1"
+    assert evidence.query_executions[0].rows_returned == 1
+    assert evidence.data_scanned_bytes == 4096
+    assert evidence.semantic_match_count == 0
+    list_evidence = QueryEvidence(
+        query_name=HistoricalOperation.LIST_HISTORICAL_ENCOUNTERS,
+        datasets=("encounter",),
+        requested_start_utc=WINDOW[0],
+        requested_end_utc=WINDOW[1],
+        coverage_state=Evaluability.EVALUABLE,
+        collection_epoch_ids=("epoch-1",),
+        semantic_match_count=1,
+        semantic_match_count_is_exact=True,
+        query_executions=(
+            QueryExecutionEvidence(
+                query_id=INTERNAL_QUERY_ID_LIST_ENCOUNTERS,
+                query_execution_id="exec-list-1",
+                rows_returned=1,
+                data_scanned_bytes=512,
+            ),
+        ),
+    )
+    hazard_evidence = QueryEvidence(
+        query_name=HistoricalOperation.SUMMARIZE_HISTORICAL_HAZARD_VERSIONS,
+        datasets=("hazard_version",),
+        requested_start_utc=WINDOW[0],
+        requested_end_utc=WINDOW[1],
+        coverage_state=Evaluability.EVALUABLE,
+        collection_epoch_ids=("epoch-1",),
+        semantic_match_count=20,
+        semantic_match_count_is_exact=True,
+        query_executions=(
+            QueryExecutionEvidence(
+                query_id=INTERNAL_QUERY_ID_SUMMARIZE_HAZARD_VERSIONS,
+                query_execution_id="exec-hazard-1",
+                rows_returned=1,
+                data_scanned_bytes=256,
+            ),
+        ),
+    )
+    assert len(list_evidence.query_executions) == 1
+    assert len(hazard_evidence.query_executions) == 1
+    assert list_evidence.semantic_match_count == 1
+    assert hazard_evidence.semantic_match_count == 20
+
+
+def test_risk_summary_evidence_carries_two_distinct_executions():
+    executions = (
+        QueryExecutionEvidence(
+            query_id=INTERNAL_QUERY_ID_SUMMARIZE_RISKS,
+            query_execution_id="exec-risk-agg",
+            rows_returned=1,
+            data_scanned_bytes=2048,
+            workgroup="wilvor-dev-historical-analytics",
+        ),
+        QueryExecutionEvidence(
+            query_id=INTERNAL_QUERY_ID_SUMMARIZE_RISKS_BY_LEVEL,
+            query_execution_id="exec-risk-dist",
+            rows_returned=3,
+            data_scanned_bytes=1024,
+            workgroup="wilvor-dev-historical-analytics",
+        ),
+    )
+    evidence = QueryEvidence(
+        query_name=HistoricalOperation.SUMMARIZE_HISTORICAL_RISKS,
+        datasets=("risk",),
+        requested_start_utc=WINDOW[0],
+        requested_end_utc=WINDOW[1],
+        coverage_state=Evaluability.EVALUABLE,
+        collection_epoch_ids=("epoch-1",),
+        semantic_match_count=1438,
+        semantic_match_count_is_exact=True,
+        query_executions=executions,
+    )
+    assert [item.query_id for item in evidence.query_executions] == [
+        INTERNAL_QUERY_ID_SUMMARIZE_RISKS,
+        INTERNAL_QUERY_ID_SUMMARIZE_RISKS_BY_LEVEL,
+    ]
+    assert [item.query_execution_id for item in evidence.query_executions] == [
+        "exec-risk-agg",
+        "exec-risk-dist",
+    ]
+    assert evidence.query_executions[0].rows_returned == 1
+    assert evidence.query_executions[1].rows_returned == 3
+    assert evidence.query_executions[0].data_scanned_bytes == 2048
+    assert evidence.query_executions[1].data_scanned_bytes == 1024
+    assert evidence.data_scanned_bytes == 3072
+    assert evidence.to_dict()["data_scanned_bytes"] == 3072
+    assert evidence.semantic_match_count == 1438
+    unknown_bytes = QueryEvidence(
+        query_name=HistoricalOperation.SUMMARIZE_HISTORICAL_RISKS,
+        datasets=("risk",),
+        requested_start_utc=WINDOW[0],
+        requested_end_utc=WINDOW[1],
+        coverage_state=Evaluability.EVALUABLE,
+        collection_epoch_ids=("epoch-1",),
+        query_executions=(
+            executions[0],
+            QueryExecutionEvidence(
+                query_id=INTERNAL_QUERY_ID_SUMMARIZE_RISKS_BY_LEVEL,
+                query_execution_id="exec-risk-dist-unknown",
+                rows_returned=3,
+            ),
+        ),
+    )
+    assert unknown_bytes.data_scanned_bytes is None
+    assert INTERNAL_QUERY_ID_SUMMARIZE_RISKS_BY_LEVEL not in {
+        item.value for item in HistoricalOperation
+    }
+    with pytest.raises(HistoricalQueryError, match="does not belong"):
+        QueryEvidence(
+            query_name=HistoricalOperation.SUMMARIZE_HISTORICAL_ENCOUNTERS,
+            datasets=("encounter",),
+            requested_start_utc=WINDOW[0],
+            requested_end_utc=WINDOW[1],
+            coverage_state=Evaluability.EVALUABLE,
+            collection_epoch_ids=("epoch-1",),
+            query_executions=executions,
+        )
 
 
 def test_future_coverage_store_prefixes_are_complete_not_window_bounded():

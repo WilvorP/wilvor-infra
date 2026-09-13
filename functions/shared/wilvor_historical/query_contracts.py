@@ -62,9 +62,11 @@ LIST_DEFAULT_LIMIT = 100
 LIST_MIN_LIMIT = 1
 LIST_MAX_LIMIT = 200
 
-# Locked future list SQL ordering. Not caller-configurable. Not SQL.
+# Chronological list key is the fixed-width canonical UTC form
+# (whole seconds sort as .000000Z). record_id / dedup_id break ties
+# only when the stored timestamp is identical. Not caller-configurable.
 LIST_HISTORICAL_ENCOUNTERS_ORDERING = (
-    "event_time_utc ASC",
+    "canonical_event_time_utc ASC",
     "record_id ASC",
     "dedup_id ASC",
 )
@@ -124,6 +126,50 @@ V1_HISTORICAL_OPERATIONS = frozenset(
         HistoricalOperation.LIST_HISTORICAL_ENCOUNTERS,
     )
 )
+
+INTERNAL_QUERY_ID_SUMMARIZE_ENCOUNTERS = (
+    HistoricalOperation.SUMMARIZE_HISTORICAL_ENCOUNTERS.value
+)
+INTERNAL_QUERY_ID_SUMMARIZE_RISKS = (
+    HistoricalOperation.SUMMARIZE_HISTORICAL_RISKS.value
+)
+INTERNAL_QUERY_ID_SUMMARIZE_RISKS_BY_LEVEL = (
+    "summarize_historical_risks_by_level"
+)
+INTERNAL_QUERY_ID_SUMMARIZE_HAZARD_VERSIONS = (
+    HistoricalOperation.SUMMARIZE_HISTORICAL_HAZARD_VERSIONS.value
+)
+INTERNAL_QUERY_ID_LIST_ENCOUNTERS = (
+    HistoricalOperation.LIST_HISTORICAL_ENCOUNTERS.value
+)
+
+V1_INTERNAL_QUERY_IDS = frozenset(
+    {
+        INTERNAL_QUERY_ID_SUMMARIZE_ENCOUNTERS,
+        INTERNAL_QUERY_ID_SUMMARIZE_RISKS,
+        INTERNAL_QUERY_ID_SUMMARIZE_RISKS_BY_LEVEL,
+        INTERNAL_QUERY_ID_SUMMARIZE_HAZARD_VERSIONS,
+        INTERNAL_QUERY_ID_LIST_ENCOUNTERS,
+    }
+)
+
+OPERATION_INTERNAL_QUERY_IDS = {
+    HistoricalOperation.SUMMARIZE_HISTORICAL_ENCOUNTERS: frozenset(
+        {INTERNAL_QUERY_ID_SUMMARIZE_ENCOUNTERS}
+    ),
+    HistoricalOperation.SUMMARIZE_HISTORICAL_RISKS: frozenset(
+        {
+            INTERNAL_QUERY_ID_SUMMARIZE_RISKS,
+            INTERNAL_QUERY_ID_SUMMARIZE_RISKS_BY_LEVEL,
+        }
+    ),
+    HistoricalOperation.SUMMARIZE_HISTORICAL_HAZARD_VERSIONS: frozenset(
+        {INTERNAL_QUERY_ID_SUMMARIZE_HAZARD_VERSIONS}
+    ),
+    HistoricalOperation.LIST_HISTORICAL_ENCOUNTERS: frozenset(
+        {INTERNAL_QUERY_ID_LIST_ENCOUNTERS}
+    ),
+}
 
 FORBIDDEN_OPERATION_NAMES = frozenset(
     {
@@ -486,6 +532,52 @@ class CoverageEvidence:
 
 
 @dataclass(frozen=True)
+class QueryExecutionEvidence:
+    """One Athena execution. Diagnostic only; not domain match semantics.
+
+    ``query_id`` is a fixed internal identity and may be the risk-level
+    distribution query. It is not a fifth public ``HistoricalOperation``.
+    """
+
+    query_id: str
+    query_execution_id: str | None = None
+    rows_returned: int | None = None
+    data_scanned_bytes: int | None = None
+    workgroup: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.query_id not in V1_INTERNAL_QUERY_IDS:
+            raise HistoricalQueryError("invalid query_id")
+        if self.query_execution_id is not None:
+            object.__setattr__(
+                self,
+                "query_execution_id",
+                _optional_evidence_token(self.query_execution_id, "query_execution_id"),
+            )
+        if self.rows_returned is not None:
+            object.__setattr__(
+                self,
+                "rows_returned",
+                _require_count(self.rows_returned, "rows_returned"),
+            )
+        if self.data_scanned_bytes is not None:
+            object.__setattr__(
+                self,
+                "data_scanned_bytes",
+                _require_count(self.data_scanned_bytes, "data_scanned_bytes"),
+            )
+        if self.workgroup is not None:
+            object.__setattr__(
+                self,
+                "workgroup",
+                _optional_stored_literal(self.workgroup, "workgroup"),
+            )
+
+    def to_dict(self) -> dict[str, Any]:
+        return _contract_dict(self)
+
+
+@dataclass(frozen=True)
 class QueryEvidence:
     query_name: HistoricalOperation
     datasets: tuple[str, ...]
@@ -496,10 +588,7 @@ class QueryEvidence:
     semantic_match_count: int | None = None
     semantic_match_count_is_exact: bool | None = None
     minimum_match_count: int | None = None
-    rows_returned: int | None = None
-    query_execution_id: str | None = None
-    data_scanned_bytes: int | None = None
-    workgroup: str | None = None
+    query_executions: tuple[QueryExecutionEvidence, ...] = ()
     generated_at_utc: str | None = None
 
     def __post_init__(self) -> None:
@@ -564,29 +653,15 @@ class QueryEvidence:
                 raise HistoricalQueryError(
                     "inexact semantic count requires minimum_match_count"
                 )
-        if self.rows_returned is not None:
-            object.__setattr__(
-                self,
-                "rows_returned",
-                _require_count(self.rows_returned, "rows_returned"),
-            )
-        if self.data_scanned_bytes is not None:
-            object.__setattr__(
-                self,
-                "data_scanned_bytes",
-                _require_count(self.data_scanned_bytes, "data_scanned_bytes"),
-            )
-        if self.query_execution_id is not None:
-            object.__setattr__(
-                self,
-                "query_execution_id",
-                _optional_evidence_token(self.query_execution_id, "query_execution_id"),
-            )
-        if self.workgroup is not None:
-            object.__setattr__(
-                self,
-                "workgroup",
-                _optional_stored_literal(self.workgroup, "workgroup"),
+        if not isinstance(self.query_executions, tuple) or any(
+            not isinstance(item, QueryExecutionEvidence)
+            for item in self.query_executions
+        ):
+            raise HistoricalQueryError("invalid query_executions")
+        allowed = OPERATION_INTERNAL_QUERY_IDS[self.query_name]
+        if any(item.query_id not in allowed for item in self.query_executions):
+            raise HistoricalQueryError(
+                "query execution does not belong to this operation"
             )
         object.__setattr__(
             self,
@@ -594,12 +669,24 @@ class QueryEvidence:
             _optional_utc(self.generated_at_utc, "generated_at_utc"),
         )
 
+    @property
+    def data_scanned_bytes(self) -> int | None:
+        """Sum of per-execution bytes. None if any execution omits bytes."""
+
+        if not self.query_executions:
+            return 0
+        totals = [item.data_scanned_bytes for item in self.query_executions]
+        if any(item is None for item in totals):
+            return None
+        return sum(totals)
+
     def to_dict(self) -> dict[str, Any]:
         payload = _contract_dict(self)
         payload["query_name"] = self.query_name.value
         payload["coverage_state"] = (
             self.coverage_state.value if self.coverage_state is not None else None
         )
+        payload["data_scanned_bytes"] = self.data_scanned_bytes
         return payload
 
 

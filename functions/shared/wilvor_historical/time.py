@@ -69,6 +69,22 @@ def canonicalize_utc_z(value: datetime) -> str:
     return utc.isoformat().replace("+00:00", "Z")
 
 
+def canonical_utc_order_key(value: str) -> str:
+    """Fixed-width lexical key for a ``canonicalize_utc_z`` string.
+
+    ``datetime.isoformat()`` omits the fraction when microseconds are 0,
+    so ``...T12:00:00Z`` must sort as ``...T12:00:00.000000Z``. Fractional
+    forms always have six digits and are unchanged.
+    """
+
+    canonical = canonicalize_utc_z(parse_utc_datetime(value))
+    if "." in canonical:
+        return canonical
+    if not canonical.endswith("Z"):
+        raise HistoricalTimeError("timestamp is not a UTC string")
+    return canonical[:-1] + ".000000Z"
+
+
 def epoch_from_utc_datetime(value: datetime) -> int:
     if value.tzinfo is None:
         raise HistoricalTimeError("timestamp is naive")

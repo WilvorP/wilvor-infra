@@ -8,6 +8,7 @@ import pytest
 
 from wilvor_historical.time import (
     HistoricalTimeError,
+    canonical_utc_order_key,
     canonicalize_utc_z,
     parse_utc_datetime,
     partition_date_utc,
@@ -57,6 +58,25 @@ def test_mismatched_epoch_is_rejected():
             event_time_utc="2023-11-14T22:13:20Z",
             event_time_epoch=1,
         )
+
+
+def test_canonical_utc_order_key_pads_whole_seconds():
+    times = (
+        "2026-09-11T12:00:00Z",
+        "2026-09-11T12:00:00.100000Z",
+        "2026-09-11T12:00:00.900000Z",
+        "2026-09-11T12:00:01Z",
+    )
+    keys = tuple(canonical_utc_order_key(item) for item in times)
+    assert keys == (
+        "2026-09-11T12:00:00.000000Z",
+        "2026-09-11T12:00:00.100000Z",
+        "2026-09-11T12:00:00.900000Z",
+        "2026-09-11T12:00:01.000000Z",
+    )
+    assert keys == tuple(sorted(keys))
+    assert min(times, key=canonical_utc_order_key) == "2026-09-11T12:00:00Z"
+    assert max(times, key=canonical_utc_order_key) == "2026-09-11T12:00:01Z"
 
 
 def test_partition_helper_rejects_naive_datetime():

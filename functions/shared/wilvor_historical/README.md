@@ -198,10 +198,18 @@ history" and no implicit current/now request.
 
 ### Window rules
 
-`[start_utc, end_utc)` is UTC-only, canonical `Z`. Naive timestamps and
-non-UTC offsets are rejected, not converted. `start` must precede `end`.
-V1 maximum duration is 7 days. `touched_utc_dates` returns the exact UTC
+`[start_utc, end_utc)` is UTC-only, canonical `Z`, and **whole-second**.
+Naive timestamps, non-UTC offsets, and fractional-second bounds are
+rejected, not converted or truncated. `start` must precede `end`. V1
+maximum duration is 7 days. `touched_utc_dates` returns the exact UTC
 calendar dates touched by that half-open interval. It does not generate SQL.
+
+Query membership uses persisted `event_time_epoch` (integer UTC seconds).
+Stored `event_time_utc` may still contain microseconds because
+`datetime.isoformat()` omits a fraction only when it is zero; those
+facts share one epoch second. Intra-second order uses the fixed-width
+canonical key (whole seconds sort as `.000000Z`). Raw VARCHAR
+`event_time_utc` comparison is not a temporal order.
 
 ### VERIFIED_ZERO
 
@@ -215,7 +223,9 @@ calendar dates touched by that half-open interval. It does not generate SQL.
   `minimum_match_count = N + 1`. LIMIT N+1 cannot claim an exact total.
 
 `is_verified_zero(coverage, semantic_match_count)` does not accept executor
-`rows_returned`. Unknown/null semantic counts cannot be verified zero.
+`rows_returned`. Per-Athena diagnostics live on `QueryExecutionEvidence`
+inside `QueryEvidence.query_executions`. Unknown/null semantic counts
+cannot be verified zero.
 A COUNT query that returns one result row with value 0 is still
 `VERIFIED_ZERO` when coverage is `EVALUABLE` and the exact semantic count is
 0. Non-`EVALUABLE` coverage can never be `VERIFIED_ZERO`.
@@ -249,8 +259,10 @@ containment request fields. Encounter facts store no aircraft/intersection
 coordinates, so later geometry work cannot claim an impact occurred inside a
 region from encounter + hazard polygon alone.
 
-Future list SQL ordering is code-owned (`event_time_utc`, `record_id`,
-`dedup_id` ascending) and is not a request field.
+Future list SQL ordering is code-owned (normalized canonical
+`event_time_utc`, then `record_id`, then `dedup_id` ascending) and is
+not a request field. `event_time_utc` is still returned as the stored
+canonical string.
 
 ## Later phases
 
@@ -260,7 +272,9 @@ Future list SQL ordering is code-owned (`event_time_utc`, `record_id`,
 - **2A.2:** Glue / Athena catalog. Operator validation of catalog
   fidelity lives outside this package and does not determine coverage.
 - **2B-preflight:** query contracts and window semantics (this package).
-- **2B.1+:** deterministic SQL/runtime in `wilvor_historical_query`.
+- **2B.1:** fixed-query registry and SQL renderer in
+  `wilvor_historical_query`. No Athena execution.
+- **2B.2+:** Athena execution, coverage store, and operations.
 - **2C:** analytics ToolResult adapters.
 
 No AI, Glue, Athena, S3, or Firehose belongs in this package.

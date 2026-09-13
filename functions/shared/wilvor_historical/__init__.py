@@ -49,10 +49,12 @@ from .query_contracts import (
 )
 from .query_windows import (
     MAX_QUERY_WINDOW_DAYS,
+    QUERY_WINDOW_PRECISION,
     QueryWindowError,
     parse_query_window,
     touched_utc_dates,
 )
+from .time import canonical_utc_order_key
 
 __all__ = [
     "COLLECTION_CONTROL_DATASET",
@@ -87,7 +89,9 @@ __all__ = [
     "HistoricalQueryError",
     "HistoricalQueryStatus",
     "MAX_QUERY_WINDOW_DAYS",
+    "QUERY_WINDOW_PRECISION",
     "QueryWindowError",
+    "canonical_utc_order_key",
     "is_verified_zero",
     "parse_query_window",
     "touched_utc_dates",

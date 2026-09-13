@@ -35,6 +35,7 @@ def test_package_source_has_no_aws_ai_or_currentness_imports():
         "boto3",
         "botocore",
         "wilvor_ai",
+        "wilvor_historical_query",
         "wilvor_operational",
         "shapely",
         "langgraph",
@@ -60,6 +61,7 @@ import sys
 import wilvor_historical
 assert 'boto3' not in sys.modules
 assert 'wilvor_ai' not in sys.modules
+assert 'wilvor_historical_query' not in sys.modules
 assert 'wilvor_operational' not in sys.modules
 assert 'wilvor_operational.current_set' not in sys.modules
 assert not any(
