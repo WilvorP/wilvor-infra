@@ -333,7 +333,8 @@ SDKs.
 `STRING` and a missing description are omitted from `to_dict()` so
 established `{name, required}` payloads remain accepted. This metadata is
 not JSON Schema, not an enum allowlist, not min/max, and not domain
-validation. Historical catalog types/descriptions are populated in 3A.1.
+validation. Historical catalog types and field descriptions are populated
+in 3A.1.
 
 New modules `wilvor_ai.specialist_contracts` and `wilvor_ai.model_contracts`
 are dependency-free and root-exported. `import wilvor_ai` remains
@@ -404,9 +405,50 @@ supplied `1..25` executes unchanged; supplied `>25` is rejected with zero
 historical operations for that call and one bounded correction. No silent
 clamping. `ToolInputField` does not encode that max.
 
-`ModelTurnRequest` is deliberately narrow (`user_text`, optional
-`instruction_ref`) so 3A.1 can add tool schemas and projections later
-without baking a vendor chat transcript now.
+`ModelTurnRequest` carries `user_text`, optional `instruction_ref`, and
+optional 3A.1 `tools` / `tool_results`. Empty defaults omit those keys so
+the 3A-preflight `{user_text}` payload remains parseable. This is not a
+vendor chat transcript.
+
+## Phase 3A.1 tool schemas and model-visible projections
+
+Phase 3A.1 adds provider-neutral `ToolSchema` generation and
+`ToolResultProjection`. It does not execute a model, dispatch historical
+tools, verify claims, or render answers. No provider SDK exists.
+
+`HISTORICAL_ANALYTICS_TOOLS.input_fields` remains the field-inclusion
+allowlist. `build_tool_schemas` / `historical_analytics_tool_schemas()`
+copy catalog names, descriptions, required flags, value types, and field
+descriptions. Schema generation fails closed if a catalog field uses a
+trusted or infrastructure name. It does not inspect unbound signatures
+and does not emit JSON Schema / vendor tool objects.
+
+`project_tool_result` derives a model-visible view from an audit-grade
+`ToolResult` without mutating it. The projection keeps status, HISTORICAL
+scope, evaluated `as_of_utc`, completeness, match cardinality,
+limitations, error codes, requested scope, and the application `result`.
+It omits `Evidence.query_executions` and other Athena/S3 diagnostics.
+Application data is limited to `operation`, `requested_scope`, `result`,
+and `limitations`. The model-visible `error_code` is
+`Evidence.error_code` only. If `data.error.code` is also present, it must
+equal that evidence code or projection fails closed. Mapping-coherence
+failures may have an evidence code with no application error. Nested
+`coverage` / `evidence` blobs are rejected.
+
+List `data.result.records` and `source_records` must match in Phase 2C
+order by `record_id` and event timestamp (`event_time_utc` /
+`event_timestamp_utc`). Count-only agreement is not enough. More than 25
+records in either representation fails closed
+(`projection_record_limit_exceeded`) so the model never sees a second
+independent "partial" concept. Populated `ToolResult.as_of_utc`,
+`Evidence.query_timestamp_utc`, and
+`Evidence.completeness.evaluated_as_of_utc` must be identical; disagreement
+fails closed. 3A.2 dispatch will later keep specialist lists at or below
+25. Projection does not silently trim or change SUCCESS / NOT_FOUND /
+PARTIAL / UNAVAILABLE.
+
+`import wilvor_ai` still does not load `tool_schema`,
+`tool_result_projection`, historical adapters, Live Ops, or provider SDKs.
 
 Phase 3A is not complete.
 

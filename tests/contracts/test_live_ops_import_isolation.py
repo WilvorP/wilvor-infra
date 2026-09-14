@@ -62,6 +62,8 @@ assert hasattr(wilvor_ai, 'MatchCardinality')
 assert hasattr(wilvor_ai, 'QueryExecutionTrace')
 assert hasattr(wilvor_ai, 'SpecialistRequest')
 assert hasattr(wilvor_ai, 'ModelDecision')
+assert 'wilvor_ai.tool_schema' not in sys.modules
+assert 'wilvor_ai.tool_result_projection' not in sys.modules
 assert not hasattr(wilvor_ai, 'HISTORICAL_ANALYTICS_TOOLS')
 assert not hasattr(wilvor_ai, 'HistoricalAnalyticsOperations')
 """

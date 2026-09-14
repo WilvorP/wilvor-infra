@@ -207,12 +207,26 @@ def test_model_decision_has_no_factual_prose_fields():
     }
 
 
-def test_model_turn_request_is_narrow():
+def test_model_turn_request_keeps_preflight_shape():
     names = {item.name for item in fields(ModelTurnRequest)}
-    assert names == {"user_text", "instruction_ref"}
+    assert names == {"user_text", "instruction_ref", "tools", "tool_results"}
     request = ModelTurnRequest(user_text="summarize encounters", instruction_ref="hist_v1")
+    assert request.tools == ()
+    assert request.tool_results == ()
+    assert request.to_dict() == {
+        "user_text": "summarize encounters",
+        "instruction_ref": "hist_v1",
+    }
+    assert ModelTurnRequest.from_dict({"user_text": "summarize encounters"}) == (
+        ModelTurnRequest(user_text="summarize encounters")
+    )
     assert ModelTurnRequest.from_dict(request.to_dict()) == request
     assert_validation_error("invalid_user_text", lambda: ModelTurnRequest(user_text=" "))
+    with pytest.raises(ContractValidationError) as exc_info:
+        ModelTurnRequest.from_dict(
+            {"user_text": "hello", "role": "user", "messages": []}
+        )
+    assert "unexpected_vendor_turn_field" in exc_info.value.errors
 
 
 def test_model_provider_protocol_accepts_a_complete_callable():

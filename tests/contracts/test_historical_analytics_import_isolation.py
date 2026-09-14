@@ -59,6 +59,8 @@ assert 'langgraph' not in sys.modules
 assert hasattr(wilvor_ai, 'ToolResult')
 assert hasattr(wilvor_ai, 'SpecialistRequest')
 assert hasattr(wilvor_ai, 'ModelDecision')
+assert 'wilvor_ai.tool_schema' not in sys.modules
+assert 'wilvor_ai.tool_result_projection' not in sys.modules
 assert not hasattr(wilvor_ai, 'HISTORICAL_ANALYTICS_TOOLS')
 assert not hasattr(wilvor_ai, 'HistoricalAnalyticsAdapter')
 assert not hasattr(wilvor_ai, 'map_historical_query_response')

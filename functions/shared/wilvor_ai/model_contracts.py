@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Mapping, Protocol
+from typing import TYPE_CHECKING, Any, Mapping, Protocol
 
 from wilvor_ai.contracts import (
     TOOL_INPUT_FIELD_NAME_MAX_LENGTH,
@@ -35,6 +35,10 @@ from wilvor_ai.specialist_contracts import (
     _validate_identifier,
     specialist_claim_from_dict,
 )
+
+if TYPE_CHECKING:
+    from wilvor_ai.tool_result_projection import ToolResultProjection
+    from wilvor_ai.tool_schema import ToolSchema
 
 
 MODEL_DECISION_SCHEMA_VERSION = "wilvor.ai.model_decision.v1"
@@ -299,18 +303,32 @@ class ModelDecision:
         )
 
 
+_VENDOR_TURN_KEYS = frozenset(
+    {
+        "role",
+        "messages",
+        "system",
+        "assistant",
+        "tool_use_id",
+        "content",
+        "chat_completions",
+    }
+)
+
+
 @dataclass(frozen=True)
 class ModelTurnRequest:
-    """Narrow provider-neutral turn request.
+    """Provider-neutral turn request.
 
-    Only stable fields exist in 3A-preflight. ToolSchema objects and
-    model-visible ToolResult projections do not exist yet; 3A.1 can add
-    optional fields with defaults without changing ``ModelProvider.complete``.
-    This is not a vendor chat-message transcript and not a prompt document.
+    ``tools`` and ``tool_results`` are optional 3A.1 additions. Empty defaults
+    keep the 3A-preflight ``{user_text}`` wire shape. This is not a vendor
+    chat-message transcript.
     """
 
     user_text: str
     instruction_ref: str | None = None
+    tools: tuple[ToolSchema, ...] = ()
+    tool_results: tuple[ToolResultProjection, ...] = ()
 
     def __post_init__(self) -> None:
         errors = _validate_bounded_text(
@@ -325,6 +343,24 @@ class ModelTurnRequest:
                 optional=True,
             )
         )
+        if not isinstance(self.tools, tuple):
+            errors.append("invalid_tools")
+        elif self.tools:
+            from wilvor_ai.tool_schema import ToolSchema as RuntimeToolSchema
+
+            if any(not isinstance(item, RuntimeToolSchema) for item in self.tools):
+                errors.append("invalid_tools")
+        if not isinstance(self.tool_results, tuple):
+            errors.append("invalid_tool_results")
+        elif self.tool_results:
+            from wilvor_ai.tool_result_projection import (
+                ToolResultProjection as RuntimeProjection,
+            )
+
+            if any(
+                not isinstance(item, RuntimeProjection) for item in self.tool_results
+            ):
+                errors.append("invalid_tool_results")
         if errors:
             raise ContractValidationError(errors)
 
@@ -332,17 +368,45 @@ class ModelTurnRequest:
         payload: dict[str, JsonValue] = {"user_text": self.user_text}
         if self.instruction_ref is not None:
             payload["instruction_ref"] = self.instruction_ref
+        if self.tools:
+            payload["tools"] = [item.to_dict() for item in self.tools]
+        if self.tool_results:
+            payload["tool_results"] = [item.to_dict() for item in self.tool_results]
         return payload
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "ModelTurnRequest":
         if not isinstance(data, Mapping):
             raise ContractValidationError("invalid_model_turn_request")
+        extra = _VENDOR_TURN_KEYS.intersection(data)
+        if extra:
+            raise ContractValidationError("unexpected_vendor_turn_field")
+
+        tools: tuple[ToolSchema, ...] = ()
+        tool_results: tuple[ToolResultProjection, ...] = ()
+        if "tools" in data:
+            from wilvor_ai.tool_schema import ToolSchema as RuntimeToolSchema
+
+            tools = tuple(
+                RuntimeToolSchema.from_dict(item)
+                for item in _sequence(data["tools"], "tools")
+            )
+        if "tool_results" in data:
+            from wilvor_ai.tool_result_projection import (
+                ToolResultProjection as RuntimeProjection,
+            )
+
+            tool_results = tuple(
+                RuntimeProjection.from_dict(item)
+                for item in _sequence(data["tool_results"], "tool_results")
+            )
         return cls(
             user_text=_required(data, "user_text"),
             instruction_ref=(
                 data["instruction_ref"] if "instruction_ref" in data else None
             ),
+            tools=tools,
+            tool_results=tool_results,
         )
 
 

@@ -16,8 +16,10 @@ from wilvor_ai.contracts import (
     AgentCapability,
     ContractValidationError,
     ToolInputField,
+    ToolInputValueType,
     ToolResult,
 )
+from wilvor_ai.tool_schema import ToolSchema, build_tool_schemas
 from wilvor_ai.historical_analytics_mapping import (
     map_historical_invalid_request,
     map_historical_query_response,
@@ -80,8 +82,46 @@ _READ_ONLY = AgentAuthorityMode.READ_ONLY_ADVISORY
 _RETRIEVE = (AgentCapability.RETRIEVE_HISTORICAL_ANALYTICS,)
 
 
-def _fields(*pairs: tuple[str, bool]) -> tuple[ToolInputField, ...]:
-    return tuple(ToolInputField(name=name, required=required) for name, required in pairs)
+def _field(
+    name: str,
+    required: bool,
+    *,
+    description: str,
+    value_type: ToolInputValueType = ToolInputValueType.STRING,
+) -> ToolInputField:
+    return ToolInputField(
+        name=name,
+        required=required,
+        value_type=value_type,
+        description=description,
+    )
+
+
+_START_UTC = _field(
+    "start_utc",
+    True,
+    description="Canonical UTC inclusive historical window start",
+)
+_END_UTC = _field(
+    "end_utc",
+    True,
+    description="Canonical UTC exclusive historical window end",
+)
+_AIRCRAFT_ID = _field(
+    "aircraft_id",
+    False,
+    description="Optional stored aircraft identity filter",
+)
+_HAZARD_ID = _field(
+    "hazard_id",
+    False,
+    description="Optional stored hazard identity filter",
+)
+_HAZARD_TYPE = _field(
+    "hazard_type",
+    False,
+    description="Optional stored hazard-type filter; not a closed enum",
+)
 
 
 HISTORICAL_ANALYTICS_TOOLS = (
@@ -95,12 +135,12 @@ HISTORICAL_ANALYTICS_TOOLS = (
         ),
         authority_mode=_READ_ONLY,
         capabilities=_RETRIEVE,
-        input_fields=_fields(
-            ("start_utc", True),
-            ("end_utc", True),
-            ("aircraft_id", False),
-            ("hazard_id", False),
-            ("hazard_type", False),
+        input_fields=(
+            _START_UTC,
+            _END_UTC,
+            _AIRCRAFT_ID,
+            _HAZARD_ID,
+            _HAZARD_TYPE,
         ),
     ),
     HistoricalAnalyticsToolSpec(
@@ -113,13 +153,21 @@ HISTORICAL_ANALYTICS_TOOLS = (
         ),
         authority_mode=_READ_ONLY,
         capabilities=_RETRIEVE,
-        input_fields=_fields(
-            ("start_utc", True),
-            ("end_utc", True),
-            ("aircraft_id", False),
-            ("hazard_id", False),
-            ("encounter_id", False),
-            ("risk_level", False),
+        input_fields=(
+            _START_UTC,
+            _END_UTC,
+            _AIRCRAFT_ID,
+            _HAZARD_ID,
+            _field(
+                "encounter_id",
+                False,
+                description="Optional stored encounter identity filter",
+            ),
+            _field(
+                "risk_level",
+                False,
+                description="Optional stored risk-level filter; not a closed enum",
+            ),
         ),
     ),
     HistoricalAnalyticsToolSpec(
@@ -131,12 +179,16 @@ HISTORICAL_ANALYTICS_TOOLS = (
         ),
         authority_mode=_READ_ONLY,
         capabilities=_RETRIEVE,
-        input_fields=_fields(
-            ("start_utc", True),
-            ("end_utc", True),
-            ("hazard_id", False),
-            ("hazard_type", False),
-            ("product_type", False),
+        input_fields=(
+            _START_UTC,
+            _END_UTC,
+            _HAZARD_ID,
+            _HAZARD_TYPE,
+            _field(
+                "product_type",
+                False,
+                description="Optional stored product-type filter; not a closed enum",
+            ),
         ),
     ),
     HistoricalAnalyticsToolSpec(
@@ -149,17 +201,31 @@ HISTORICAL_ANALYTICS_TOOLS = (
         ),
         authority_mode=_READ_ONLY,
         capabilities=_RETRIEVE,
-        input_fields=_fields(
-            ("start_utc", True),
-            ("end_utc", True),
-            ("aircraft_id", False),
-            ("hazard_id", False),
-            ("limit", False),
+        input_fields=(
+            _START_UTC,
+            _END_UTC,
+            _AIRCRAFT_ID,
+            _HAZARD_ID,
+            _field(
+                "limit",
+                False,
+                value_type=ToolInputValueType.INTEGER,
+                description=(
+                    "Requested maximum records; specialist runtime applies "
+                    "its own lower model-facing limit policy later"
+                ),
+            ),
         ),
     ),
 )
 
 _TOOL_NAMES = frozenset(item.name for item in HISTORICAL_ANALYTICS_TOOLS)
+
+
+def historical_analytics_tool_schemas() -> tuple[ToolSchema, ...]:
+    """Build provider-neutral schemas from the historical catalog only."""
+
+    return build_tool_schemas(HISTORICAL_ANALYTICS_TOOLS)
 
 
 class HistoricalAnalyticsAdapter:
@@ -338,4 +404,5 @@ __all__ = [
     "HistoricalAnalyticsAdapter",
     "HistoricalAnalyticsCall",
     "HistoricalAnalyticsToolSpec",
+    "historical_analytics_tool_schemas",
 ]

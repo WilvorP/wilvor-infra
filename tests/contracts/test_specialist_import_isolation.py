@@ -65,6 +65,8 @@ assert hasattr(wilvor_ai, 'HistoricalSpecialistTrustedContext')
 assert hasattr(wilvor_ai, 'ModelDecision')
 assert hasattr(wilvor_ai, 'ModelProvider')
 assert hasattr(wilvor_ai, 'ToolInputValueType')
+assert 'wilvor_ai.tool_schema' not in sys.modules
+assert 'wilvor_ai.tool_result_projection' not in sys.modules
 assert 'wilvor_ai.historical_analytics' not in sys.modules
 assert 'wilvor_ai.historical_analytics_mapping' not in sys.modules
 assert 'wilvor_ai.live_ops' not in sys.modules
