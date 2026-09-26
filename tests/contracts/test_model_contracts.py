@@ -17,7 +17,11 @@ from wilvor_ai import (
     UnsupportedReason,
     VerifiedZeroClaim,
 )
-from wilvor_ai.model_contracts import FORBIDDEN_DECISION_PROSE_KEYS
+from wilvor_ai.model_contracts import (
+    FORBIDDEN_DECISION_PROSE_KEYS,
+    ValidationFeedback,
+    ValidationFeedbackCode,
+)
 
 
 TOOL_CALL = "tool-call-model-001"
@@ -209,10 +213,17 @@ def test_model_decision_has_no_factual_prose_fields():
 
 def test_model_turn_request_keeps_preflight_shape():
     names = {item.name for item in fields(ModelTurnRequest)}
-    assert names == {"user_text", "instruction_ref", "tools", "tool_results"}
+    assert names == {
+        "user_text",
+        "instruction_ref",
+        "tools",
+        "tool_results",
+        "validation_feedback",
+    }
     request = ModelTurnRequest(user_text="summarize encounters", instruction_ref="hist_v1")
     assert request.tools == ()
     assert request.tool_results == ()
+    assert request.validation_feedback is None
     assert request.to_dict() == {
         "user_text": "summarize encounters",
         "instruction_ref": "hist_v1",
@@ -227,6 +238,16 @@ def test_model_turn_request_keeps_preflight_shape():
             {"user_text": "hello", "role": "user", "messages": []}
         )
     assert "unexpected_vendor_turn_field" in exc_info.value.errors
+    dotted = ModelTurnRequest(
+        user_text="summarize encounters",
+        instruction_ref="wilvor.historical.specialist.v1",
+        validation_feedback=ValidationFeedback(
+            code=ValidationFeedbackCode.UNKNOWN_TOOL,
+            tool_name="run_sql",
+        ),
+    )
+    assert "validation_feedback" in dotted.to_dict()
+    assert ModelTurnRequest.from_dict(dotted.to_dict()) == dotted
 
 
 def test_model_provider_protocol_accepts_a_complete_callable():

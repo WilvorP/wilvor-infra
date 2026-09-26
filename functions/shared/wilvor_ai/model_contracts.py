@@ -11,6 +11,7 @@ runtime should normally map REFUSAL to SpecialistStatus.PROVIDER_FAILED.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any, Mapping, Protocol
@@ -57,6 +58,7 @@ _KIND_FIELDS = {
     "REFUSAL": frozenset({"refusal_code"}),
 }
 _ALWAYS_ALLOWED_DECISION_KEYS = frozenset({"schema_version", "kind"})
+INSTRUCTION_REF_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_.]*$")
 
 
 class ModelDecisionKind(str, Enum):
@@ -316,19 +318,96 @@ _VENDOR_TURN_KEYS = frozenset(
 )
 
 
+class ValidationFeedbackCode(str, Enum):
+    """Stable dispatcher-validation codes. Not stack traces or AWS errors."""
+
+    UNKNOWN_TOOL = "UNKNOWN_TOOL"
+    UNKNOWN_ARGUMENT = "UNKNOWN_ARGUMENT"
+    TRUSTED_ARGUMENT_FORBIDDEN = "TRUSTED_ARGUMENT_FORBIDDEN"
+    MISSING_REQUIRED_ARGUMENT = "MISSING_REQUIRED_ARGUMENT"
+    INVALID_ARGUMENT_TYPE = "INVALID_ARGUMENT_TYPE"
+    LIST_LIMIT_EXCEEDED = "LIST_LIMIT_EXCEEDED"
+    DUPLICATE_TOOL_CALL = "DUPLICATE_TOOL_CALL"
+    TOOL_CALL_BUDGET_EXCEEDED = "TOOL_CALL_BUDGET_EXCEEDED"
+
+
+def _validate_instruction_ref(value: Any) -> list[str]:
+    errors = _validate_bounded_text(value, "instruction_ref", optional=True)
+    if errors or value is None:
+        return errors
+    if INSTRUCTION_REF_PATTERN.fullmatch(value) is None:
+        return ["invalid_instruction_ref"]
+    return []
+
+
+@dataclass(frozen=True)
+class ValidationFeedback:
+    """Provider-visible correction for a structurally invalid TOOL_CALLS batch.
+
+    This is not a ToolResult and must not be used as historical evidence.
+    """
+
+    code: ValidationFeedbackCode
+    tool_name: str | None = None
+    argument_name: str | None = None
+
+    def __post_init__(self) -> None:
+        errors: list[str] = []
+        if not isinstance(self.code, ValidationFeedbackCode):
+            errors.append("invalid_code")
+        errors.extend(
+            _validate_identifier(self.tool_name, "tool_name", optional=True)
+        )
+        errors.extend(
+            _validate_identifier(
+                self.argument_name,
+                "argument_name",
+                optional=True,
+            )
+        )
+        if errors:
+            raise ContractValidationError(errors)
+
+    def to_dict(self) -> dict[str, JsonValue]:
+        payload: dict[str, JsonValue] = {"code": self.code.value}
+        if self.tool_name is not None:
+            payload["tool_name"] = self.tool_name
+        if self.argument_name is not None:
+            payload["argument_name"] = self.argument_name
+        return payload
+
+    @classmethod
+    def from_dict(cls, data: Mapping[str, Any]) -> "ValidationFeedback":
+        if not isinstance(data, Mapping):
+            raise ContractValidationError("invalid_validation_feedback")
+        return cls(
+            code=_parse_enum(
+                ValidationFeedbackCode,
+                _required(data, "code"),
+                "code",
+            ),
+            tool_name=data["tool_name"] if "tool_name" in data else None,
+            argument_name=(
+                data["argument_name"] if "argument_name" in data else None
+            ),
+        )
+
+
 @dataclass(frozen=True)
 class ModelTurnRequest:
     """Provider-neutral turn request.
 
     ``tools`` and ``tool_results`` are optional 3A.1 additions. Empty defaults
     keep the 3A-preflight ``{user_text}`` wire shape. This is not a vendor
-    chat-message transcript.
+    chat-message transcript. ``validation_feedback`` is dispatcher-only and
+    is omitted when no structurally invalid TOOL_CALLS batch occurred.
     """
 
     user_text: str
     instruction_ref: str | None = None
     tools: tuple[ToolSchema, ...] = ()
     tool_results: tuple[ToolResultProjection, ...] = ()
+    validation_feedback: ValidationFeedback | None = None
 
     def __post_init__(self) -> None:
         errors = _validate_bounded_text(
@@ -336,13 +415,7 @@ class ModelTurnRequest:
             "user_text",
             max_length=SPECIALIST_REQUEST_TEXT_MAX_LENGTH,
         )
-        errors.extend(
-            _validate_identifier(
-                self.instruction_ref,
-                "instruction_ref",
-                optional=True,
-            )
-        )
+        errors.extend(_validate_instruction_ref(self.instruction_ref))
         if not isinstance(self.tools, tuple):
             errors.append("invalid_tools")
         elif self.tools:
@@ -361,6 +434,11 @@ class ModelTurnRequest:
                 not isinstance(item, RuntimeProjection) for item in self.tool_results
             ):
                 errors.append("invalid_tool_results")
+        if (
+            self.validation_feedback is not None
+            and not isinstance(self.validation_feedback, ValidationFeedback)
+        ):
+            errors.append("invalid_validation_feedback")
         if errors:
             raise ContractValidationError(errors)
 
@@ -372,6 +450,8 @@ class ModelTurnRequest:
             payload["tools"] = [item.to_dict() for item in self.tools]
         if self.tool_results:
             payload["tool_results"] = [item.to_dict() for item in self.tool_results]
+        if self.validation_feedback is not None:
+            payload["validation_feedback"] = self.validation_feedback.to_dict()
         return payload
 
     @classmethod
@@ -384,6 +464,7 @@ class ModelTurnRequest:
 
         tools: tuple[ToolSchema, ...] = ()
         tool_results: tuple[ToolResultProjection, ...] = ()
+        validation_feedback = None
         if "tools" in data:
             from wilvor_ai.tool_schema import ToolSchema as RuntimeToolSchema
 
@@ -400,6 +481,10 @@ class ModelTurnRequest:
                 RuntimeProjection.from_dict(item)
                 for item in _sequence(data["tool_results"], "tool_results")
             )
+        if "validation_feedback" in data and data["validation_feedback"] is not None:
+            validation_feedback = ValidationFeedback.from_dict(
+                data["validation_feedback"]
+            )
         return cls(
             user_text=_required(data, "user_text"),
             instruction_ref=(
@@ -407,6 +492,7 @@ class ModelTurnRequest:
             ),
             tools=tools,
             tool_results=tool_results,
+            validation_feedback=validation_feedback,
         )
 
 
@@ -419,10 +505,13 @@ class ModelProvider(Protocol):
 
 __all__ = [
     "FORBIDDEN_DECISION_PROSE_KEYS",
+    "INSTRUCTION_REF_PATTERN",
     "MODEL_DECISION_SCHEMA_VERSION",
     "ModelDecision",
     "ModelDecisionKind",
     "ModelProvider",
     "ModelTurnRequest",
     "ProposedToolCall",
+    "ValidationFeedback",
+    "ValidationFeedbackCode",
 ]

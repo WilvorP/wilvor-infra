@@ -346,7 +346,7 @@ only `as_of_utc`. That value is the requested deterministic evaluation
 instant that will be injected into historical tools if they execute. It is
 not automatically `SpecialistResult` evidence.
 
-A future Historical Analytics Specialist constructor binds dependencies:
+The Historical Analytics Specialist constructor binds dependencies:
 
 ```text
 HistoricalAnalyticsSpecialist(
@@ -359,12 +359,13 @@ then:
 
 ```text
 run(request: SpecialistRequest, context: HistoricalSpecialistTrustedContext)
-    -> SpecialistResult
+    -> HistoricalSpecialistRunResult
 ```
 
 `run()` does not accept provider, operations, or AWS clients. A later
 Master Agent does not need to know how Athena, coverage, S3, Glue, or
-`HistoricalAnalyticsOperations` are constructed.
+`HistoricalAnalyticsOperations` are constructed. 3A.3 will convert the
+run result into a verified `SpecialistResult`.
 
 `ModelDecision` is a discriminated union: exactly one of `TOOL_CALLS`,
 `FINAL_CLAIMS`, `UNSUPPORTED`, or `REFUSAL`. Mixed or empty decisions are
@@ -396,14 +397,15 @@ status/evidence semantics.
 evaluation time from executed `ToolResult`s. The contract constructor does
 not copy trusted `as_of_utc` onto it. Unsupported or provider failure
 before tools, and pre-operation `INVALID_REQUEST` results with
-`ToolResult.as_of_utc is None`, leave it `None`. 3A.2 derives the value.
+`ToolResult.as_of_utc is None`, leave it `None`. 3A.2 derives the value
+on `HistoricalSpecialistRunResult`.
 
-Future 3A.2 list policy for `list_historical_encounters` (not implemented
-here; Phase 2B `LIST_DEFAULT_LIMIT=100` and `LIST_MAX_LIMIT=200` stay
-unchanged): omitted limit may become an explicit specialist default of 20;
-supplied `1..25` executes unchanged; supplied `>25` is rejected with zero
-historical operations for that call and one bounded correction. No silent
-clamping. `ToolInputField` does not encode that max.
+3A.2 list policy for `list_historical_encounters` (Phase 2B
+`LIST_DEFAULT_LIMIT=100` and `LIST_MAX_LIMIT=200` stay unchanged): omitted
+limit becomes an explicit specialist default of 20; supplied `1..25`
+executes unchanged; supplied `<1` or `>25` is rejected with zero
+historical operations for that call. No silent clamping.
+`ToolInputField` does not encode that max.
 
 `ModelTurnRequest` carries `user_text`, optional `instruction_ref`, and
 optional 3A.1 `tools` / `tool_results`. Empty defaults omit those keys so
@@ -448,7 +450,41 @@ fails closed. 3A.2 dispatch will later keep specialist lists at or below
 PARTIAL / UNAVAILABLE.
 
 `import wilvor_ai` still does not load `tool_schema`,
-`tool_result_projection`, historical adapters, Live Ops, or provider SDKs.
+`tool_result_projection`, historical adapters, specialist runtime, Live
+Ops, or provider SDKs.
+
+## Phase 3A.2 bounded specialist orchestration
+
+Phase 3A.2 adds offline `HistoricalAnalyticsSpecialist` orchestration
+around an injected `ModelProvider` and an already-built
+`HistoricalAnalyticsOperations` object. Trusted invocation context is
+`as_of_utc` only. The specialist does not create AWS clients, Coverage
+stores, Athena executors, or provider SDKs.
+
+Each executed historical call builds a fresh `HistoricalAnalyticsCall`
+with the trusted `as_of_utc` and a runtime-generated `tool_call_id`, then
+dispatches only through `HistoricalAnalyticsAdapter.get_handler`. Full
+audit `ToolResult` values are retained; the provider sees only
+`project_tool_result` views plus optional dispatcher `validation_feedback`.
+
+Loop bounds: at most 3 model turns, 2 historical tool executions, one
+structurally invalid TOOL_CALLS correction, and one execution per
+canonical `(name, normalized arguments)` key. TOOL_CALLS batches are
+validated atomically; one invalid or over-budget call executes none.
+Omitted `list_historical_encounters.limit` becomes explicit 20 before
+canonicalization, so it matches an explicit 20. Domain adapter
+`INVALID_REQUEST` is a real ToolResult and does not consume the
+dispatcher correction budget.
+
+`FINAL_CLAIMS` stop the loop and are stored as unverified
+`proposed_claims`. They are not `verified_claims` and do not produce a
+factual answer. 3A.3 owns verification and rendering. `UNSUPPORTED`
+retains prior ToolResults. `REFUSAL`, provider exceptions, malformed
+decisions, and an exhausted model-turn budget are `PROVIDER_FAILED`.
+Projection or evaluated `as_of` integrity failures are `UNAVAILABLE` and
+do not ask the model to correct them.
+
+Tests use a scripted fake provider only. No real LLM is called.
 
 Phase 3A is not complete.
 
