@@ -570,6 +570,63 @@ changes are included.
 3A.5 must later prove live snapshot continuation after a real Bedrock
 `TOOL_CALLS` turn. Phase 3A is not complete until that live proof.
 
+## Phase 3A.4B offline Anthropic Messages adapter
+
+Phase 3A.4B adds a second offline provider adapter behind the same
+`ModelProvider` protocol: Anthropic's direct Messages API. The committed
+Bedrock Converse adapter remains in the repository and is unchanged.
+3A.4B does not call Anthropic, read `ANTHROPIC_API_KEY`, add the
+`anthropic` SDK, or change 3A.2/3A.3 safety semantics.
+
+Provider lock:
+
+- Anthropic Messages API
+- Claude Sonnet 4.6
+- closed allowlist: `claude-sonnet-4-6`
+
+`AnthropicMessagesModelProvider` accepts an injected
+`AnthropicMessagesClient` with `messages_create(**kwargs) -> Mapping`.
+It does not import `anthropic` and does not construct an SDK client.
+Real client composition and API-key loading belong to 3A.5 live
+composition.
+
+Each `complete(ModelTurnRequest)` reconstructs one Messages request from
+the provider-neutral snapshot: versioned `wilvor.historical.specialist.v1`
+instruction, original `user_text`, the four catalog `ToolSchema`s,
+cumulative `ToolResultProjection` JSON, and optional `ValidationFeedback`.
+There is no mutable vendor transcript and no native `tool_use` /
+`tool_result` continuation. Anthropic `tool_use.id` is required on each
+`tool_use` block, then discarded after the current parse. It is not a
+Wilvor evidence ID.
+
+The same request uses strict client tools (`strict: true`) and
+`output_config.format` JSON schema together. Terminal structured output
+permits only `FINAL_CLAIMS`, `UNSUPPORTED`, and `REFUSAL`. `TOOL_CALLS`
+come from native `tool_use` blocks. `end_turn` requires exactly one
+`{"type": "text", "text": "<JSON string>"}` content block. `stop_reason`
+is the primary discriminator: incidental text beside `tool_use` is
+ignored; a contradictory terminal decision beside `tool_use` fails
+closed; `refusal` maps to `ModelDecision.REFUSAL`; `pause_turn`,
+`max_tokens`, `stop_sequence`, and unexpected reasons raise
+provider-owned errors, never `UNSUPPORTED`.
+
+Response envelopes must be `type=message`, `role=assistant`, and
+`model` equal to the configured allowlisted ID. Thinking, server-tool,
+and other unenabled content block types fail closed.
+
+`ModelDecision.from_dict` and existing claim constructors remain the
+provider-neutral parse boundary. The deterministic verifier and renderer
+remain factual authority. Prompt text is not the security boundary.
+
+`import wilvor_ai` and `import wilvor_ai.providers` stay adapter-SDK-free.
+The concrete adapter is imported explicitly as
+`wilvor_ai.providers.anthropic_messages`. No LangGraph, Terraform, or IAM
+changes are included.
+
+3A.5 must later prove live flattened snapshot continuation after a real
+Anthropic `tool_use` turn on `claude-sonnet-4-6`. Phase 3A is not complete
+until that live proof.
+
 Phase 3A is not complete.
 
 ## Tests

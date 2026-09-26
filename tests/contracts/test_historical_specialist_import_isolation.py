@@ -69,6 +69,7 @@ assert 'wilvor_ai.historical_analytics' not in sys.modules
 assert 'wilvor_ai.live_ops' not in sys.modules
 assert 'wilvor_ai.providers' not in sys.modules
 assert 'wilvor_ai.providers.bedrock_converse' not in sys.modules
+assert 'wilvor_ai.providers.anthropic_messages' not in sys.modules
 assert 'boto3' not in sys.modules
 assert 'botocore' not in sys.modules
 assert 'openai' not in sys.modules
@@ -76,6 +77,7 @@ assert 'anthropic' not in sys.modules
 assert 'langgraph' not in sys.modules
 assert not hasattr(wilvor_ai, 'HistoricalAnalyticsSpecialist')
 assert not hasattr(wilvor_ai, 'HISTORICAL_ANALYTICS_TOOLS')
+assert not hasattr(wilvor_ai, 'AnthropicMessagesModelProvider')
 """
     completed = _run_isolated(script)
     assert completed.returncode == 0, completed.stderr + completed.stdout
@@ -148,3 +150,5 @@ def test_specialist_sources_exclude_aws_live_ops_and_clocks():
         assert "LIVE_OPS_TOOLS" not in source
         assert "MasterAgent" not in source
         assert "boto3.client" not in source
+        assert "AnthropicMessagesModelProvider" not in source
+        assert "BedrockConverseModelProvider" not in source

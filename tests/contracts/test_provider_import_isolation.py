@@ -1,4 +1,4 @@
-"""Import isolation for Phase 3A.4 Bedrock Converse adapter."""
+"""Import isolation for Phase 3A.4 / 3A.4B provider adapters."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ PROVIDERS_INIT = SHARED_DIR / "wilvor_ai" / "providers" / "__init__.py"
 ERRORS = SHARED_DIR / "wilvor_ai" / "providers" / "errors.py"
 INSTRUCTIONS = SHARED_DIR / "wilvor_ai" / "providers" / "instructions.py"
 BEDROCK = SHARED_DIR / "wilvor_ai" / "providers" / "bedrock_converse.py"
+ANTHROPIC = SHARED_DIR / "wilvor_ai" / "providers" / "anthropic_messages.py"
 SPECIALIST = SHARED_DIR / "wilvor_ai" / "historical_specialist.py"
 VERIFIER = SHARED_DIR / "wilvor_ai" / "historical_evidence_verifier.py"
 RENDERER = SHARED_DIR / "wilvor_ai" / "historical_answer_renderer.py"
@@ -62,10 +63,16 @@ import sys
 import wilvor_ai
 assert 'wilvor_ai.providers' not in sys.modules
 assert 'wilvor_ai.providers.bedrock_converse' not in sys.modules
+assert 'wilvor_ai.providers.anthropic_messages' not in sys.modules
 assert 'boto3' not in sys.modules
 assert 'botocore' not in sys.modules
+assert 'openai' not in sys.modules
+assert 'anthropic' not in sys.modules
+assert 'langgraph' not in sys.modules
 assert not hasattr(wilvor_ai, 'BedrockConverseModelProvider')
 assert not hasattr(wilvor_ai, 'BedrockConverseClient')
+assert not hasattr(wilvor_ai, 'AnthropicMessagesModelProvider')
+assert not hasattr(wilvor_ai, 'AnthropicMessagesClient')
 """
     completed = _run_isolated(script)
     assert completed.returncode == 0, completed.stderr + completed.stdout
@@ -76,9 +83,14 @@ def test_import_providers_package_does_not_load_bedrock_or_sdks():
 import sys
 import wilvor_ai.providers as providers
 assert 'wilvor_ai.providers.bedrock_converse' not in sys.modules
+assert 'wilvor_ai.providers.anthropic_messages' not in sys.modules
 assert 'boto3' not in sys.modules
 assert 'botocore' not in sys.modules
+assert 'openai' not in sys.modules
+assert 'anthropic' not in sys.modules
+assert 'langgraph' not in sys.modules
 assert not hasattr(providers, 'BedrockConverseModelProvider')
+assert not hasattr(providers, 'AnthropicMessagesModelProvider')
 """
     completed = _run_isolated(script)
     assert completed.returncode == 0, completed.stderr + completed.stdout
@@ -106,16 +118,40 @@ assert 'langgraph' not in sys.modules
             raise AssertionError("bedrock adapter must not construct boto3 clients")
 
 
+def test_import_anthropic_messages_stays_sdk_free():
+    script = """
+import sys
+import wilvor_ai.providers.anthropic_messages as anthropic_messages
+assert hasattr(anthropic_messages, 'AnthropicMessagesModelProvider')
+assert hasattr(anthropic_messages, 'AnthropicMessagesClient')
+assert 'boto3' not in sys.modules
+assert 'botocore' not in sys.modules
+assert 'openai' not in sys.modules
+assert 'anthropic' not in sys.modules
+assert 'langgraph' not in sys.modules
+"""
+    completed = _run_isolated(script)
+    assert completed.returncode == 0, completed.stderr + completed.stdout
+    imported = _imported_modules(ANTHROPIC)
+    assert imported.isdisjoint(_SDK_FORBIDDEN)
+    source = ANTHROPIC.read_text(encoding="utf-8")
+    assert "ANTHROPIC_API_KEY" not in source
+    assert "boto3.client" not in source
+
+
 def test_provider_sources_exclude_sdks_and_safety_core_excludes_adapter():
-    for path in (PROVIDERS_INIT, ERRORS, INSTRUCTIONS, BEDROCK):
+    for path in (PROVIDERS_INIT, ERRORS, INSTRUCTIONS, BEDROCK, ANTHROPIC):
         imported = _imported_modules(path)
         assert imported.isdisjoint(_SDK_FORBIDDEN)
         source = path.read_text(encoding="utf-8")
         assert "boto3.client" not in source
         assert "datetime.now" not in source
+        assert "ANTHROPIC_API_KEY" not in source
     for path in (SPECIALIST, VERIFIER, RENDERER):
         imported = _imported_modules(path)
         assert "wilvor_ai.providers" not in imported
         assert "wilvor_ai.providers.bedrock_converse" not in imported
+        assert "wilvor_ai.providers.anthropic_messages" not in imported
         source = path.read_text(encoding="utf-8")
         assert "BedrockConverseModelProvider" not in source
+        assert "AnthropicMessagesModelProvider" not in source
