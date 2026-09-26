@@ -522,8 +522,53 @@ verified success. Global 3A.2 `UNAVAILABLE` remains fatal. The two-stage
 API is retained: `specialist.run(...)` then
 `finalize_historical_specialist_run(...)`.
 
-No real provider or AWS client is introduced. Phase 3A is not complete
-until a later concrete-provider decision/integration phase.
+## Phase 3A.4 offline Bedrock Converse adapter
+
+Phase 3A.4 adds an offline Amazon Bedrock Runtime Converse adapter behind
+the existing `ModelProvider` protocol. It does not call Bedrock, create AWS
+clients, or change 3A.2/3A.3 safety semantics.
+
+Provider lock:
+
+- Amazon Bedrock Runtime Converse
+- Claude Sonnet 4.6
+- initial allowlisted US geo inference profile: `us.anthropic.claude-sonnet-4-6`
+
+`BedrockConverseModelProvider` accepts an injected `BedrockConverseClient`
+with `converse(**kwargs) -> Mapping`. It does not import `boto3`/`botocore`
+and does not construct `boto3.client("bedrock-runtime")`. Real client
+composition belongs to 3A.5 or later Agent API/runtime composition.
+
+Each `complete(ModelTurnRequest)` reconstructs one Converse request from the
+provider-neutral snapshot: versioned `wilvor.historical.specialist.v1`
+instruction, original `user_text`, the four catalog `ToolSchema`s, cumulative
+`ToolResultProjection` JSON, and optional `ValidationFeedback`. There is no
+mutable vendor transcript and no fabricated native `toolUse`/`toolResult`
+continuation. Bedrock `toolUseId` is required on each `toolUse` block, then
+discarded after the current parse. It is not a Wilvor evidence ID.
+
+The same request uses strict tool specs (`toolSpec.strict = true`) and
+`outputConfig.textFormat` JSON schema together. Terminal structured output
+permits only `FINAL_CLAIMS`, `UNSUPPORTED`, and `REFUSAL`. `TOOL_CALLS` come
+from native `toolUse` blocks. `end_turn` requires exactly one model
+`{"text": "<JSON string>"}` ContentBlock; a top-level `{"json": ...}`
+block is rejected. `stopReason` is the primary discriminator:
+incidental text beside `toolUse` is ignored; a contradictory terminal
+decision beside `toolUse` fails closed; `content_filtered` /
+`guardrail_intervened` map to `ModelDecision.REFUSAL`; incomplete or
+malformed stop reasons raise provider-owned errors, never `UNSUPPORTED`.
+
+`ModelDecision.from_dict` and existing claim constructors remain the
+provider-neutral parse boundary. The deterministic verifier and renderer
+remain factual authority. Prompt text is not the security boundary.
+
+`import wilvor_ai` and `import wilvor_ai.providers` stay adapter-SDK-free.
+The concrete adapter is imported explicitly as
+`wilvor_ai.providers.bedrock_converse`. No LangGraph, Terraform, or IAM
+changes are included.
+
+3A.5 must later prove live snapshot continuation after a real Bedrock
+`TOOL_CALLS` turn. Phase 3A is not complete until that live proof.
 
 Phase 3A is not complete.
 

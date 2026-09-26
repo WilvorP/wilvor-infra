@@ -25,6 +25,7 @@ _FORBIDDEN = {
     "bedrock",
     "wilvor_operational",
     "wilvor_ai.live_ops",
+    "wilvor_ai.providers",
     "wilvor_historical_query",
 }
 
@@ -66,6 +67,8 @@ assert 'wilvor_ai.historical_evidence_verifier' not in sys.modules
 assert 'wilvor_ai.historical_answer_renderer' not in sys.modules
 assert 'wilvor_ai.historical_analytics' not in sys.modules
 assert 'wilvor_ai.live_ops' not in sys.modules
+assert 'wilvor_ai.providers' not in sys.modules
+assert 'wilvor_ai.providers.bedrock_converse' not in sys.modules
 assert 'boto3' not in sys.modules
 assert 'botocore' not in sys.modules
 assert 'openai' not in sys.modules
@@ -90,6 +93,7 @@ assert 'anthropic' not in sys.modules
 assert 'langgraph' not in sys.modules
 assert 'wilvor_operational' not in sys.modules
 assert 'wilvor_ai.live_ops' not in sys.modules
+assert 'wilvor_ai.providers' not in sys.modules
 assert 'LIVE_OPS_TOOLS' not in dir(historical_specialist)
 assert not hasattr(historical_specialist, 'SpecialistResult')
 """
@@ -122,6 +126,7 @@ assert 'anthropic' not in sys.modules
 assert 'langgraph' not in sys.modules
 assert 'wilvor_operational' not in sys.modules
 assert 'wilvor_ai.live_ops' not in sys.modules
+assert 'wilvor_ai.providers' not in sys.modules
 assert 'wilvor_historical_query' not in sys.modules
 assert 'ModelProvider' not in dir(renderer)
 """

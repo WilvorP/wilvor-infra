@@ -24,6 +24,7 @@ _FORBIDDEN = {
     "wilvor_operational",
     "wilvor_historical_query",
     "wilvor_ai.live_ops",
+    "wilvor_ai.providers",
     "wilvor_ai.historical_analytics",
     "wilvor_ai.historical_analytics_mapping",
 }
@@ -72,6 +73,8 @@ assert 'wilvor_ai.historical_evidence_verifier' not in sys.modules
 assert 'wilvor_ai.historical_answer_renderer' not in sys.modules
 assert 'wilvor_ai.historical_analytics_mapping' not in sys.modules
 assert 'wilvor_ai.live_ops' not in sys.modules
+assert 'wilvor_ai.providers' not in sys.modules
+assert 'wilvor_ai.providers.bedrock_converse' not in sys.modules
 assert 'wilvor_historical_query' not in sys.modules
 assert 'boto3' not in sys.modules
 assert 'botocore' not in sys.modules
