@@ -13,6 +13,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SHARED_DIR = REPO_ROOT / "functions" / "shared"
 SPECIALIST = SHARED_DIR / "wilvor_ai" / "historical_specialist.py"
 RUNTIME_CONTRACTS = SHARED_DIR / "wilvor_ai" / "specialist_runtime_contracts.py"
+VERIFIER = SHARED_DIR / "wilvor_ai" / "historical_evidence_verifier.py"
+RENDERER = SHARED_DIR / "wilvor_ai" / "historical_answer_renderer.py"
 
 _FORBIDDEN = {
     "boto3",
@@ -23,6 +25,7 @@ _FORBIDDEN = {
     "bedrock",
     "wilvor_operational",
     "wilvor_ai.live_ops",
+    "wilvor_historical_query",
 }
 
 
@@ -59,6 +62,8 @@ import sys
 import wilvor_ai
 assert 'wilvor_ai.historical_specialist' not in sys.modules
 assert 'wilvor_ai.specialist_runtime_contracts' not in sys.modules
+assert 'wilvor_ai.historical_evidence_verifier' not in sys.modules
+assert 'wilvor_ai.historical_answer_renderer' not in sys.modules
 assert 'wilvor_ai.historical_analytics' not in sys.modules
 assert 'wilvor_ai.live_ops' not in sys.modules
 assert 'boto3' not in sys.modules
@@ -103,8 +108,29 @@ assert hasattr(wilvor_historical_query, 'HistoricalAnalyticsOperations')
     assert completed.returncode == 0, completed.stderr + completed.stdout
 
 
+def test_import_verifier_and_renderer_stay_offline():
+    script = """
+import sys
+import wilvor_ai.historical_evidence_verifier as verifier
+import wilvor_ai.historical_answer_renderer as renderer
+assert hasattr(verifier, 'verify_historical_specialist_run')
+assert hasattr(renderer, 'finalize_historical_specialist_run')
+assert 'boto3' not in sys.modules
+assert 'botocore' not in sys.modules
+assert 'openai' not in sys.modules
+assert 'anthropic' not in sys.modules
+assert 'langgraph' not in sys.modules
+assert 'wilvor_operational' not in sys.modules
+assert 'wilvor_ai.live_ops' not in sys.modules
+assert 'wilvor_historical_query' not in sys.modules
+assert 'ModelProvider' not in dir(renderer)
+"""
+    completed = _run_isolated(script)
+    assert completed.returncode == 0, completed.stderr + completed.stdout
+
+
 def test_specialist_sources_exclude_aws_live_ops_and_clocks():
-    for path in (SPECIALIST, RUNTIME_CONTRACTS):
+    for path in (SPECIALIST, RUNTIME_CONTRACTS, VERIFIER, RENDERER):
         imported = _imported_modules(path)
         source = path.read_text(encoding="utf-8")
         assert imported.isdisjoint(_FORBIDDEN)

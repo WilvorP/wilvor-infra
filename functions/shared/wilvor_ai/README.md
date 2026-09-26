@@ -486,6 +486,45 @@ do not ask the model to correct them.
 
 Tests use a scripted fake provider only. No real LLM is called.
 
+## Phase 3A.3 deterministic verification and rendering
+
+Phase 3A.3 converts `HistoricalSpecialistRunResult` into `SpecialistResult`
+through `verify_historical_specialist_run` and
+`finalize_historical_specialist_run`. The model only proposes typed claims.
+Full `ToolResult` / first-class `Evidence` is verifier authority;
+`ToolResultProjection` is not. All proposed claims must verify atomically.
+Any failure yields `VerifierOutcome.FAILED`, empty `verified_claims`, and
+`SpecialistStatus.UNAVAILABLE` with `CLAIM_VERIFICATION_FAILED`. There is
+no verification retry and no provider call.
+
+Exact counts use a code-owned metric allowlist from actual Phase 2B result
+fields. Fact-bearing exact-count, lower-bound, and record-identity claims
+require `TemporalScope.HISTORICAL` and `Evidence.completeness.status ==
+EVALUABLE`. Exact counts also require `SUCCESS`; lower bounds also
+require `PARTIAL`; record identity is list-only and accepts
+`SUCCESS` / `PARTIAL`. Verified zero keeps its stronger `NOT_FOUND` plus
+evaluable exact-zero proof. Windows match requested scope only and do
+not require `EVALUABLE`. `UNAVAILABLE` claims require
+`ToolResultStatus.UNAVAILABLE`; domain `UNKNOWN` / `INVALID_REQUEST` is
+not treated as coverage failure. Malformed `ToolResult`s are not
+repaired. Limitation claims cannot suppress mandatory
+`RESULT_TRUNCATED` or `HAZARD_VERSION_WINDOW_LIMITATION`. Window-only or
+limitation-only claim sets are non-actionable.
+
+`SpecialistResult.answer` is code-rendered. Model-authored operational
+prose remains prohibited. `evaluated_as_of_utc` is copied from the run
+result only. Used factual `ToolResult.as_of_utc` values must agree with
+each other and with `run_result.evaluated_as_of_utc`; the finalizer does
+not invent as-of, read trusted context, or read wall clock. All audit
+`ToolResult`s are retained. Used-tool claims determine factual status; an
+unused earlier domain `INVALID_REQUEST` does not override a later
+verified success. Global 3A.2 `UNAVAILABLE` remains fatal. The two-stage
+API is retained: `specialist.run(...)` then
+`finalize_historical_specialist_run(...)`.
+
+No real provider or AWS client is introduced. Phase 3A is not complete
+until a later concrete-provider decision/integration phase.
+
 Phase 3A is not complete.
 
 ## Tests

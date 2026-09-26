@@ -68,6 +68,8 @@ assert hasattr(wilvor_ai, 'ToolInputValueType')
 assert 'wilvor_ai.tool_schema' not in sys.modules
 assert 'wilvor_ai.tool_result_projection' not in sys.modules
 assert 'wilvor_ai.historical_analytics' not in sys.modules
+assert 'wilvor_ai.historical_evidence_verifier' not in sys.modules
+assert 'wilvor_ai.historical_answer_renderer' not in sys.modules
 assert 'wilvor_ai.historical_analytics_mapping' not in sys.modules
 assert 'wilvor_ai.live_ops' not in sys.modules
 assert 'wilvor_historical_query' not in sys.modules
