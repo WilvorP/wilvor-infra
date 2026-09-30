@@ -764,14 +764,19 @@ Master Agent / LangGraph orchestration, multi-specialist evidence
 verification, visualization builder, dedicated Agent API, `/ai`
 frontend integration, broader evaluation, and latency/cost
 optimization. Historical Analytics Specialist is one specialist
-foundation. DT1 defines the decision evidence contract only.
+foundation. DT1 defines the decision evidence contract. DT2 adds the
+read-only current decision context operation and does not add a model catalog.
 
 ## Decision Tools
 
 DT0, the authoritative decision-logic audit, is complete. DT1 adds the
 current decision evidence contract in `wilvor_ai.decision_contracts`.
-It does not retrieve operational data, register a tool catalog, call a
-model, or implement a Decision Expert.
+DT2 adds one read-only operation, `get_current_decision_context`, in
+`wilvor_ai.decision_context`. It maps
+`build_aircraft_operational_context` into `DecisionEvidence` for one
+`aircraft_id`. Tables, `now_epoch`, and `tool_call_id` stay on
+`DecisionContextCall`. There is no decision-tool catalog, no model
+schema, and no Decision Expert.
 
 Decision evidence uses the existing `ToolResult` envelope with
 `TemporalScope.CURRENT`. The payload is `DecisionEvidence`
@@ -780,20 +785,19 @@ reconstruction are out of scope. A future Master Agent may combine a
 current decision result with historical analytics evidence, but the
 decision payload itself stays current.
 
-READY_NOW future tools, not implemented in DT1:
-
-- current decision context
-- recommendation evidence
-- risk evidence
+`get_current_decision_context` is the broad current-context operation.
+It includes `DecisionRouteCapability`: `validated_alternative_available`
+is false, and the unavailable set is route alternatives, route safety,
+runway evidence, and congestion. It does not calculate risk, choose a
+recommendation, or read airport assessments. Recommendation evidence
+and risk-only evidence tools are not implemented.
 
 `DecisionEvidence.capability` is optional. When it is present, it is
 authoritative: `validated_alternative_available` is false, and the
 unavailable set is route alternatives, route safety, runway evidence,
 and congestion. No validated route-generation capability exists.
-A future broad decision-context result should include this capability
-object. Narrow stored risk evidence, and recommendation evidence that
-is not answering a route question, does not need those unrelated
-limitations. These tools are not implemented.
+Narrow stored risk evidence, and recommendation evidence that is not
+answering a route question, does not need those unrelated limitations.
 `EVALUATE_DIVERSION` is advisory evidence to evaluate persisted airport
 options. It is not a computed route or a diversion clearance.
 
