@@ -60,6 +60,7 @@ from wilvor_ai.providers.errors import (
 )
 from wilvor_ai.providers.instructions import (
     HISTORICAL_SPECIALIST_V1_INSTRUCTION,
+    HISTORICAL_SPECIALIST_V2_INSTRUCTION,
     resolve_instruction,
 )
 from wilvor_ai.specialist_contracts import (
@@ -297,8 +298,11 @@ def test_unknown_instruction_ref_fails_closed():
     provider, _ = _provider([end_turn_response(_final_claims_payload())])
     with pytest.raises(ModelProviderError, match="unknown_instruction_ref"):
         provider.complete(_turn(instruction_ref="wilvor.unknown.v9"))
-    assert resolve_instruction(HISTORICAL_SPECIALIST_INSTRUCTION_REF) == (
+    assert resolve_instruction("wilvor.historical.specialist.v1") == (
         HISTORICAL_SPECIALIST_V1_INSTRUCTION
+    )
+    assert resolve_instruction(HISTORICAL_SPECIALIST_INSTRUCTION_REF) == (
+        HISTORICAL_SPECIALIST_V2_INSTRUCTION
     )
 
 
@@ -357,8 +361,8 @@ def test_four_strict_tool_specs_and_locked_converse_settings():
     assert "toolConfig" in kwargs
     assert "outputConfig" in kwargs
     assert kwargs["system"] == [
-        {"text": HISTORICAL_SPECIALIST_V1_INSTRUCTION}
-    ]
+            {"text": HISTORICAL_SPECIALIST_V2_INSTRUCTION}
+        ]
 
 
 def test_catalog_type_mapping_covers_all_value_types():

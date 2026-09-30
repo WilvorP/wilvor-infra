@@ -732,7 +732,7 @@ def test_run_result_round_trip_and_instruction_lock():
     )
     restored = HistoricalSpecialistRunResult.from_dict(result.to_dict())
     assert restored == result
-    assert HISTORICAL_SPECIALIST_INSTRUCTION_REF == "wilvor.historical.specialist.v1"
+    assert HISTORICAL_SPECIALIST_INSTRUCTION_REF == "wilvor.historical.specialist.v2"
     assert "return_typed_decision_only" in HISTORICAL_SPECIALIST_INSTRUCTION_RULES
     source = SPECIALIST_SOURCE.read_text(encoding="utf-8")
     assert "datetime.now" not in source

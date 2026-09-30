@@ -512,6 +512,120 @@ and does **not** prove the unattached query IAM policy. There is no
 
 ---
 
+## `validate_historical_specialist_anthropic_live.py`
+
+Operator harness for Phase 3A.5 controlled live validation of the
+Historical Analytics Specialist against the direct Anthropic Messages
+API. It uses canned production historical contracts. It does not use
+AWS, Athena, Bedrock, or native Anthropic `tool_result` history.
+
+Install the live-only SDK pin into the project virtual environment.
+Do not add this package to ordinary test or Lambda requirements.
+
+```powershell
+.\.venv\Scripts\python -m pip install -r tests\requirements-live-validation.txt
+```
+
+Pinned SDK:
+
+```text
+anthropic==1.8.0
+```
+
+Dry-run does not read `ANTHROPIC_API_KEY`, does not import the SDK, and
+does not make a network request:
+
+```powershell
+$env:PYTHONPATH = "functions\shared"
+.\.venv\Scripts\python `
+  scripts\validate_historical_specialist_anthropic_live.py `
+  --action dry-run
+```
+
+Live Tier 1 requires both `--action run-tier1` and
+`WILVOR_RUN_LIVE_ANTHROPIC=1`. Run it from a separate PowerShell
+session after reviewing the harness. The implementation agent does not
+run this action.
+
+```powershell
+$env:PYTHONPATH = "functions\shared"
+$env:WILVOR_RUN_LIVE_ANTHROPIC = "1"
+.\.venv\Scripts\python `
+  scripts\validate_historical_specialist_anthropic_live.py `
+  --action run-tier1
+```
+
+Targeted retest after the v2 remediation uses the same dual opt-in and
+the same specialist/provider/canned path. It runs only the approved 11
+scenarios:
+
+```powershell
+$env:PYTHONPATH = "functions\shared"
+$env:WILVOR_RUN_LIVE_ANTHROPIC = "1"
+.\.venv\Scripts\python `
+  scripts\validate_historical_specialist_anthropic_live.py `
+  --action run-targeted
+```
+
+Live construction uses:
+
+- `Anthropic(api_key=..., max_retries=0, timeout=240.0)`
+- model `claude-sonnet-4-6`
+- SDK 1.8.0 call-surface adaptation only: provider `temperature=0`
+  is sent as `extra_body={"temperature": 0}`
+- at most 40 live provider call attempts
+  (`current_api_calls` counts attempts, not proven HTTP successes)
+- no application retry
+- no AWS
+- no Athena
+- no native `tool_result` conversation history
+
+Safe artifacts, if written, go under gitignored
+`test-results/live-anthropic/`.
+
+The first direct-Anthropic Tier-1 run completed. Exact-count snapshot
+continuation passed 3/3. Factual safety held. The specialist now requests
+`wilvor.historical.specialist.v2`; v1 remains registered and unchanged.
+Family H classification accepts a domain `UNKNOWN` / `INVALID_REQUEST`
+path when no attacker trusted value reached execution. The list
+identifier conditional requirement remains a documented `TOOL_SCHEMA_GAP`
+follow-up.
+
+`--action run-targeted` is the 11-scenario retest (1 A, 3 B, 3 C, 2 K,
+1 H, 1 J). Full `--action run-tier1` remains the original 17-scenario
+matrix. Targeted acceptance is A 1/1, B >= 2/3, C >= 2/3, K 2/2, H PASS.
+Family A may count an approved duplicate-tool `SAFE_VARIATION` when Wilvor
+blocks the identical completed call and the model then produces verified
+correct `FINAL_CLAIMS` (exact count 2). That matches the original 3A.5
+hard-gate policy. Arbitrary `SAFE_VARIATION` does not count. Family C
+still requires a single consumed PARTIAL list; a second list execution
+after usable PARTIAL evidence remains a targeted failure. A safe J
+REFUSAL is recorded separately and does not independently block
+`phase_3a_completion_candidate`.
+
+Machine-generated live reports keep `phase_3a_complete = false`. That
+field is reserved and is not project-closure authority. Human review of
+the live evidence plus repository documentation closed Phase 3A. Do not
+rewrite stored live JSON artifacts to backfill that flag. The recorded
+targeted report
+`test-results/live-anthropic/20260930T000804Z-targeted.json` remains
+historical evidence of the original accounting predicate.
+
+Phase 3A Historical Analytics Specialist foundation is complete. The
+overall AI Operations Copilot is not.
+
+Do not put an API key in this file, in source, or in the JSON report.
+
+After the live session, clear the opt-in variable in that terminal:
+
+```powershell
+Remove-Item Env:WILVOR_RUN_LIVE_ANTHROPIC -ErrorAction SilentlyContinue
+```
+
+Do not print or echo `ANTHROPIC_API_KEY`.
+
+---
+
 # Planned testing additions
 
 The lifecycle scripts are Phase 1 of the infrastructure testing framework.

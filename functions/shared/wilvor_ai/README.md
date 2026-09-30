@@ -466,6 +466,8 @@ with the trusted `as_of_utc` and a runtime-generated `tool_call_id`, then
 dispatches only through `HistoricalAnalyticsAdapter.get_handler`. Full
 audit `ToolResult` values are retained; the provider sees only
 `project_tool_result` views plus optional dispatcher `validation_feedback`.
+The specialist now requests `wilvor.historical.specialist.v2`. The recorded
+live v1 instruction remains registered and byte-for-byte unchanged.
 
 Loop bounds: at most 3 model turns, 2 historical tool executions, one
 structurally invalid TOOL_CALLS correction, and one execution per
@@ -540,8 +542,9 @@ and does not construct `boto3.client("bedrock-runtime")`. Real client
 composition belongs to 3A.5 or later Agent API/runtime composition.
 
 Each `complete(ModelTurnRequest)` reconstructs one Converse request from the
-provider-neutral snapshot: versioned `wilvor.historical.specialist.v1`
-instruction, original `user_text`, the four catalog `ToolSchema`s, cumulative
+provider-neutral snapshot: the request's versioned instruction ref
+(`wilvor.historical.specialist.v1` remains registered; the specialist now
+sends `v2`), original `user_text`, the four catalog `ToolSchema`s, cumulative
 `ToolResultProjection` JSON, and optional `ValidationFeedback`. There is no
 mutable vendor transcript and no fabricated native `toolUse`/`toolResult`
 continuation. Bedrock `toolUseId` is required on each `toolUse` block, then
@@ -567,8 +570,9 @@ The concrete adapter is imported explicitly as
 `wilvor_ai.providers.bedrock_converse`. No LangGraph, Terraform, or IAM
 changes are included.
 
-3A.5 must later prove live snapshot continuation after a real Bedrock
-`TOOL_CALLS` turn. Phase 3A is not complete until that live proof.
+Bedrock live proof is not required for direct-provider Phase 3A
+closure. The earlier Bedrock 3A.5 attempt remains stashed because the
+AWS account was not authorized for Anthropic through Bedrock.
 
 ## Phase 3A.4B offline Anthropic Messages adapter
 
@@ -591,8 +595,9 @@ Real client composition and API-key loading belong to 3A.5 live
 composition.
 
 Each `complete(ModelTurnRequest)` reconstructs one Messages request from
-the provider-neutral snapshot: versioned `wilvor.historical.specialist.v1`
-instruction, original `user_text`, the four catalog `ToolSchema`s,
+the provider-neutral snapshot: the request's versioned instruction ref
+(`wilvor.historical.specialist.v1` remains registered; the specialist now
+sends `v2`), original `user_text`, the four catalog `ToolSchema`s,
 cumulative `ToolResultProjection` JSON, and optional `ValidationFeedback`.
 There is no mutable vendor transcript and no native `tool_use` /
 `tool_result` continuation. Anthropic `tool_use.id` is required on each
@@ -623,11 +628,143 @@ The concrete adapter is imported explicitly as
 `wilvor_ai.providers.anthropic_messages`. No LangGraph, Terraform, or IAM
 changes are included.
 
-3A.5 must later prove live flattened snapshot continuation after a real
-Anthropic `tool_use` turn on `claude-sonnet-4-6`. Phase 3A is not complete
-until that live proof.
+## Phase 3A.5 direct Anthropic live validation harness
 
-Phase 3A is not complete.
+Phase 3A.5 adds an operator-only live harness:
+
+- `scripts/validate_historical_specialist_anthropic_live.py`
+- live-only dependency pin `anthropic==1.8.0` in
+  `tests/requirements-live-validation.txt`
+
+The committed `AnthropicMessagesModelProvider` remains SDK-free. The
+official SDK is imported only after `--action run-tier1` or
+`--action run-targeted` and `WILVOR_RUN_LIVE_ANTHROPIC=1`. Dry-run does
+not read `ANTHROPIC_API_KEY`. `run-tier1` keeps the original 17-scenario
+matrix. `run-targeted` runs the approved 11-scenario v2 retest and may
+set `phase_3a_completion_candidate` only; it never sets
+`phase_3a_complete`. Family A may count an approved duplicate-tool
+`SAFE_VARIATION` when Wilvor blocks the identical completed call and the
+model then emits verified correct `FINAL_CLAIMS`. That is the original
+3A.5 hard-gate policy, not a general SAFE_VARIATION waiver.
+
+Live composition constructs:
+
+```python
+Anthropic(api_key=..., max_retries=0, timeout=240.0)
+```
+
+and adapts `message.to_dict(mode="json")` into the committed
+`AnthropicMessagesClient` Mapping. The committed provider still emits
+`temperature=0`. Anthropic Python SDK 1.8.0 rejects that as a top-level
+`messages.create` keyword, so the live wrapper moves only `temperature`
+into `extra_body={"temperature": 0}` to preserve HTTP body semantics.
+Strict tools, `output_config`, and other provider fields are not
+rewritten. The harness does not repair a later API wire rejection.
+
+Tier 1 uses canned production `HistoricalQueryResponse` operations. AWS
+and Athena are not used. The unique hard gate is flattened snapshot
+continuation: a brand-new Messages request with cumulative
+`ToolResultProjection` JSON and no native `tool_result` history. Exact
+count must succeed on at least 2 of 3 independent live runs.
+
+The hard mechanical bound is 40 live provider call attempts.
+`current_api_calls` counts those attempts, not proven HTTP successes.
+SDK retries are disabled.
+
+The first human-operated direct-Anthropic Tier-1 run completed. Exact-count
+flattened-snapshot continuation passed 3/3 (`A1`, `A2`, `A3`). Deterministic
+factual safety held: no failed scenario produced an incorrect factual
+answer. `wilvor.historical.specialist.v1` is retained for reproducibility of
+that recorded run. `wilvor.historical.specialist.v2` adds evidence-
+interpretation clarifications only (certified zero, PARTIAL finalize,
+no identical completed-tool retry, hazard materialization vs validity
+overlap, UNKNOWN vs UNAVAILABLE, OUT_OF_CATALOG vs model-generated
+REFUSAL). Family H no longer treats a domain `UNKNOWN` /
+`INVALID_REQUEST` path as a runtime failure when trusted fields never
+reached execution.
+
+Known non-blocking follow-up (`TOOL_SCHEMA_GAP`): the model-facing
+`list_historical_encounters` schema permits start/end without
+`aircraft_id` or `hazard_id`, while `ListHistoricalEncountersRequest`
+requires at least one identifier. The deterministic adapter still fails
+closed. Do not add generic oneOf/anyOf schema machinery for that gap.
+
+Targeted live retest after the v2 remediation, not a full 17-scenario rerun:
+
+- A exact-count regression: 1
+- B verified zero: 3
+- C truncated list: 3
+- K hazard limitation: 2
+- H trusted attack: 1
+- J out-of-catalog: 1
+
+Harness machine reports keep `phase_3a_complete = false`. That field is
+not project-closure authority. Human review of the live evidence and this
+documentation is the Phase 3A closure authority.
+
+## Phase 3A complete
+
+Phase 3A Historical Analytics Specialist foundation is complete.
+
+`wilvor.historical.specialist.v1` remains frozen for the first
+direct-Anthropic baseline. `wilvor.historical.specialist.v2` is the active
+specialist instruction. It clarifies certified `VERIFIED_ZERO`, PARTIAL /
+`LOWER_BOUND_COUNT`, completed-tool reuse, hazard materialization
+semantics, UNKNOWN vs UNAVAILABLE, and OUT_OF_CATALOG vs REFUSAL. There is
+no v3.
+
+Proven live against `claude-sonnet-4-6` on the direct Anthropic Messages
+API:
+
+- strict four-tool historical catalog
+- structured terminal decisions
+- flattened snapshot continuation (no native Anthropic `tool_result` history)
+- provider tool IDs are non-authoritative
+- Wilvor-minted `tool_call_id` authority
+- trusted `as_of_utc` authority
+- deterministic `ToolResultProjection` continuation
+- exact counts
+- `VERIFIED_ZERO`
+- PARTIAL / `LOWER_BOUND_COUNT`
+- `RESULT_TRUNCATED` preservation
+- hazard materialization limitation
+- trusted-argument attack resistance
+- out-of-catalog rejection
+- deterministic claim verification
+- deterministic factual rendering
+- fail-closed behavior on invalid model claims
+
+The first live Tier-1 run passed the exact-count snapshot hard gate 3/3.
+The targeted v2 retest met the predeclared bar (A 1/1 including approved
+duplicate-tool `SAFE_VARIATION`, B 3/3, C 2/3, K 2/2, H PASS, J preferred
+`UNSUPPORTED` / `OUT_OF_CATALOG`). Stored live JSON artifacts are
+historical evidence and are not rewritten when harness accounting later
+changes.
+
+Model quality is not the factual safety boundary. A model may choose a
+wrong claim type, attempt a duplicate call, or take an unnecessary extra
+tool turn. Unsupported factual claims are not rendered unless
+deterministic evidence verification passes.
+
+Non-blocking follow-up (do not reopen Phase 3A):
+
+- `TOOL_SCHEMA_GAP`: `list_historical_encounters` model-facing schema
+  does not encode aircraft_id-or-hazard_id. Runtime fails closed.
+- Occasional extra list call after usable PARTIAL evidence (C-R3) is a
+  quality/efficiency issue, not a factual-safety failure.
+- Structured model-generated REFUSAL remains in the terminal schema.
+  Live J-R1 used preferred `UNSUPPORTED` / `OUT_OF_CATALOG`.
+- Bedrock Converse is implemented and tested offline. Live Bedrock was
+  blocked by account model authorization. Direct Anthropic is the proven
+  live provider.
+
+Phase 3A completion does not complete the AI Operations Copilot. Still
+not implemented: Decision Tools, Live Ops Expert, Decision Expert,
+Master Agent / LangGraph orchestration, multi-specialist evidence
+verification, visualization builder, dedicated Agent API, `/ai`
+frontend integration, broader evaluation, and latency/cost
+optimization. Historical Analytics Specialist is one specialist
+foundation.
 
 ## Tests
 

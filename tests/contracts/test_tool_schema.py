@@ -80,6 +80,24 @@ def test_historical_field_types_and_required_flags_match_catalog():
         assert names.isdisjoint(FORBIDDEN_TOOL_SCHEMA_FIELD_NAMES)
 
 
+def test_list_identifier_conditional_requirement_is_documented_schema_gap():
+    """TOOL_SCHEMA_GAP follow-up: list schema does not encode aircraft_id OR hazard_id.
+
+    Domain ListHistoricalEncountersRequest still requires at least one
+    identifier. The current ToolSchema abstraction has no oneOf/anyOf.
+    Deterministic adapter mapping fails closed with UNKNOWN/INVALID_REQUEST.
+    Do not add generic union machinery in this remediation.
+    """
+
+    schemas = {item.name: item for item in historical_analytics_tool_schemas()}
+    list_schema = schemas["list_historical_encounters"]
+    required = {item.name for item in list_schema.input_fields if item.required}
+    optional = {item.name for item in list_schema.input_fields if not item.required}
+    assert required == {"start_utc", "end_utc"}
+    assert "aircraft_id" in optional
+    assert "hazard_id" in optional
+
+
 def test_schema_builder_fails_closed_on_trusted_catalog_field():
     spec = HistoricalAnalyticsToolSpec(
         name="summarize_historical_encounters",

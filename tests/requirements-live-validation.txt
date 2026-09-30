@@ -1,0 +1,3 @@
+# Dependencies used only by explicit operator-run live validation.
+# Ordinary tests and production packages remain SDK-free.
+anthropic==1.8.0

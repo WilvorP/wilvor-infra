@@ -55,7 +55,7 @@ AI_LIST_DEFAULT = 20
 AI_LIST_MIN = 1
 AI_LIST_MAX = 25
 LIST_HISTORICAL_ENCOUNTERS = "list_historical_encounters"
-HISTORICAL_SPECIALIST_INSTRUCTION_REF = "wilvor.historical.specialist.v1"
+HISTORICAL_SPECIALIST_INSTRUCTION_REF = "wilvor.historical.specialist.v2"
 HISTORICAL_SPECIALIST_INSTRUCTION_RULES = (
     "historical_analytics_only",
     "use_only_supplied_tools",
