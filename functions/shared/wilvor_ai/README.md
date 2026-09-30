@@ -759,12 +759,50 @@ Non-blocking follow-up (do not reopen Phase 3A):
   live provider.
 
 Phase 3A completion does not complete the AI Operations Copilot. Still
-not implemented: Decision Tools, Live Ops Expert, Decision Expert,
+not implemented: Decision Tool runtime, Live Ops Expert, Decision Expert,
 Master Agent / LangGraph orchestration, multi-specialist evidence
 verification, visualization builder, dedicated Agent API, `/ai`
 frontend integration, broader evaluation, and latency/cost
 optimization. Historical Analytics Specialist is one specialist
-foundation.
+foundation. DT1 defines the decision evidence contract only.
+
+## Decision Tools
+
+DT0, the authoritative decision-logic audit, is complete. DT1 adds the
+current decision evidence contract in `wilvor_ai.decision_contracts`.
+It does not retrieve operational data, register a tool catalog, call a
+model, or implement a Decision Expert.
+
+Decision evidence uses the existing `ToolResult` envelope with
+`TemporalScope.CURRENT`. The payload is `DecisionEvidence`
+(`wilvor.ai.decision_evidence.v1`). Historical and hybrid decision
+reconstruction are out of scope. A future Master Agent may combine a
+current decision result with historical analytics evidence, but the
+decision payload itself stays current.
+
+READY_NOW future tools, not implemented in DT1:
+
+- current decision context
+- recommendation evidence
+- risk evidence
+
+`DecisionEvidence.capability` is optional. When it is present, it is
+authoritative: `validated_alternative_available` is false, and the
+unavailable set is route alternatives, route safety, runway evidence,
+and congestion. No validated route-generation capability exists.
+A future broad decision-context result should include this capability
+object. Narrow stored risk evidence, and recommendation evidence that
+is not answering a route question, does not need those unrelated
+limitations. These tools are not implemented.
+`EVALUATE_DIVERSION` is advisory evidence to evaluate persisted airport
+options. It is not a computed route or a diversion clearance.
+
+Currentness stays in `wilvor_operational`. This contract reports those
+results. It does not define a second meaning of current. Missing risk
+stays missing and is distinct from a stored LOW risk. A missing
+recommendation stays `ABSENT_FROM_CURRENT_CANDIDATES` and does not
+become MONITOR. Multiple current recommendations are a set with no
+selected winner. Alert OR-lineage is reported and is not resolved.
 
 ## Tests
 
@@ -778,3 +816,8 @@ python -m pytest tests/contracts -q -p no:cacheprovider
 
 The examples in `tests/fixtures/ai_copilot_contract_examples.py` use synthetic
 identifiers and make no claims about live aviation operations.
+
+Six Live Operations region tests in this suite can fail for an unrelated
+checksum: committed `us_states.geojson` raw bytes contain one CRLF, while
+`us_states.meta.json` hashes the LF bytes. That is not a decision-contract
+failure. Do not change those files to make this suite green.

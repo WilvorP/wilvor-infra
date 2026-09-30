@@ -34,6 +34,13 @@ from .model_contracts import (
     ModelTurnRequest,
     ProposedToolCall,
 )
+from .decision_contracts import (
+    DECISION_EVIDENCE_SCHEMA_VERSION,
+    V1_UNAVAILABLE_DECISION_CAPABILITIES,
+    DecisionEvidence,
+    DecisionEvidenceKind,
+    validate_decision_tool_result,
+)
 from .specialist_contracts import (
     SPECIALIST_RESULT_SCHEMA_VERSION,
     ExactCountClaim,
@@ -63,10 +70,14 @@ __all__ = [
     "SPECIALIST_RESULT_SCHEMA_VERSION",
     "TOOL_RESULT_SCHEMA_VERSION",
     "V1_AUTHORITY",
+    "V1_UNAVAILABLE_DECISION_CAPABILITIES",
     "AgentAuthority",
     "AgentAuthorityMode",
     "AgentCapability",
+    "DecisionEvidence",
+    "DecisionEvidenceKind",
     "ConfidenceLevel",
+    "DECISION_EVIDENCE_SCHEMA_VERSION",
     "ContractValidationError",
     "ExactCountClaim",
     "Evidence",
@@ -100,4 +111,5 @@ __all__ = [
     "VerifiedZeroClaim",
     "VerifierOutcome",
     "specialist_claim_from_dict",
+    "validate_decision_tool_result",
 ]
