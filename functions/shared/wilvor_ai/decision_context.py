@@ -1,8 +1,9 @@
-"""Read-only current decision context for one aircraft.
+"""Read-only current decision evidence for one aircraft.
 
 The only domain input is ``aircraft_id``. Tables, ``now_epoch``, and
 ``tool_call_id`` stay on ``DecisionContextCall`` and are not model arguments.
 Currentness is whatever ``build_aircraft_operational_context`` already decided.
+Narrow risk and recommendation tools project that same mapped chain.
 """
 
 from __future__ import annotations
@@ -53,7 +54,23 @@ from wilvor_operational import linking
 
 
 TOOL_NAME = "get_current_decision_context"
+RISK_TOOL_NAME = "get_current_risk_evidence"
+RECOMMENDATION_TOOL_NAME = "get_current_recommendation"
 _READ_FAILED = "The operational context read failed."
+_HAZARD_LINK_NOT_PRESENT = (
+    "The operational encounter hazard link is not present and was not repaired. "
+    "Use get_current_decision_context."
+)
+_GAP_ORDER = (
+    DecisionChainGap.AIRCRAFT_NOT_IN_CURRENT_SET,
+    DecisionChainGap.NO_CURRENT_PROJECTION,
+    DecisionChainGap.NO_CURRENT_ENCOUNTER,
+    DecisionChainGap.RISK_ABSENT,
+    DecisionChainGap.RECOMMENDATION_ABSENT,
+    DecisionChainGap.STALE_RECOMMENDATION_EXCLUDED,
+    DecisionChainGap.HAZARD_SOURCE_VERSION_MISMATCH,
+    DecisionChainGap.INCOMPLETE_CURRENT_CHAIN,
+)
 _FRESHNESS_NOT_REEVALUATED = (
     "Record identity is copied from the operational read; the decision tool "
     "does not re-evaluate freshness."
@@ -108,6 +125,75 @@ def get_current_decision_context(
 ) -> ToolResult:
     """Return the current decision-evidence chain for one aircraft."""
 
+    as_of_utc, failed, evidence, extra, cited = _load_mapped(call, aircraft_id)
+    if failed:
+        return _unavailable(call, as_of_utc)
+    return _emit(call, TOOL_NAME, evidence, extra, cited, as_of_utc)
+
+
+def get_current_risk_evidence(
+    call: DecisionContextCall,
+    aircraft_id: str,
+) -> ToolResult:
+    """Return stored current risk evidence for one aircraft."""
+
+    as_of_utc, failed, evidence, extra, cited = _load_mapped(call, aircraft_id)
+    if failed:
+        return _emit(
+            call,
+            RISK_TOOL_NAME,
+            _risk_unavailable_evidence(),
+            (),
+            (),
+            as_of_utc,
+            limitations=(_READ_FAILED,),
+        )
+    projected, notes, narrowed = _project_narrow(
+        evidence,
+        cited,
+        extra,
+        include_recommendations=False,
+    )
+    return _emit(call, RISK_TOOL_NAME, projected, notes, narrowed, as_of_utc)
+
+
+def get_current_recommendation(
+    call: DecisionContextCall,
+    aircraft_id: str,
+) -> ToolResult:
+    """Return the current recommendation set for one aircraft."""
+
+    as_of_utc, failed, evidence, extra, cited = _load_mapped(call, aircraft_id)
+    if failed:
+        return _emit(
+            call,
+            RECOMMENDATION_TOOL_NAME,
+            _recommendation_unavailable_evidence(),
+            (),
+            (),
+            as_of_utc,
+            limitations=(_READ_FAILED,),
+        )
+    projected, notes, narrowed = _project_narrow(
+        evidence,
+        cited,
+        extra,
+        include_recommendations=True,
+    )
+    return _emit(
+        call,
+        RECOMMENDATION_TOOL_NAME,
+        projected,
+        notes,
+        narrowed,
+        as_of_utc,
+    )
+
+
+def _load_mapped(
+    call: DecisionContextCall,
+    aircraft_id: str,
+) -> tuple[str, bool, DecisionEvidence | None, tuple[str, ...], tuple[Evidence, ...]]:
     if not isinstance(call, DecisionContextCall):
         raise TypeError("call must be DecisionContextCall")
     as_of_utc = context._epoch_to_utc_z(call.now_epoch)
@@ -118,8 +204,17 @@ def get_current_decision_context(
             now_epoch=call.now_epoch,
         )
     except Exception:
-        return _unavailable(call, as_of_utc)
-    return _map_context(call, aircraft_id, operational, as_of_utc)
+        return as_of_utc, True, None, (), ()
+    requested_id = _reportable_id(context._normalize_aircraft_id(aircraft_id))
+    if operational is None or not bool(getattr(operational, "aircraft_is_current", False)):
+        return as_of_utc, False, _not_found_evidence(requested_id), (), ()
+    evidence, extra, cited = _established_evidence(
+        operational,
+        requested_id,
+        call,
+        as_of_utc,
+    )
+    return as_of_utc, False, evidence, extra, cited
 
 
 def _unavailable(call: DecisionContextCall, as_of_utc: str) -> ToolResult:
@@ -147,37 +242,313 @@ def _unavailable(call: DecisionContextCall, as_of_utc: str) -> ToolResult:
     return result
 
 
-def _map_context(
+def _emit(
     call: DecisionContextCall,
-    aircraft_id: str,
-    operational: Any,
+    tool_name: str,
+    evidence: DecisionEvidence,
+    extra: tuple[str, ...],
+    cited: tuple[Evidence, ...],
     as_of_utc: str,
+    *,
+    limitations: tuple[str, ...] | None = None,
 ) -> ToolResult:
-    requested_id = _reportable_id(context._normalize_aircraft_id(aircraft_id))
-    if operational is None or not bool(getattr(operational, "aircraft_is_current", False)):
-        evidence = _not_found_evidence(requested_id)
-        extra_limitations: tuple[str, ...] = ()
-        cited: tuple[Evidence, ...] = ()
-    else:
-        evidence, extra_limitations, cited = _established_evidence(
-            operational,
-            requested_id,
-            call,
-            as_of_utc,
-        )
     result = ToolResult(
-        tool_name=TOOL_NAME,
+        tool_name=tool_name,
         tool_call_id=call.tool_call_id,
         status=expected_decision_status(evidence),
         temporal_scope=TemporalScope.CURRENT,
         data=evidence.to_dict(),
         evidence=cited,
         as_of_utc=as_of_utc,
-        limitations=_result_limitations(evidence, extra_limitations),
+        limitations=(
+            limitations
+            if limitations is not None
+            else _result_limitations(evidence, extra)
+        ),
         correlation_id=call.correlation_id,
     )
     validate_decision_tool_result(result)
     return result
+
+
+def _risk_unavailable_evidence() -> DecisionEvidence:
+    return DecisionEvidence(
+        kind=DecisionEvidenceKind.RISK_EVIDENCE,
+        evaluation_state=DecisionEvaluationState.SOURCE_UNAVAILABLE,
+        aircraft_in_current_set=False,
+        projection_state=DecisionReportedLinkState.MISSING,
+        chain_gaps=(),
+        limitation_codes=(),
+        capability=None,
+        risk=_absent_risk(),
+    )
+
+
+def _recommendation_unavailable_evidence() -> DecisionEvidence:
+    return DecisionEvidence(
+        kind=DecisionEvidenceKind.DECISION_CONTEXT,
+        evaluation_state=DecisionEvaluationState.SOURCE_UNAVAILABLE,
+        aircraft_in_current_set=False,
+        projection_state=DecisionReportedLinkState.MISSING,
+        chain_gaps=(),
+        limitation_codes=(),
+        capability=None,
+    )
+
+
+def _project_narrow(
+    evidence: DecisionEvidence,
+    cited: tuple[Evidence, ...],
+    extra: tuple[str, ...],
+    *,
+    include_recommendations: bool,
+) -> tuple[DecisionEvidence, tuple[str, ...], tuple[Evidence, ...]]:
+    notes = tuple(item for item in extra if item != _ALERT_LINEAGE_UNPROVEN)
+    if not evidence.aircraft_in_current_set:
+        risk = _absent_risk()
+        recommendations = _empty_recommendations() if include_recommendations else None
+        gaps = [DecisionChainGap.AIRCRAFT_NOT_IN_CURRENT_SET, DecisionChainGap.RISK_ABSENT]
+        if include_recommendations:
+            gaps.append(DecisionChainGap.RECOMMENDATION_ABSENT)
+        projected = _narrow_evidence(
+            evidence,
+            risk=risk,
+            recommendations=recommendations,
+            gaps=gaps,
+            include_recommendations=include_recommendations,
+        )
+        return projected, notes, ()
+
+    liftable = _single_liftable_encounter(evidence)
+    if liftable is not None:
+        risk = liftable.risk
+        if risk.presence is RiskPresence.ABSENT:
+            risk = _absent_risk(liftable.encounter_id)
+        recommendations = liftable.recommendations if include_recommendations else None
+        gaps = [
+            gap
+            for gap in evidence.chain_gaps
+            if gap
+            not in {
+                DecisionChainGap.HAZARD_SOURCE_VERSION_MISMATCH,
+                DecisionChainGap.STALE_RECOMMENDATION_EXCLUDED,
+                DecisionChainGap.RECOMMENDATION_ABSENT,
+            }
+        ]
+        if risk.presence is RiskPresence.ABSENT:
+            gaps.append(DecisionChainGap.RISK_ABSENT)
+        else:
+            gaps = [gap for gap in gaps if gap is not DecisionChainGap.RISK_ABSENT]
+        if include_recommendations and recommendations is not None and not recommendations.current:
+            gaps.append(DecisionChainGap.RECOMMENDATION_ABSENT)
+        projected = _narrow_evidence(
+            evidence,
+            risk=risk,
+            recommendations=recommendations,
+            gaps=gaps,
+            include_recommendations=include_recommendations,
+        )
+        return projected, notes, _narrow_citations(cited, projected)
+
+    if len(evidence.encounters) > 1:
+        projected = DecisionEvidence(
+            kind=(
+                DecisionEvidenceKind.RECOMMENDATION_EVIDENCE
+                if include_recommendations
+                else DecisionEvidenceKind.RISK_EVIDENCE
+            ),
+            evaluation_state=DecisionEvaluationState.ESTABLISHED,
+            aircraft_in_current_set=evidence.aircraft_in_current_set,
+            aircraft_id=evidence.aircraft_id,
+            projection_state=evidence.projection_state,
+            projection_id=evidence.projection_id,
+            aircraft_state_version=evidence.aircraft_state_version,
+            encounters=evidence.encounters,
+            alerts=(),
+            risk=None,
+            recommendations=None,
+            capability=None,
+            chain_gaps=evidence.chain_gaps,
+            limitation_codes=evidence.limitation_codes,
+        )
+        return projected, notes, _narrow_citations(cited, projected)
+
+    if evidence.projection_state is DecisionReportedLinkState.PRESENT and evidence.encounters:
+        risk = _absent_risk()
+        recommendations = _empty_recommendations() if include_recommendations else None
+        gaps = [
+            DecisionChainGap.INCOMPLETE_CURRENT_CHAIN,
+            DecisionChainGap.RISK_ABSENT,
+        ]
+        if include_recommendations:
+            gaps.append(DecisionChainGap.RECOMMENDATION_ABSENT)
+        notes = notes + (_unliftable_encounter_note(evidence.encounters[0]),)
+        projected = _narrow_evidence(
+            evidence,
+            risk=risk,
+            recommendations=recommendations,
+            gaps=gaps,
+            include_recommendations=include_recommendations,
+        )
+        return projected, notes, _narrow_citations(cited, projected)
+
+    risk = _absent_risk()
+    recommendations = _empty_recommendations() if include_recommendations else None
+    gaps = [
+        gap
+        for gap in evidence.chain_gaps
+        if gap
+        not in {
+            DecisionChainGap.HAZARD_SOURCE_VERSION_MISMATCH,
+            DecisionChainGap.STALE_RECOMMENDATION_EXCLUDED,
+            DecisionChainGap.RECOMMENDATION_ABSENT,
+            DecisionChainGap.RISK_ABSENT,
+        }
+    ]
+    gaps.append(DecisionChainGap.RISK_ABSENT)
+    if include_recommendations:
+        gaps.append(DecisionChainGap.RECOMMENDATION_ABSENT)
+    projected = _narrow_evidence(
+        evidence,
+        risk=risk,
+        recommendations=recommendations,
+        gaps=gaps,
+        include_recommendations=include_recommendations,
+    )
+    return projected, notes, _narrow_citations(cited, projected)
+
+
+def _narrow_evidence(
+    source: DecisionEvidence,
+    *,
+    risk: DecisionRiskEvidence,
+    recommendations: DecisionRecommendationSet | None,
+    gaps: list[DecisionChainGap],
+    include_recommendations: bool,
+) -> DecisionEvidence:
+    limitation_codes = [DecisionLimitationCode.NO_SNAPSHOT_LIMITATION]
+    if include_recommendations and (
+        recommendations is None or not recommendations.current
+    ):
+        limitation_codes.append(
+            DecisionLimitationCode.RECOMMENDATION_ABSENCE_LIMITATION
+        )
+    return DecisionEvidence(
+        kind=(
+            DecisionEvidenceKind.RECOMMENDATION_EVIDENCE
+            if include_recommendations
+            else DecisionEvidenceKind.RISK_EVIDENCE
+        ),
+        evaluation_state=DecisionEvaluationState.ESTABLISHED,
+        aircraft_in_current_set=source.aircraft_in_current_set,
+        aircraft_id=source.aircraft_id,
+        projection_state=source.projection_state,
+        projection_id=source.projection_id,
+        aircraft_state_version=source.aircraft_state_version,
+        encounters=(),
+        alerts=(),
+        risk=risk,
+        recommendations=recommendations,
+        capability=None,
+        chain_gaps=_ordered_gaps(gaps),
+        limitation_codes=tuple(limitation_codes),
+    )
+
+
+def _single_liftable_encounter(
+    evidence: DecisionEvidence,
+) -> DecisionEncounterLink | None:
+    if len(evidence.encounters) != 1:
+        return None
+    encounter = evidence.encounters[0]
+    if encounter.hazard.state is not DecisionReportedLinkState.PRESENT:
+        return None
+    return encounter
+
+
+def _unliftable_encounter_note(encounter: DecisionEncounterLink) -> str:
+    hazard = encounter.hazard
+    if hazard.state is not DecisionReportedLinkState.HYDRATION_VERSION_MISMATCH:
+        return _HAZARD_LINK_NOT_PRESENT
+    persisted = hazard.persisted_source_version or "unreported"
+    current = hazard.current_source_version or "unreported"
+    return (
+        "Operational hazard source versions "
+        f"{persisted} and {current} differ and were not repaired. "
+        "Narrow evidence cannot carry that link. "
+        "Use get_current_decision_context."
+    )
+
+
+def _absent_risk(encounter_id: str | None = None) -> DecisionRiskEvidence:
+    return DecisionRiskEvidence(
+        presence=RiskPresence.ABSENT,
+        encounter_id=encounter_id,
+    )
+
+
+def _empty_recommendations() -> DecisionRecommendationSet:
+    return DecisionRecommendationSet(
+        current=(),
+        absence_state=DecisionReportedLinkState.ABSENT_FROM_CURRENT_CANDIDATES,
+    )
+
+
+def _ordered_gaps(gaps: list[DecisionChainGap]) -> tuple[DecisionChainGap, ...]:
+    present = set(gaps)
+    return tuple(gap for gap in _GAP_ORDER if gap in present)
+
+
+def _narrow_citations(
+    cited: tuple[Evidence, ...],
+    evidence: DecisionEvidence,
+) -> tuple[Evidence, ...]:
+    risk_ids: set[str] = set()
+    encounter_ids: set[str] = set()
+    recommendation_ids: set[str] = set()
+    hazard_ids: set[str] = set()
+    if evidence.risk is not None:
+        if evidence.risk.presence is RiskPresence.PRESENT and evidence.risk.risk_id:
+            risk_ids.add(evidence.risk.risk_id)
+        if evidence.risk.encounter_id:
+            encounter_ids.add(evidence.risk.encounter_id)
+    if evidence.recommendations is not None:
+        recommendation_ids.update(
+            item.recommendation_id for item in evidence.recommendations.current
+        )
+    for encounter in evidence.encounters:
+        encounter_ids.add(encounter.encounter_id)
+        hazard_ids.add(encounter.hazard.hazard_id)
+        if encounter.risk.presence is RiskPresence.PRESENT and encounter.risk.risk_id:
+            risk_ids.add(encounter.risk.risk_id)
+        if encounter.risk.encounter_id:
+            encounter_ids.add(encounter.risk.encounter_id)
+        recommendation_ids.update(
+            item.recommendation_id for item in encounter.recommendations.current
+        )
+    kept: list[Evidence] = []
+    for item in cited:
+        record_id = item.source_records[0].record_id if item.source_records else None
+        if item.source == "get_aircraft_record" and evidence.aircraft_id:
+            kept.append(item)
+        elif (
+            item.source == "get_projection_record"
+            and evidence.projection_id
+            and record_id == evidence.projection_id
+        ):
+            kept.append(item)
+        elif item.source == "get_risk_record" and record_id in risk_ids:
+            kept.append(item)
+        elif item.source == "get_hazard_record" and record_id in hazard_ids:
+            kept.append(item)
+        elif item.source == "get_encounter_record" and record_id in encounter_ids:
+            kept.append(item)
+        elif (
+            item.source == "scan_recommendation_candidates"
+            and record_id in recommendation_ids
+        ):
+            kept.append(item)
+    return tuple(kept)
 
 
 def _not_found_evidence(aircraft_id: str | None) -> DecisionEvidence:

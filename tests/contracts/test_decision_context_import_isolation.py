@@ -83,6 +83,8 @@ markers = (
 )
 assert not any(any(marker in name for marker in markers) for name in loaded)
 assert hasattr(decision_context, "get_current_decision_context")
+assert hasattr(decision_context, "get_current_risk_evidence")
+assert hasattr(decision_context, "get_current_recommendation")
 assert not hasattr(decision_context, "DECISION_TOOLS")
 assert "wilvor_ai.live_ops" not in loaded
 assert "anthropic" not in loaded

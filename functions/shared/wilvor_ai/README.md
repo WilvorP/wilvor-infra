@@ -789,8 +789,16 @@ decision payload itself stays current.
 It includes `DecisionRouteCapability`: `validated_alternative_available`
 is false, and the unavailable set is route alternatives, route safety,
 runway evidence, and congestion. It does not calculate risk, choose a
-recommendation, or read airport assessments. Recommendation evidence
-and risk-only evidence tools are not implemented.
+recommendation, or read airport assessments.
+
+`get_current_risk_evidence` and `get_current_recommendation` are narrow
+views of that same mapped chain. They reuse `DecisionContextCall` and
+do not add a tool catalog or a model schema. Both omit route capability.
+`get_current_recommendation` returns the current set, including zero or
+many recommendations, and does not select a winner. One liftable
+encounter stays on the top-level risk or recommendation fields. More
+than one current encounter stays on the encounter tuple, with top-level
+risk and recommendations empty, and no encounter is selected.
 
 `DecisionEvidence.capability` is optional. When it is present, it is
 authoritative: `validated_alternative_available` is false, and the

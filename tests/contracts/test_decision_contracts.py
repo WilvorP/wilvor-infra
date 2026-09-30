@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from wilvor_ai.contracts import (
@@ -714,6 +716,91 @@ def test_recommendation_evidence_may_omit_route_capability():
     assert restored.capability is None
     assert restored.recommendations is not None
     assert len(restored.recommendations.current) == 1
+
+
+def _two_contract_encounters():
+    first = _encounter(
+        _stored_risk(risk_id="risk-1"),
+        _recommendations(_recommendation("rec-1")),
+    )
+    second_risk = replace(
+        _stored_risk(risk_id="risk-2", level=StoredRiskLevel.HIGH, score=80),
+        encounter_id="enc-2",
+    )
+    second = replace(
+        _encounter(
+            second_risk,
+            _recommendations(_recommendation("rec-2")),
+        ),
+        encounter_id="enc-2",
+    )
+    return first, second
+
+
+def test_risk_evidence_with_two_encounters_has_no_top_level_winner():
+    first, second = _two_contract_encounters()
+    evidence = _evidence(
+        kind=DecisionEvidenceKind.RISK_EVIDENCE,
+        encounters=(first, second),
+        risk=None,
+        recommendations=None,
+        capability=None,
+    )
+
+    restored = validate_decision_tool_result(_tool_result(evidence))
+
+    assert restored.kind is DecisionEvidenceKind.RISK_EVIDENCE
+    assert restored.risk is None
+    assert restored.recommendations is None
+    assert [item.risk.risk_id for item in restored.encounters] == ["risk-1", "risk-2"]
+    assert expected_decision_status(restored) is ToolResultStatus.SUCCESS
+
+
+def test_recommendation_evidence_with_two_encounters_preserves_both_sets():
+    first, second = _two_contract_encounters()
+    evidence = _evidence(
+        kind=DecisionEvidenceKind.RECOMMENDATION_EVIDENCE,
+        encounters=(first, second),
+        risk=None,
+        recommendations=None,
+        capability=None,
+    )
+
+    restored = validate_decision_tool_result(_tool_result(evidence))
+
+    assert restored.kind is DecisionEvidenceKind.RECOMMENDATION_EVIDENCE
+    assert restored.risk is None
+    assert restored.recommendations is None
+    assert [
+        item.recommendations.current[0].recommendation_id for item in restored.encounters
+    ] == ["rec-1", "rec-2"]
+    assert expected_decision_status(restored) is ToolResultStatus.SUCCESS
+
+
+def test_top_level_risk_plus_encounters_fails():
+    first, second = _two_contract_encounters()
+    assert "narrow_evidence_forbids_top_level_winner" in _errors(
+        lambda: _evidence(
+            kind=DecisionEvidenceKind.RISK_EVIDENCE,
+            encounters=(first, second),
+            risk=_stored_risk(),
+            recommendations=None,
+            capability=None,
+        )
+    )
+
+
+def test_top_level_recommendations_plus_encounters_fails():
+    first, second = _two_contract_encounters()
+    assert "narrow_evidence_forbids_top_level_winner" in _errors(
+        lambda: _evidence(
+            kind=DecisionEvidenceKind.RECOMMENDATION_EVIDENCE,
+            encounters=(first, second),
+            risk=None,
+            recommendations=_recommendations(_recommendation()),
+            capability=None,
+        )
+    )
 
 
 def test_present_route_capability_round_trips_and_stays_closed():

@@ -1139,6 +1139,8 @@ class DecisionEvidence:
     """Typed ``ToolResult.data`` for current decision evidence.
 
     Multiple current recommendations stay a set. No field selects a winner.
+    Narrow risk and recommendation evidence may carry several encounters.
+    When they do, top-level risk and recommendations stay empty.
     Missing risk has presence ABSENT and no level or score. A stored LOW risk
     has presence PRESENT. Route capability is optional. When present,
     ``validated_alternative_available`` is false.
@@ -1216,7 +1218,9 @@ class DecisionEvidence:
                 raise ContractValidationError("context_forbids_top_level_winner")
             return
         if self.encounters:
-            raise ContractValidationError("narrow_evidence_forbids_context_encounters")
+            if self.risk is not None or self.recommendations is not None:
+                raise ContractValidationError("narrow_evidence_forbids_top_level_winner")
+            return
         if self.kind is DecisionEvidenceKind.RISK_EVIDENCE:
             if self.risk is None or self.recommendations is not None:
                 raise ContractValidationError("risk_evidence_requires_risk_only")
