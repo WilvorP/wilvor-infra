@@ -490,7 +490,7 @@ def test_dt2_two_encounters_remain_a_context_with_capability_and_no_winner():
     assert _winner_keys(result.data) == set()
 
 
-def test_recommendation_reader_failure_uses_an_empty_chain():
+def test_recommendation_reader_failure_keeps_recommendation_kind():
     result, evidence = _checked(
         get_current_recommendation,
         _tables(aircraft_table=RaisingTable()),
@@ -498,11 +498,23 @@ def test_recommendation_reader_failure_uses_an_empty_chain():
 
     assert result.status is ToolResultStatus.UNAVAILABLE
     assert result.tool_name == RECOMMENDATION_TOOL_NAME
-    assert evidence.kind is DecisionEvidenceKind.DECISION_CONTEXT
+    assert result.temporal_scope is TemporalScope.CURRENT
+    assert result.evidence == ()
+    assert result.limitations == ("The operational context read failed.",)
+    assert evidence.kind is DecisionEvidenceKind.RECOMMENDATION_EVIDENCE
     assert evidence.evaluation_state is DecisionEvaluationState.SOURCE_UNAVAILABLE
-    assert evidence.recommendations is None
-    assert evidence.risk is None
+    assert evidence.encounters == ()
     assert evidence.capability is None
+    assert evidence.risk is not None
+    assert evidence.risk.presence is RiskPresence.ABSENT
+    assert evidence.risk.risk_level is None
+    assert evidence.recommendations is None
+    assert DecisionChainGap.RECOMMENDATION_ABSENT not in evidence.chain_gaps
+    assert (
+        DecisionLimitationCode.RECOMMENDATION_ABSENCE_LIMITATION
+        not in evidence.limitation_codes
+    )
+    assert RecommendationActionType.MONITOR.value not in str(result.data)
 
 
 def test_narrow_tools_do_not_accept_model_time():

@@ -286,13 +286,14 @@ def _risk_unavailable_evidence() -> DecisionEvidence:
 
 def _recommendation_unavailable_evidence() -> DecisionEvidence:
     return DecisionEvidence(
-        kind=DecisionEvidenceKind.DECISION_CONTEXT,
+        kind=DecisionEvidenceKind.RECOMMENDATION_EVIDENCE,
         evaluation_state=DecisionEvaluationState.SOURCE_UNAVAILABLE,
         aircraft_in_current_set=False,
         projection_state=DecisionReportedLinkState.MISSING,
         chain_gaps=(),
         limitation_codes=(),
         capability=None,
+        risk=_absent_risk(),
     )
 
 

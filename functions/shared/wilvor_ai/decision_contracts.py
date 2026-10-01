@@ -1141,6 +1141,8 @@ class DecisionEvidence:
     Multiple current recommendations stay a set. No field selects a winner.
     Narrow risk and recommendation evidence may carry several encounters.
     When they do, top-level risk and recommendations stay empty.
+    When evaluation is not established, narrow evidence keeps its kind with
+    an ABSENT risk and no recommendation set. That is not proven absence.
     Missing risk has presence ABSENT and no level or score. A stored LOW risk
     has presence PRESENT. Route capability is optional. When present,
     ``validated_alternative_available`` is false.
@@ -1224,6 +1226,13 @@ class DecisionEvidence:
         if self.kind is DecisionEvidenceKind.RISK_EVIDENCE:
             if self.risk is None or self.recommendations is not None:
                 raise ContractValidationError("risk_evidence_requires_risk_only")
+            return
+        if (
+            self.evaluation_state is not DecisionEvaluationState.ESTABLISHED
+            and self.recommendations is None
+            and self.risk is not None
+            and self.risk.presence is RiskPresence.ABSENT
+        ):
             return
         if self.recommendations is None or self.risk is None:
             raise ContractValidationError("recommendation_evidence_requires_risk_and_set")

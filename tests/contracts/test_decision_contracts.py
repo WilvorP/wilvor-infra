@@ -790,6 +790,74 @@ def test_top_level_risk_plus_encounters_fails():
     )
 
 
+def test_unestablished_recommendation_evidence_is_absent_risk_without_a_set():
+    evidence = DecisionEvidence(
+        kind=DecisionEvidenceKind.RECOMMENDATION_EVIDENCE,
+        evaluation_state=DecisionEvaluationState.SOURCE_UNAVAILABLE,
+        aircraft_in_current_set=False,
+        projection_state=DecisionReportedLinkState.MISSING,
+        chain_gaps=(),
+        limitation_codes=(),
+        risk=DecisionRiskEvidence(presence=RiskPresence.ABSENT),
+        recommendations=None,
+        encounters=(),
+        capability=None,
+    )
+
+    restored = validate_decision_tool_result(
+        _tool_result(evidence, ("The operational context read failed.",))
+    )
+
+    assert restored.kind is DecisionEvidenceKind.RECOMMENDATION_EVIDENCE
+    assert expected_decision_status(restored) is ToolResultStatus.UNAVAILABLE
+    assert restored.risk is not None
+    assert restored.risk.presence is RiskPresence.ABSENT
+    assert restored.recommendations is None
+    assert DecisionChainGap.RECOMMENDATION_ABSENT not in restored.chain_gaps
+    assert (
+        DecisionLimitationCode.RECOMMENDATION_ABSENCE_LIMITATION
+        not in restored.limitation_codes
+    )
+    assert RecommendationActionType.MONITOR.value not in str(restored.to_dict())
+
+
+def test_unestablished_risk_evidence_remains_valid():
+    evidence = DecisionEvidence(
+        kind=DecisionEvidenceKind.RISK_EVIDENCE,
+        evaluation_state=DecisionEvaluationState.SOURCE_UNAVAILABLE,
+        aircraft_in_current_set=False,
+        projection_state=DecisionReportedLinkState.MISSING,
+        chain_gaps=(),
+        limitation_codes=(),
+        risk=DecisionRiskEvidence(presence=RiskPresence.ABSENT),
+        recommendations=None,
+        encounters=(),
+        capability=None,
+    )
+
+    restored = validate_decision_tool_result(
+        _tool_result(evidence, ("The operational context read failed.",))
+    )
+
+    assert restored.kind is DecisionEvidenceKind.RISK_EVIDENCE
+    assert expected_decision_status(restored) is ToolResultStatus.UNAVAILABLE
+    assert restored.risk is not None
+    assert restored.risk.presence is RiskPresence.ABSENT
+    assert restored.recommendations is None
+
+
+def test_established_recommendation_evidence_still_requires_risk_and_set():
+    assert "recommendation_evidence_requires_risk_and_set" in _errors(
+        lambda: _evidence(
+            kind=DecisionEvidenceKind.RECOMMENDATION_EVIDENCE,
+            encounters=(),
+            risk=_stored_risk(),
+            recommendations=None,
+            capability=None,
+        )
+    )
+
+
 def test_top_level_recommendations_plus_encounters_fails():
     first, second = _two_contract_encounters()
     assert "narrow_evidence_forbids_top_level_winner" in _errors(
