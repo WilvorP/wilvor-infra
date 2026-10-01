@@ -707,6 +707,29 @@ def scan_alert_candidates(
     return scan_all(table, **kwargs)
 
 
+def get_recommendation_record(table, recommendation_id, *, consistent_read=True):
+    return access.get_item(
+        table,
+        {"recommendation_id": recommendation_id},
+        consistent_read=consistent_read,
+    )
+
+
+def query_airport_assessments_for_evaluation(
+    table,
+    evaluation_id,
+    *,
+    consistent_read=True,
+    query_all=access.query_all,
+    key=Key,
+):
+    return query_all(
+        table,
+        KeyConditionExpression=key("evaluation_id").eq(evaluation_id),
+        ConsistentRead=consistent_read,
+    )
+
+
 def query_latest_for_partition(
     table,
     index_name,

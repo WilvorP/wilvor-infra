@@ -51,6 +51,7 @@ def test_temporal_scope_contract_is_closed():
         "CURRENT",
         "HISTORICAL",
         "HYBRID",
+        "PERSISTED",
     }
 
 
@@ -145,6 +146,22 @@ def test_current_and_historical_tool_results_remain_independently_scoped(
 def test_hybrid_tool_result_requires_both_evidence_scopes(examples):
     payload = examples.valid_tool_result("genuinely_hybrid")
     payload["evidence"] = [payload["evidence"][0]]
+
+    assert_validation_error(
+        "hybrid_requires_current_and_historical_evidence",
+        lambda: ToolResult.from_dict(payload),
+    )
+
+
+def test_hybrid_rejects_persisted_evidence_mixed_with_current_and_historical(
+    examples,
+):
+    payload = examples.valid_tool_result("genuinely_hybrid")
+    persisted = {
+        **payload["evidence"][0],
+        "temporal_scope": "PERSISTED",
+    }
+    payload["evidence"] = [*payload["evidence"], persisted]
 
     assert_validation_error(
         "hybrid_requires_current_and_historical_evidence",

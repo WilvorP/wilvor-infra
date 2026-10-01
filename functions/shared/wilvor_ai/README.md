@@ -800,6 +800,12 @@ encounter stays on the top-level risk or recommendation fields. More
 than one current encounter stays on the encounter tuple, with top-level
 risk and recommendations empty, and no encounter is selected.
 
+`get_persisted_airport_candidate_evidence` reads airport-assessment rows
+already stored for the evaluation id on one recommendation. It is not a
+current airport selector, a route planner, or a diversion planner. It does
+not rescore or rerank. Route safety, runway evidence, and congestion stay
+unavailable. The persisted evidence is not asserted to be current.
+
 `DecisionEvidence.capability` is optional. When it is present, it is
 authoritative: `validated_alternative_available` is false, and the
 unavailable set is route alternatives, route safety, runway evidence,

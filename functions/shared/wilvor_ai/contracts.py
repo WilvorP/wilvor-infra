@@ -48,6 +48,7 @@ class TemporalScope(str, Enum):
     CURRENT = "CURRENT"
     HISTORICAL = "HISTORICAL"
     HYBRID = "HYBRID"
+    PERSISTED = "PERSISTED"
 
 
 class ConfidenceLevel(str, Enum):
@@ -809,10 +810,10 @@ def _validate_evidence_scopes(
     scopes = {item.temporal_scope for item in evidence}
 
     if temporal_scope is TemporalScope.HYBRID:
-        if not {
+        if scopes != {
             TemporalScope.CURRENT,
             TemporalScope.HISTORICAL,
-        }.issubset(scopes):
+        }:
             return ["hybrid_requires_current_and_historical_evidence"]
 
         return []
