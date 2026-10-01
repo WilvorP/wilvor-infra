@@ -107,6 +107,15 @@ def _recommendation(**overrides):
     return item
 
 
+_SCORE_FIELDS = (
+    "rank",
+    "distance_score",
+    "weather_score",
+    "taf_score",
+    "total_airport_score",
+)
+
+
 def _row(**overrides):
     item = {
         "evaluation_id": "eval-1",
@@ -142,6 +151,14 @@ def _row(**overrides):
         "assessment_ruleset_version": RULESET,
         "schema_version": "wilvor.airport_assessment.v1",
     }
+    item.update(overrides)
+    return item
+
+
+def _waiting_row(**overrides):
+    item = _row(assessment_status="WAITING_FOR_WEATHER")
+    for name in _SCORE_FIELDS:
+        item.pop(name, None)
     item.update(overrides)
     return item
 
@@ -283,16 +300,40 @@ def test_verified_zero_sentence_with_later_rows_is_unknown():
 
 
 def test_waiting_rows_that_remain_are_success():
-    row = _row(assessment_status="WAITING_FOR_WEATHER", rank=None)
-    del row["rank"]
-    del row["total_airport_score"]
     recommendation = _recommendation(no_suitable_candidate_reason=NO_COMPLETE_ASSESSMENT)
-    result, payload, _recommendations, _assessments = _run(recommendation, [row])
+    result, payload, _recommendations, _assessments = _run(recommendation, [_waiting_row()])
 
+    candidate = payload.candidates[0]
     assert result.status is ToolResultStatus.SUCCESS
-    assert payload.candidates[0].assessment_status == "WAITING_FOR_WEATHER"
-    assert payload.candidates[0].rank is None
+    assert candidate.assessment_status == "WAITING_FOR_WEATHER"
+    assert candidate.rank is None
+    assert candidate.distance_score is None
+    assert candidate.weather_score is None
+    assert candidate.taf_score is None
+    assert candidate.total_airport_score is None
     assert MEMBERSHIP_LIMITATION in result.limitations
+
+
+@pytest.mark.parametrize(
+    ("field_name", "value"),
+    [
+        ("rank", 1),
+        ("distance_score", 70),
+        ("weather_score", 60),
+        ("taf_score", 50),
+        ("total_airport_score", 80),
+    ],
+)
+def test_waiting_row_with_score_or_rank_is_unknown(field_name, value):
+    recommendation = _recommendation(no_suitable_candidate_reason=NO_COMPLETE_ASSESSMENT)
+    result, payload, _recommendations, _assessments = _run(
+        recommendation,
+        [_waiting_row(**{field_name: value})],
+    )
+
+    assert result.status is ToolResultStatus.UNKNOWN
+    assert payload.candidates == ()
+    assert [item.source for item in result.evidence] == ["get_recommendation_record"]
 
 
 def test_waiting_only_sentence_with_empty_query_is_partial():
@@ -320,8 +361,10 @@ def test_one_complete_candidate_keeps_rank_and_scores():
     assert result.status is ToolResultStatus.SUCCESS
     assert result.as_of_utc == CAND_UTC
     assert candidate.rank == 1
-    assert candidate.total_airport_score == 80
     assert candidate.distance_score == 70
+    assert candidate.weather_score == 60
+    assert candidate.taf_score == 50
+    assert candidate.total_airport_score == 80
     assert candidate.route_safety_status == "UNAVAILABLE"
     assert candidate.runway_evidence_status == "UNAVAILABLE"
     assert candidate.congestion_evidence_status == "UNAVAILABLE"
@@ -347,12 +390,10 @@ def test_query_order_does_not_rerank():
 
 
 def test_unreferenced_waiting_row_is_kept():
-    waiting = _row(
+    waiting = _waiting_row(
         airport_id="KORD",
         airport_assessment_id="aa-wait",
-        assessment_status="WAITING_FOR_WEATHER",
     )
-    del waiting["rank"]
     recommendation = _recommendation(
         candidate_airport_summaries=[
             {
@@ -650,6 +691,27 @@ def test_duplicate_identity_is_unknown(field_name):
     result, _payload, _recommendations, _assessments = _run(_recommendation(), [_row(), other])
 
     assert result.status is ToolResultStatus.UNKNOWN
+
+
+@pytest.mark.parametrize("field_name", _SCORE_FIELDS)
+def test_complete_missing_score_or_rank_is_unknown(field_name):
+    row = _row()
+    del row[field_name]
+    result, payload, _recommendations, _assessments = _run(_recommendation(), [row])
+
+    assert result.status is ToolResultStatus.UNKNOWN
+    assert payload.candidates == ()
+
+
+@pytest.mark.parametrize("rank", [0, -1])
+def test_complete_non_positive_rank_is_unknown(rank):
+    result, payload, _recommendations, _assessments = _run(
+        _recommendation(),
+        [_row(rank=rank)],
+    )
+
+    assert result.status is ToolResultStatus.UNKNOWN
+    assert payload.candidates == ()
 
 
 def test_output_has_no_route_or_diversion_fields():

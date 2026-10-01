@@ -373,6 +373,38 @@ def _duplicate_identity(rows: list[dict]) -> bool:
     )
 
 
+_SCORE_FIELDS = (
+    "rank",
+    "distance_score",
+    "weather_score",
+    "taf_score",
+    "total_airport_score",
+)
+
+
+def _score_shape_ok(row: dict) -> bool:
+    """WAITING rows stop before scoring; COMPLETE rows are stored already ranked."""
+
+    stored = {name: row[name] if name in row else None for name in _SCORE_FIELDS}
+    status = row.get("assessment_status")
+    if status == WAITING_FOR_WEATHER:
+        return all(value is None for value in stored.values())
+    if status != COMPLETE or any(value is None for value in stored.values()):
+        return False
+    if not _positive_integer(stored["rank"]):
+        return False
+    return all(
+        _decimal_ok(stored[name]) for name in _SCORE_FIELDS if name != "rank"
+    )
+
+
+def _positive_integer(value: Any) -> bool:
+    if not _decimal_ok(value):
+        return False
+    number = _json_number(value, "rank")
+    return type(number) is int and number > 0
+
+
 def _decimal_ok(value: Any) -> bool:
     try:
         return numbers_equal(value, value)
@@ -423,10 +455,7 @@ def _inspect_row(row, recommendation, evaluation_id, recommendation_at) -> dict 
         return None
     if not _decimal_ok(row.get("distance_nm")) or not _decimal_ok(row.get("eta_minutes")):
         return None
-    for name in ("rank", "total_airport_score", "distance_score", "weather_score", "taf_score"):
-        if name in row and row[name] is not None and not _decimal_ok(row[name]):
-            return None
-    if row.get("rank") is not None and type(_json_number(row["rank"], "rank")) is not int:
+    if not _score_shape_ok(row):
         return None
     if row.get("weather_risk_level") is not None and not isinstance(row.get("weather_risk_level"), str):
         return None
