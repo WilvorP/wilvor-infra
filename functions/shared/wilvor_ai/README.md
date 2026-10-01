@@ -834,6 +834,17 @@ The model receives only the separate projection in
 `wilvor_ai.decision_tool_projection`. DT5 does not calculate a new
 aviation decision.
 
+Decision Tools are closed for this phase. They provide current
+deterministic decision context, current risk evidence, current
+recommendation evidence, persisted airport-evaluation evidence, a closed
+model-facing adapter, and a safe model projection. They are read-only.
+They do not recalculate risk, recalculate a recommendation, generate a
+route, select a diversion, or select a winner. Currentness remains owned
+by `wilvor_operational`. Persisted airport evidence is not asserted to be
+current. The raw `ToolResult` remains the verifier and audit authority.
+The adapter fails closed when request and result identity disagree. This
+phase does not complete a Decision Expert or a Master Agent.
+
 ## Tests
 
 Run the offline contract suite from the repository root, including Phase 0

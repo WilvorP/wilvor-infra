@@ -161,6 +161,11 @@ def get_persisted_airport_candidate_evidence(
     reason = recommendation.get("no_suitable_candidate_reason")
     if reason == EMPTY_ASSESSMENTS and rows:
         return _unknown(call, recommendation, recommendation_id, identity.evaluation_id)
+    if reason == NO_COMPLETE_ASSESSMENT and any(
+        isinstance(row, dict) and row.get("assessment_status") == COMPLETE
+        for row in rows
+    ):
+        return _unknown(call, recommendation, recommendation_id, identity.evaluation_id)
     if not rows:
         return _empty_evaluation_result(
             call,
