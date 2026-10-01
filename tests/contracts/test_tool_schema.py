@@ -98,6 +98,14 @@ def test_list_identifier_conditional_requirement_is_documented_schema_gap():
     assert "hazard_id" in optional
 
 
+def test_decision_runtime_names_are_forbidden_schema_fields():
+    assert {
+        "tables",
+        "now_epoch",
+        "query_timestamp_utc",
+    } <= FORBIDDEN_TOOL_SCHEMA_FIELD_NAMES
+
+
 def test_schema_builder_fails_closed_on_trusted_catalog_field():
     spec = HistoricalAnalyticsToolSpec(
         name="summarize_historical_encounters",

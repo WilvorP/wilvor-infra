@@ -822,6 +822,18 @@ recommendation stays `ABSENT_FROM_CURRENT_CANDIDATES` and does not
 become MONITOR. Multiple current recommendations are a set with no
 selected winner. Alert OR-lineage is reported and is not resolved.
 
+DT5 exposes those four deterministic operations through a closed catalog
+in `wilvor_ai.decision_tools`. The model may supply only `aircraft_id` or
+`recommendation_id`. Tables, `now_epoch`, `query_timestamp_utc`,
+`tool_call_id`, and `correlation_id` stay on `DecisionToolsRuntime` and
+the trusted `invoke` argument. The adapter checks the request, then the
+returned tool name, invocation id, correlation id, temporal scope,
+evidence kind, and domain identity. `CURRENT` and `PERSISTED` stay
+distinct. The raw `ToolResult` remains the verifier and audit record.
+The model receives only the separate projection in
+`wilvor_ai.decision_tool_projection`. DT5 does not calculate a new
+aviation decision.
+
 ## Tests
 
 Run the offline contract suite from the repository root, including Phase 0

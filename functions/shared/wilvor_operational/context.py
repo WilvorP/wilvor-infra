@@ -29,8 +29,17 @@ def _text(value) -> str:
     return str(value).strip()
 
 
-def _normalize_aircraft_id(aircraft_id) -> str:
+def normalize_aircraft_id(aircraft_id) -> str:
+    """Strip surrounding whitespace and lowercase an aircraft id.
+
+    This is the operational context identity used by current aircraft reads.
+    """
+
     return _text(aircraft_id).lower()
+
+
+def _normalize_aircraft_id(aircraft_id) -> str:
+    return normalize_aircraft_id(aircraft_id)
 
 
 def _normalize_airport_id(airport_id) -> str:
