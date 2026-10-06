@@ -848,6 +848,18 @@ def test_overlong_factual_answer_discards_every_sentence() -> None:
     assert len(short.answer) <= SPECIALIST_ANSWER_MAX_LENGTH
 
 
+def test_renderer_does_not_choose_between_conflicting_candidate_counts() -> None:
+    rendered = _render(
+        (
+            _candidate_status(1, None, ref="de-2"),
+            _candidate_status(2, None, ref="de-3"),
+        )
+    )
+    assert rendered.outcome is DecisionRenderOutcome.FACTUAL
+    assert "contains 1 stored candidate airport assessment." in rendered.answer
+    assert "contains 2 stored candidate airport assessments." in rendered.answer
+
+
 def test_fail_closed_answers_are_structurally_exact() -> None:
     with pytest.raises(ContractValidationError):
         DecisionRenderResult(

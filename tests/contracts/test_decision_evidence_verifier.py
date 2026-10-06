@@ -1157,6 +1157,87 @@ def test_one_false_claim_discards_the_valid_claim() -> None:
     _assert_failed(result, DecisionClaimRejectionCode.CLAIM_VALUE_MISMATCH.value)
 
 
+def test_persisted_candidate_status_claims_agree_per_recommendation() -> None:
+    one = _persisted_payload()
+    two = _persisted_payload(
+        candidates=(
+            _candidate(),
+            _candidate(airport_id="KSEA", assessment_id="aa-2"),
+        )
+    )
+    count_conflict = _verify(
+        (
+            PersistedCandidateStatusClaim("de-2", TemporalScope.PERSISTED, "rec-1", 1, None),
+            PersistedCandidateStatusClaim("de-3", TemporalScope.PERSISTED, "rec-1", 2, None),
+        ),
+        (
+            _bind("de-2", _persisted_result(one, "call-1")),
+            _bind("de-3", _persisted_result(two, "call-2")),
+        ),
+    )
+    _assert_failed(count_conflict, DecisionClaimRejectionCode.CONTRADICTORY_CLAIMS.value)
+    assert count_conflict.verified_claims == ()
+
+    empty = _persisted_payload(
+        candidates=(),
+        no_suitable_candidate_reason=EMPTY_ASSESSMENTS_REASON,
+        recommendation_observed_empty_at_utc=AS_OF,
+    )
+    incomplete = _persisted_payload(
+        candidates=(),
+        no_suitable_candidate_reason=NO_COMPLETE_ASSESSMENT_REASON,
+    )
+    reason_conflict = _verify(
+        (
+            PersistedCandidateStatusClaim(
+                "de-2",
+                TemporalScope.PERSISTED,
+                "rec-1",
+                0,
+                PersistedCandidateCollectionReason.EMPTY_ASSESSMENTS,
+            ),
+            PersistedCandidateStatusClaim(
+                "de-3",
+                TemporalScope.PERSISTED,
+                "rec-1",
+                0,
+                PersistedCandidateCollectionReason.NO_COMPLETE_ASSESSMENT,
+            ),
+        ),
+        (
+            _bind("de-2", _persisted_result(empty, "call-1")),
+            _bind("de-3", _persisted_result(incomplete, "call-2")),
+        ),
+    )
+    _assert_failed(reason_conflict, DecisionClaimRejectionCode.CONTRADICTORY_CLAIMS.value)
+
+    equivalent = _verify(
+        (
+            PersistedCandidateStatusClaim("de-2", TemporalScope.PERSISTED, "rec-1", 1, None),
+            PersistedCandidateStatusClaim("de-3", TemporalScope.PERSISTED, "rec-1", 1, None),
+        ),
+        (
+            _bind("de-2", _persisted_result(one, "call-1")),
+            _bind("de-3", _persisted_result(one, "call-2")),
+        ),
+    )
+    assert equivalent.outcome is VerifierOutcome.PASSED
+    assert len(equivalent.verified_claims) == 2
+
+    other = _persisted_payload(recommendation_id="rec-2", candidates=two.candidates)
+    independent = _verify(
+        (
+            PersistedCandidateStatusClaim("de-2", TemporalScope.PERSISTED, "rec-1", 1, None),
+            PersistedCandidateStatusClaim("de-3", TemporalScope.PERSISTED, "rec-2", 2, None),
+        ),
+        (
+            _bind("de-2", _persisted_result(one, "call-1")),
+            _bind("de-3", _persisted_result(other, "call-2")),
+        ),
+    )
+    assert independent.outcome is VerifierOutcome.PASSED
+
+
 def test_duplicate_and_contradictory_claims_fail_atomically() -> None:
     binding = _bind("de-1", _current_result(_context(), CONTEXT_TOOL))
     duplicate = _verify((_identity(), _identity()), (binding,))

@@ -1028,6 +1028,15 @@ def _contradictory_claims(claims: tuple[DecisionClaim, ...]) -> bool:
     if any(len(signatures) > 1 for signatures in candidates.values()):
         return True
 
+    statuses: dict[str, set[tuple[int, Any]]] = {}
+    for item in claims:
+        if isinstance(item, PersistedCandidateStatusClaim):
+            statuses.setdefault(item.recommendation_id, set()).add(
+                (item.candidate_count, item.collection_reason)
+            )
+    if any(len(signatures) > 1 for signatures in statuses.values()):
+        return True
+
     links: dict[tuple[str, str], set[str]] = {}
     for item in claims:
         if isinstance(item, CurrentPersistedLinkClaim):
