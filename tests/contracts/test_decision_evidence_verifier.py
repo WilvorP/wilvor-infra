@@ -1482,6 +1482,191 @@ def test_persisted_bindings_for_one_recommendation_must_agree() -> None:
     _assert_failed(result, DecisionClaimRejectionCode.PERSISTED_EVIDENCE_CONTRADICTION.value)
 
 
+def _zero_encounter_context() -> DecisionEvidence:
+    return _context(
+        encounters=(),
+        chain_gaps=(DecisionChainGap.NO_CURRENT_ENCOUNTER,),
+    )
+
+
+def _two_encounter_context() -> DecisionEvidence:
+    return _context(
+        encounters=(
+            _encounter(),
+            _encounter(
+                "enc-2",
+                _present_risk(
+                    risk_id="risk-2",
+                    encounter_id="enc-2",
+                    level=StoredRiskLevel.LOW,
+                    score=12,
+                ),
+                _recommendations(_recommendation("rec-2")),
+                "haz-2",
+            ),
+        )
+    )
+
+
+def test_zero_encounter_context_rejects_lifted_present_risk() -> None:
+    context = _bind("de-1", _current_result(_zero_encounter_context(), CONTEXT_TOOL, "call-c"))
+    named = _bind("de-2", _current_result(_risk_evidence(), RISK_TOOL, "call-r"))
+    unnamed = _bind(
+        "de-2",
+        _current_result(
+            _risk_evidence(risk=_present_risk(encounter_id=None)),
+            RISK_TOOL,
+            "call-r",
+        ),
+    )
+    named_result = _verify((_identity(),), (context, named))
+    unnamed_result = _verify((_identity(),), (context, unnamed))
+    _assert_failed(named_result, DecisionClaimRejectionCode.CURRENT_CONTEXT_CONTRADICTION.value)
+    _assert_failed(
+        unnamed_result,
+        DecisionClaimRejectionCode.CURRENT_CONTEXT_CONTRADICTION.value,
+    )
+
+
+def test_zero_encounter_context_allows_only_unnamed_absent_placeholder() -> None:
+    context = _bind("de-1", _current_result(_zero_encounter_context(), CONTEXT_TOOL, "call-c"))
+    absent = _risk_evidence(
+        risk=_absent_risk(None),
+        chain_gaps=(DecisionChainGap.RISK_ABSENT,),
+    )
+    named_absent = _risk_evidence(
+        risk=_absent_risk("enc-1"),
+        chain_gaps=(DecisionChainGap.RISK_ABSENT,),
+    )
+    allowed = _verify(
+        (_identity(),),
+        (context, _bind("de-2", _current_result(absent, RISK_TOOL, "call-r"))),
+    )
+    assert allowed.outcome is VerifierOutcome.PASSED
+    rejected = _verify(
+        (_identity(),),
+        (context, _bind("de-2", _current_result(named_absent, RISK_TOOL, "call-r"))),
+    )
+    _assert_failed(rejected, DecisionClaimRejectionCode.CURRENT_CONTEXT_CONTRADICTION.value)
+
+
+def test_multi_encounter_context_rejects_null_and_named_lifts() -> None:
+    context = _bind("de-1", _current_result(_two_encounter_context(), CONTEXT_TOOL, "call-c"))
+    null_lift = _bind(
+        "de-2",
+        _current_result(
+            _risk_evidence(risk=_present_risk(encounter_id=None)),
+            RISK_TOOL,
+            "call-r",
+        ),
+    )
+    named_lift = _bind("de-2", _current_result(_risk_evidence(), RISK_TOOL, "call-r"))
+    null_result = _verify((_identity(),), (context, null_lift))
+    named_result = _verify((_identity(),), (context, named_lift))
+    _assert_failed(null_result, DecisionClaimRejectionCode.CURRENT_CONTEXT_CONTRADICTION.value)
+    _assert_failed(named_result, DecisionClaimRejectionCode.CURRENT_CONTEXT_CONTRADICTION.value)
+
+
+def test_single_context_compares_null_lifted_risk_without_selecting_an_encounter() -> None:
+    matching = _verify(
+        (_identity(), _risk_present("de-2", encounter_id=None)),
+        (
+            _bind("de-1", _current_result(_context(), CONTEXT_TOOL, "call-c")),
+            _bind(
+                "de-2",
+                _current_result(
+                    _risk_evidence(risk=_present_risk(encounter_id=None)),
+                    RISK_TOOL,
+                    "call-r",
+                ),
+            ),
+        ),
+    )
+    assert matching.outcome is VerifierOutcome.PASSED
+    differing = _verify(
+        (_identity(),),
+        (
+            _bind("de-1", _current_result(_context(), CONTEXT_TOOL, "call-c")),
+            _bind(
+                "de-2",
+                _current_result(
+                    _risk_evidence(
+                        risk=_present_risk(
+                            encounter_id=None,
+                            level=StoredRiskLevel.MEDIUM,
+                            score=40,
+                        )
+                    ),
+                    RISK_TOOL,
+                    "call-r",
+                ),
+            ),
+        ),
+    )
+    _assert_failed(differing, DecisionClaimRejectionCode.CURRENT_RISK_CONTRADICTION.value)
+
+
+def test_context_encounter_sets_must_agree_including_empty() -> None:
+    result = _verify(
+        (_identity(),),
+        (
+            _bind("de-1", _current_result(_zero_encounter_context(), CONTEXT_TOOL, "call-1")),
+            _bind("de-2", _current_result(_context(), CONTEXT_TOOL, "call-2")),
+        ),
+    )
+    _assert_failed(result, DecisionClaimRejectionCode.CURRENT_CONTEXT_CONTRADICTION.value)
+
+
+def test_retained_narrow_encounters_must_match_full_context() -> None:
+    narrow = _risk_evidence(
+        encounters=(
+            _encounter(),
+            _encounter(
+                "enc-3",
+                _present_risk(risk_id="risk-3", encounter_id="enc-3"),
+                _recommendations(_recommendation("rec-2")),
+                "haz-3",
+            ),
+        ),
+        risk=None,
+    )
+    result = _verify(
+        (_identity(),),
+        (
+            _bind("de-1", _current_result(_two_encounter_context(), CONTEXT_TOOL, "call-c")),
+            _bind("de-2", _current_result(narrow, RISK_TOOL, "call-r")),
+        ),
+    )
+    _assert_failed(result, DecisionClaimRejectionCode.CURRENT_CONTEXT_CONTRADICTION.value)
+
+
+def test_lifted_recommendation_cannot_outrun_context_encounter_cardinality() -> None:
+    lifted = _bind(
+        "de-2",
+        _current_result(_recommendation_evidence(), RECOMMENDATION_TOOL, "call-m"),
+    )
+    empty = _verify(
+        (_identity(),),
+        (
+            _bind("de-1", _current_result(_zero_encounter_context(), CONTEXT_TOOL, "call-c")),
+            lifted,
+        ),
+    )
+    _assert_failed(empty, DecisionClaimRejectionCode.CURRENT_CONTEXT_CONTRADICTION.value)
+    many = _verify(
+        (_identity(),),
+        (
+            _bind("de-1", _current_result(_two_encounter_context(), CONTEXT_TOOL, "call-c")),
+            lifted,
+        ),
+    )
+    _assert_failed(
+        many,
+        DecisionClaimRejectionCode.CURRENT_CONTEXT_CONTRADICTION.value,
+        DecisionClaimRejectionCode.CURRENT_RECOMMENDATION_CONTRADICTION.value,
+    )
+
+
 def test_result_round_trip_rejects_extra_fields_and_bad_invariants() -> None:
     passed = _verify(
         (_identity(),),
@@ -1544,6 +1729,85 @@ def test_result_round_trip_rejects_extra_fields_and_bad_invariants() -> None:
         )
     assert not hasattr(DecisionVerificationResult, "derived_specialist_status")
     assert SpecialistStatus.ANSWERED.value == "ANSWERED"
+
+
+def test_passed_artifact_must_match_claim_refs_and_scopes() -> None:
+    current_claim = _identity()
+    with pytest.raises(ContractValidationError):
+        DecisionVerificationResult(
+            outcome=VerifierOutcome.PASSED,
+            verified_claims=(current_claim,),
+            rejected_claim_codes=(),
+            mandatory_limitations=(),
+            used_evidence_refs=("de-1",),
+            verified_temporal_scopes=(TemporalScope.PERSISTED,),
+            current_as_of_utc=None,
+        )
+    with pytest.raises(ContractValidationError):
+        DecisionVerificationResult(
+            outcome=VerifierOutcome.PASSED,
+            verified_claims=(current_claim,),
+            rejected_claim_codes=(),
+            mandatory_limitations=(),
+            used_evidence_refs=("de-1",),
+            verified_temporal_scopes=(),
+            current_as_of_utc=None,
+        )
+    with pytest.raises(ContractValidationError):
+        DecisionVerificationResult(
+            outcome=VerifierOutcome.PASSED,
+            verified_claims=(current_claim,),
+            rejected_claim_codes=(),
+            mandatory_limitations=(),
+            used_evidence_refs=("de-9",),
+            verified_temporal_scopes=(TemporalScope.CURRENT,),
+            current_as_of_utc=AS_OF,
+        )
+    link = CurrentPersistedLinkClaim("de-1", "de-2", "rec-1")
+    with pytest.raises(ContractValidationError):
+        DecisionVerificationResult(
+            outcome=VerifierOutcome.PASSED,
+            verified_claims=(link,),
+            rejected_claim_codes=(),
+            mandatory_limitations=(),
+            used_evidence_refs=("de-1",),
+            verified_temporal_scopes=(TemporalScope.CURRENT,),
+            current_as_of_utc=AS_OF,
+        )
+    with pytest.raises(ContractValidationError):
+        DecisionVerificationResult(
+            outcome=VerifierOutcome.PASSED,
+            verified_claims=(link,),
+            rejected_claim_codes=(),
+            mandatory_limitations=(),
+            used_evidence_refs=("de-2", "de-1"),
+            verified_temporal_scopes=(TemporalScope.CURRENT, TemporalScope.PERSISTED),
+            current_as_of_utc=AS_OF,
+        )
+    accepted = DecisionVerificationResult(
+        outcome=VerifierOutcome.PASSED,
+        verified_claims=(link,),
+        rejected_claim_codes=(),
+        mandatory_limitations=(),
+        used_evidence_refs=("de-1", "de-2"),
+        verified_temporal_scopes=(TemporalScope.CURRENT, TemporalScope.PERSISTED),
+        current_as_of_utc=AS_OF,
+    )
+    assert accepted.used_evidence_refs == ("de-1", "de-2")
+    assert accepted.verified_temporal_scopes == (
+        TemporalScope.CURRENT,
+        TemporalScope.PERSISTED,
+    )
+    with pytest.raises(ContractValidationError):
+        DecisionVerificationResult(
+            outcome=VerifierOutcome.PASSED,
+            verified_claims=(current_claim,),
+            rejected_claim_codes=(),
+            mandatory_limitations=(CLAIM_SET_NOT_ACTIONABLE,),
+            used_evidence_refs=("de-1",),
+            verified_temporal_scopes=(TemporalScope.CURRENT,),
+            current_as_of_utc=AS_OF,
+        )
 
 
 def _imported_modules(path: Path) -> set[str]:

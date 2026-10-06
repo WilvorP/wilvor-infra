@@ -217,6 +217,19 @@ def _used_refs(claims: tuple[DecisionClaim, ...]) -> tuple[str, ...]:
     return tuple(refs)
 
 
+def _claim_scopes(claims: tuple[DecisionClaim, ...]) -> tuple[TemporalScope, ...]:
+    """Scopes named by the claims themselves. This does not read ToolResults."""
+
+    found: set[TemporalScope] = set()
+    for claim in claims:
+        if isinstance(claim, CurrentPersistedLinkClaim):
+            found.add(TemporalScope.CURRENT)
+            found.add(TemporalScope.PERSISTED)
+        else:
+            found.add(claim.evidence_scope)
+    return tuple(scope for scope in _SCOPE_ORDER if scope in found)
+
+
 def _evidence_ref_ok(value: Any) -> bool:
     return (
         isinstance(value, str)
@@ -317,8 +330,16 @@ class DecisionVerificationResult:
                 errors.append("passed_forbids_rejections")
             if CLAIM_VERIFICATION_FAILED in self.mandatory_limitations:
                 errors.append("passed_forbids_verification_failure")
-            if not self.used_evidence_refs:
-                errors.append("passed_requires_used_evidence_refs")
+            if CLAIM_SET_NOT_ACTIONABLE in self.mandatory_limitations:
+                errors.append("passed_forbids_unactionable_limitation")
+            claims_ok = isinstance(self.verified_claims, tuple) and bool(
+                self.verified_claims
+            ) and all(_is_decision_claim(item) for item in self.verified_claims)
+            if claims_ok:
+                if self.used_evidence_refs != _used_refs(self.verified_claims):
+                    errors.append("used_evidence_refs_mismatch")
+                if self.verified_temporal_scopes != _claim_scopes(self.verified_claims):
+                    errors.append("verified_temporal_scopes_mismatch")
         if self.outcome is VerifierOutcome.FAILED:
             if self.verified_claims:
                 errors.append("failed_forbids_verified_claims")
@@ -703,7 +724,7 @@ def _cross_current(
     }
     if len(aircraft_ids) > 1:
         codes.append(DecisionClaimRejectionCode.AIRCRAFT_IDENTITY_MISMATCH)
-    codes.extend(_cross_encounters_and_risk([item.evidence for item in current if item.evidence is not None]))
+    codes.extend(_cross_encounters_and_risk(current))
     codes.extend(
         _cross_recommendations(
             [item.evidence for item in current if item.evidence is not None]
@@ -712,9 +733,97 @@ def _cross_current(
     return codes
 
 
+def _encounter_id_set(evidence: DecisionEvidence) -> tuple[str, ...]:
+    return tuple(sorted(encounter.encounter_id for encounter in evidence.encounters))
+
+
+def _context_authorities(current: list[_ParsedBinding]) -> list[DecisionEvidence]:
+    """In-set context results are the complete encounter collection."""
+
+    authorities: list[DecisionEvidence] = []
+    for item in current:
+        if item.result.tool_name != CONTEXT_TOOL or item.evidence is None:
+            continue
+        if _operationally_established(item.evidence):
+            authorities.append(item.evidence)
+    return authorities
+
+
 def _cross_encounters_and_risk(
+    current: list[_ParsedBinding],
+) -> list[DecisionClaimRejectionCode]:
+    codes: list[DecisionClaimRejectionCode] = []
+    authorities = _context_authorities(current)
+    evidences = [item.evidence for item in current if item.evidence is not None]
+    if authorities:
+        baseline = _encounter_id_set(authorities[0])
+        if any(_encounter_id_set(item) != baseline for item in authorities[1:]):
+            codes.append(DecisionClaimRejectionCode.CURRENT_CONTEXT_CONTRADICTION)
+        for item in current:
+            if (
+                item.evidence is None
+                or item.result.tool_name == CONTEXT_TOOL
+                or not _operationally_established(item.evidence)
+            ):
+                continue
+            for authority in authorities:
+                _compare_narrow_to_context(item.evidence, authority, codes)
+    else:
+        codes.extend(_cross_narrow_encounters_without_context(evidences))
+    codes.extend(_cross_risk_facts(evidences))
+    return codes
+
+
+def _compare_narrow_to_context(
+    narrow: DecisionEvidence,
+    context: DecisionEvidence,
+    codes: list[DecisionClaimRejectionCode],
+) -> None:
+    """Compare a narrow current result with the complete context encounter set.
+
+    A lifted top-level risk against a complete zero-encounter context is
+    ``CURRENT_CONTEXT_CONTRADICTION``. The authoritative set contains no
+    encounter that could carry that risk. The same code is used when the
+    lifted risk names an encounter the empty set does not contain, and when
+    a lift coexists with more than one context encounter. A null encounter id
+    does not exempt a lift from the multi-encounter rule.
+
+    ``CURRENT_RISK_CONTRADICTION`` is only for a single context encounter
+    whose stored risk fact disagrees, including a null lifted encounter id
+    compared verifier-side with that sole encounter.
+    """
+
+    if narrow.encounters:
+        if _encounter_id_set(narrow) != _encounter_id_set(context):
+            codes.append(DecisionClaimRejectionCode.CURRENT_CONTEXT_CONTRADICTION)
+        return
+    if narrow.risk is None:
+        return
+    risk = narrow.risk
+    count = len(context.encounters)
+    if count > 1:
+        codes.append(DecisionClaimRejectionCode.CURRENT_CONTEXT_CONTRADICTION)
+        return
+    if count == 0:
+        if risk.presence is RiskPresence.PRESENT or risk.encounter_id is not None:
+            codes.append(DecisionClaimRejectionCode.CURRENT_CONTEXT_CONTRADICTION)
+        return
+    sole = context.encounters[0]
+    if risk.encounter_id is not None:
+        if risk.encounter_id != sole.encounter_id:
+            codes.append(DecisionClaimRejectionCode.CURRENT_RISK_CONTRADICTION)
+        return
+    lifted = _risk_fact(sole.encounter_id, risk)
+    stored = _risk_fact(sole.encounter_id, sole.risk)
+    if lifted != stored:
+        codes.append(DecisionClaimRejectionCode.CURRENT_RISK_CONTRADICTION)
+
+
+def _cross_narrow_encounters_without_context(
     evidences: list[DecisionEvidence],
 ) -> list[DecisionClaimRejectionCode]:
+    """Narrow-to-narrow behavior used only when no context binding exists."""
+
     codes: list[DecisionClaimRejectionCode] = []
     nonempty = [
         tuple(encounter.encounter_id for encounter in evidence.encounters)
@@ -723,7 +832,6 @@ def _cross_encounters_and_risk(
     ]
     if len(nonempty) >= 2 and any(set(item) != set(nonempty[0]) for item in nonempty[1:]):
         codes.append(DecisionClaimRejectionCode.CURRENT_CONTEXT_CONTRADICTION)
-
     lifted = [
         evidence
         for evidence in evidences
@@ -738,7 +846,13 @@ def _cross_encounters_and_risk(
                 codes.append(DecisionClaimRejectionCode.CURRENT_CONTEXT_CONTRADICTION)
             elif encounter_id not in {item.encounter_id for item in other.encounters}:
                 codes.append(DecisionClaimRejectionCode.CURRENT_RISK_CONTRADICTION)
+    return codes
 
+
+def _cross_risk_facts(
+    evidences: list[DecisionEvidence],
+) -> list[DecisionClaimRejectionCode]:
+    codes: list[DecisionClaimRejectionCode] = []
     by_key: dict[str | None, _RiskFact] = {}
     for evidence in evidences:
         for fact in _claimable_risk_facts(evidence):
