@@ -310,7 +310,8 @@ Adapters do not expose AWS, SQL, query ids, or current/geography fallback.
 `historical_analytics`, `historical_analytics_mapping`, or
 `wilvor_historical_query`.
 
-Phase 2C is complete. The following are not implemented yet:
+Phase 2C is complete. At the end of Phase 2C, the following were not
+implemented yet:
 
 - model-backed Historical Analytics Specialist runtime
 - Master Agent
@@ -319,6 +320,9 @@ Phase 2C is complete. The following are not implemented yet:
 - runtime Lambda composition
 - query-policy attachment to a future Agent API role
 - hybrid current + historical synthesis
+
+Later sections add the Historical Analytics Specialist and its offline
+providers. Master Agent and Agent API remain future work.
 
 ## Phase 3A-preflight provider-neutral specialist contracts
 
@@ -758,14 +762,16 @@ Non-blocking follow-up (do not reopen Phase 3A):
   blocked by account model authorization. Direct Anthropic is the proven
   live provider.
 
-Phase 3A completion does not complete the AI Operations Copilot. Still
-not implemented: Decision Tool runtime, Live Ops Expert, Decision Expert,
+Phase 3A completion does not complete the AI Operations Copilot. Phase 3A
+itself did not include a Decision Tool runtime or a Decision Expert. Those
+are complete in the sections below. Still not implemented: Live Ops Expert,
 Master Agent / LangGraph orchestration, multi-specialist evidence
 verification, visualization builder, dedicated Agent API, `/ai`
 frontend integration, broader evaluation, and latency/cost
 optimization. Historical Analytics Specialist is one specialist
 foundation. DT1 defines the decision evidence contract. DT2 adds the
-read-only current decision context operation and does not add a model catalog.
+read-only current decision context operation and, at that phase, does not
+add a model catalog.
 
 ## Decision Tools
 
@@ -775,8 +781,9 @@ DT2 adds one read-only operation, `get_current_decision_context`, in
 `wilvor_ai.decision_context`. It maps
 `build_aircraft_operational_context` into `DecisionEvidence` for one
 `aircraft_id`. Tables, `now_epoch`, and `tool_call_id` stay on
-`DecisionContextCall`. There is no decision-tool catalog, no model
-schema, and no Decision Expert.
+`DecisionContextCall`. At DT2 there is no decision-tool catalog, no model
+schema, and no Decision Expert. DT5 adds the catalog, and the Decision
+Expert section below records the completed specialist.
 
 Decision evidence uses the existing `ToolResult` envelope with
 `TemporalScope.CURRENT`. The payload is `DecisionEvidence`
@@ -842,14 +849,88 @@ They do not recalculate risk, recalculate a recommendation, generate a
 route, select a diversion, or select a winner. Currentness remains owned
 by `wilvor_operational`. Persisted airport evidence is not asserted to be
 current. The raw `ToolResult` remains the verifier and audit authority.
-The adapter fails closed when request and result identity disagree. This
-phase does not complete a Decision Expert or a Master Agent.
+The adapter fails closed when request and result identity disagree. DT5
+closes Decision Tools. It does not by itself complete the Decision Expert.
+The next section records that completion. A Master Agent remains future work.
+
+## Decision Expert complete
+
+The Decision Expert is complete as a component. The model does not directly
+produce authoritative factual output.
+
+```text
+DecisionSpecialistRequest
+    -> DecisionSpecialist
+    -> DecisionModelProvider
+    -> AnthropicDecisionMessagesProvider
+    -> native tool calls / terminal decisions
+    -> Decision Tools
+    -> ToolResult + DecisionEvidenceSnapshot
+    -> FINAL_CLAIMS
+    -> DE1 deterministic verification
+    -> DE2 deterministic rendering
+```
+
+DE3 controls execution. DE1 verifies claims. DE2 renders factual output.
+
+There are exactly four Decision tools and no fifth Decision tool:
+
+- `get_current_decision_context(aircraft_id)`
+- `get_current_risk_evidence(aircraft_id)`
+- `get_current_recommendation(aircraft_id)`
+- `get_persisted_airport_candidate_evidence(recommendation_id)`
+
+Model-visible target arguments remain only `aircraft_id` or
+`recommendation_id`. Trusted runtime state stays outside the model.
+
+Safety semantics:
+
+- No stored risk is not LOW.
+- No recommendation is not MONITOR.
+- Multiple encounters do not create a selected encounter.
+- Multiple recommendations do not create a winner.
+- Multiple persisted candidates do not create a selected airport.
+- Persisted airport evidence is not current suitability.
+- COMPLETE is not a safe, current, selected, recommended, or cleared airport.
+- EVALUATE_DIVERSION is not a selected diversion, route, clearance, ATC
+  instruction, dispatch instruction, or landing instruction.
+
+The Decision Expert does not generate routes, waypoints, flight plans,
+route safety, ATC instructions, dispatch instructions, or landing
+instructions. CURRENT and PERSISTED remain distinct. Do not describe
+CURRENT plus PERSISTED as HYBRID. HYBRID elsewhere means current plus
+historical synthesis.
+
+Stored persisted candidate metadata, including rank, score, distance, or
+ETA, may remain in the model-facing projection because that projection
+copies validated tool data. Decision V1 claims do not carry those fields.
+DE1 verifies only the closed claim catalog. DE2 does not select or rank an
+airport.
+
+The model may request approved tools, inspect DecisionEvidenceSnapshot
+values, propose typed Decision claims, and return UNSUPPORTED or REFUSAL.
+The model may not authoritatively calculate risk, create recommendations,
+choose a winning recommendation, choose a diversion airport, generate
+routes, verify its own claims, or write the authoritative factual answer.
+
+`AnthropicDecisionMessagesProvider` uses `claude-sonnet-4-6`, native
+tool_use, structured terminal decisions, and an injected Messages client.
+`DecisionSpecialist` stays provider-neutral. DE4 and DE5 tests are offline.
+DE5 does not perform a live Anthropic call. Production client construction,
+secrets, runtime composition, and deployment remain future integration work.
+
+The full Wilvor AI Operations Copilot is not complete. Master Agent remains
+future work. Agent API remains future work. Also still future work:
+specialist routing, Live Ops Expert, multi-specialist orchestration,
+runtime Lambda composition, dashboard / AI page integration, Terraform,
+IAM, live evaluation, and route generation.
 
 ## Tests
 
 Run the offline contract suite from the repository root, including Phase 0
 contracts, Phase 1E Live Operations adapter tests, Phase 2C historical
-adapter tests, and Phase 3A-preflight specialist contracts:
+adapter tests, Phase 3A specialist contracts, and the Decision Expert
+closure tests:
 
 ```powershell
 python -m pytest tests/contracts -q -p no:cacheprovider
