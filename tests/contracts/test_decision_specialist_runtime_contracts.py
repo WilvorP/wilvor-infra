@@ -72,12 +72,12 @@ def _packet(tool_call_id: str) -> Evidence:
     )
 
 
-def _risk_payload() -> dict:
+def _risk_payload(aircraft_id: str = "ac-1") -> dict:
     evidence = DecisionEvidence(
         kind=DecisionEvidenceKind.RISK_EVIDENCE,
         evaluation_state=DecisionEvaluationState.ESTABLISHED,
         aircraft_in_current_set=True,
-        aircraft_id="ac-1",
+        aircraft_id=aircraft_id,
         projection_state=DecisionReportedLinkState.PRESENT,
         projection_id="proj-1",
         risk=DecisionRiskEvidence(
@@ -92,13 +92,17 @@ def _risk_payload() -> dict:
     return evidence.to_dict()
 
 
-def _raw(tool_call_id: str, tool_name: str = "get_current_risk_evidence") -> ToolResult:
+def _raw(
+    tool_call_id: str,
+    tool_name: str = "get_current_risk_evidence",
+    aircraft_id: str = "ac-1",
+) -> ToolResult:
     return ToolResult(
         tool_name=tool_name,
         tool_call_id=tool_call_id,
         status=ToolResultStatus.SUCCESS,
         temporal_scope=TemporalScope.CURRENT,
-        data=_risk_payload(),
+        data=_risk_payload(aircraft_id),
         evidence=(_packet(tool_call_id),),
         as_of_utc=AS_OF,
         limitations=(),
@@ -330,3 +334,122 @@ def test_from_dict_enforces_the_same_ref_alignment():
     payload = result.to_dict()
     payload["evidence_bindings"][0]["evidence_ref"] = "de-2"
     assert _errors(lambda: DecisionSpecialistRunResult.from_dict(payload))
+
+
+def _factual_result(
+    *,
+    status: DecisionSpecialistRunStatus = DecisionSpecialistRunStatus.COMPLETED,
+    aircraft_id: str = "ac-1",
+    tool_call_id: str = "call-1",
+) -> DecisionSpecialistRunResult:
+    raw = _raw(tool_call_id, aircraft_id=aircraft_id)
+    claim = AircraftIdentityClaim("de-1", TemporalScope.CURRENT, aircraft_id)
+    binding = DecisionEvidenceBinding("de-1", raw)
+    verification = verify_decision_evidence((claim,), (binding,))
+    rendered = render_decision_verification(verification)
+    return _result(
+        status=status,
+        aircraft_id="ac-1",
+        tool_results=(raw,),
+        evidence_snapshots=(_snapshot("de-1", raw),),
+        evidence_bindings=(binding,),
+        invocations=(_audit(raw, "de-1"),),
+        proposed_claims=(claim,),
+        verification=verification,
+        render=rendered,
+        runtime_errors=(),
+        collection_partial_reason=(
+            DecisionCollectionPartialReason.PERSISTED_FANOUT_CAP
+            if status is DecisionSpecialistRunStatus.PARTIAL
+            else None
+        ),
+        terminal_kind=ModelDecisionKind.FINAL_CLAIMS,
+    )
+
+
+def test_matching_final_result_round_trips():
+    result = _factual_result()
+    assert result.verification.outcome.value == "PASSED"
+    assert result.render.outcome.value == "FACTUAL"
+    assert DecisionSpecialistRunResult.from_dict(result.to_dict()) == result
+
+
+def test_replaced_passed_verification_is_rejected():
+    result = _factual_result()
+    other = _factual_result(aircraft_id="ac-2", tool_call_id="call-2")
+    assert other.verification.outcome.value == "PASSED"
+    assert other.verification != result.verification
+    payload = result.to_dict()
+    payload["verification"] = other.verification.to_dict()
+    assert "verification_integrity_mismatch" in _errors(
+        lambda: DecisionSpecialistRunResult.from_dict(payload)
+    )
+
+
+def test_replaced_factual_answer_is_rejected():
+    result = _factual_result()
+    payload = result.to_dict()
+    payload["render"]["answer"] = "The stored aircraft is ac-9."
+    assert "render_integrity_mismatch" in _errors(
+        lambda: DecisionSpecialistRunResult.from_dict(payload)
+    )
+
+
+def test_replaced_render_outcome_is_rejected():
+    result = _factual_result()
+    _claims, _verification, failed_render = _failed_verification()
+    payload = result.to_dict()
+    payload["render"] = {
+        "outcome": failed_render.outcome.value,
+        "answer": failed_render.answer,
+    }
+    assert _errors(lambda: DecisionSpecialistRunResult.from_dict(payload))
+
+
+def test_failed_verification_with_matching_render_remains_valid():
+    claims, verification, rendered = _failed_verification()
+    result = _result(
+        status=DecisionSpecialistRunStatus.COMPLETED,
+        tool_results=(),
+        evidence_snapshots=(),
+        evidence_bindings=(),
+        invocations=(),
+        proposed_claims=claims,
+        verification=verification,
+        render=rendered,
+        runtime_errors=(),
+        executed_tool_call_count=0,
+        terminal_kind=ModelDecisionKind.FINAL_CLAIMS,
+    )
+    assert result.verification.outcome.value == "FAILED"
+    assert result.render.outcome.value == "VERIFICATION_FAILED"
+    assert DecisionSpecialistRunResult.from_dict(result.to_dict()) == result
+
+
+def test_partial_factual_result_remains_valid_when_artifacts_match():
+    result = _factual_result(status=DecisionSpecialistRunStatus.PARTIAL)
+    assert result.collection_partial_reason is (
+        DecisionCollectionPartialReason.PERSISTED_FANOUT_CAP
+    )
+    assert result.verification.outcome.value == "PASSED"
+    assert result.render.outcome.value == "FACTUAL"
+    assert DecisionSpecialistRunResult.from_dict(result.to_dict()) == result
+
+
+def test_provider_failed_does_not_recompute_verification(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "wilvor_ai.decision_specialist_runtime_contracts.verify_decision_evidence",
+        lambda *args, **kwargs: calls.append(args),
+    )
+    monkeypatch.setattr(
+        "wilvor_ai.decision_specialist_runtime_contracts.render_decision_verification",
+        lambda *args, **kwargs: calls.append(args),
+    )
+    result = _result(
+        collection_partial_reason=DecisionCollectionPartialReason.PERSISTED_FANOUT_CAP
+    )
+    assert result.status is DecisionSpecialistRunStatus.PROVIDER_FAILED
+    assert result.verification is None
+    assert result.render is None
+    assert calls == []

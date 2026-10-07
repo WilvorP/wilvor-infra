@@ -1,8 +1,10 @@
 """Provider-neutral Decision specialist request and run contracts.
 
 This module describes the trusted target, the model protocol, and the run
-audit. It does not call a model, dispatch Decision Tools, verify claims, or
-render answers.
+audit. It does not call a model or dispatch Decision Tools. A final
+COMPLETED or PARTIAL result recomputes DE1 and DE2 only to reject a stored
+artifact that no longer matches its claims and raw bindings. Non-final
+results do not.
 
 ``collection_partial_reason`` records skipped persisted fanout. It is
 independent of terminal status:
@@ -35,6 +37,7 @@ from wilvor_ai.contracts import (
 from wilvor_ai.decision_answer_renderer import (
     DecisionRenderOutcome,
     DecisionRenderResult,
+    render_decision_verification,
 )
 from wilvor_ai.decision_claims import (
     DECISION_EVIDENCE_REF_PATTERN,
@@ -46,6 +49,7 @@ from wilvor_ai.decision_contracts import OPERATIONAL_ID_MAX_LENGTH
 from wilvor_ai.decision_evidence_verifier import (
     DecisionEvidenceBinding,
     DecisionVerificationResult,
+    verify_decision_evidence,
 )
 from wilvor_ai.decision_model_contracts import (
     DecisionEvidenceSnapshot,
@@ -415,14 +419,49 @@ def _align_executions(
     return errors
 
 
+def _final_artifact_integrity(
+    claims: tuple[DecisionClaim, ...],
+    bindings: tuple[DecisionEvidenceBinding, ...],
+    verification: DecisionVerificationResult | None,
+    render: DecisionRenderResult | None,
+) -> list[str]:
+    """Reject a final artifact whose stored DE1 or DE2 output was replaced.
+
+    This recomputes the deterministic pipeline. It does not repair the
+    stored verification or render.
+    """
+
+    claims_ok = bool(claims) and all(_is_decision_claim(item) for item in claims)
+    bindings_ok = all(isinstance(item, DecisionEvidenceBinding) for item in bindings)
+    if (
+        not claims_ok
+        or not bindings_ok
+        or not isinstance(verification, DecisionVerificationResult)
+        or not isinstance(render, DecisionRenderResult)
+    ):
+        return []
+    expected_verification = verify_decision_evidence(claims, bindings)
+    errors: list[str] = []
+    if expected_verification != verification:
+        errors.append("verification_integrity_mismatch")
+    expected_render = render_decision_verification(expected_verification)
+    if expected_render != render:
+        errors.append("render_integrity_mismatch")
+    return errors
+
+
 @dataclass(frozen=True)
 class DecisionSpecialistRunResult:
     """Audit of one Decision specialist run.
 
     COMPLETED and PARTIAL both mean DE1 and DE2 ran. COMPLETED does not mean
-    the claims passed. ``collection_partial_reason`` may remain set on a
-    non-final status so a skipped fanout stays visible after a later provider
-    failure. That does not change the terminal status to PARTIAL.
+    the claims passed. Construction and ``from_dict`` recompute those
+    deterministic results and reject the artifact when the stored
+    verification or render differs. They do not replace the stored values.
+    ``collection_partial_reason`` may remain set on a non-final status so a
+    skipped fanout stays visible after a later provider failure. That does
+    not change the terminal status to PARTIAL. Non-final statuses do not
+    recompute DE1 or DE2.
     """
 
     status: DecisionSpecialistRunStatus
@@ -600,6 +639,18 @@ class DecisionSpecialistRunResult:
                     errors.append("final_status_requires_claims")
                 if self.terminal_kind is not ModelDecisionKind.FINAL_CLAIMS:
                     errors.append("final_status_requires_final_claims")
+                if (
+                    isinstance(self.proposed_claims, tuple)
+                    and isinstance(self.evidence_bindings, tuple)
+                ):
+                    errors.extend(
+                        _final_artifact_integrity(
+                            self.proposed_claims,
+                            self.evidence_bindings,
+                            self.verification,
+                            self.render,
+                        )
+                    )
             else:
                 if self.verification is not None or self.render is not None:
                     errors.append("nonfinal_status_forbids_verification_and_render")
