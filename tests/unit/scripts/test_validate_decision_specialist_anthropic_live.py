@@ -100,10 +100,12 @@ def test_dry_run_without_opt_in_or_key(runner: ModuleType, monkeypatch: pytest.M
     monkeypatch.setattr(runner, "construct_live_sdk_client", explode)
     monkeypatch.setattr(runner, "require_live_opt_in", explode)
     monkeypatch.setattr(runner, "require_wire_opt_in", explode)
+    monkeypatch.setattr(runner, "require_terminal_opt_in", explode)
     monkeypatch.setattr(runner, "installed_anthropic_sdk_version", explode)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("WILVOR_RUN_LIVE_DECISION_ANTHROPIC", raising=False)
     monkeypatch.delenv("WILVOR_RUN_LIVE_DECISION_ANTHROPIC_WIRE", raising=False)
+    monkeypatch.delenv("WILVOR_RUN_LIVE_DECISION_ANTHROPIC_TERMINAL", raising=False)
     payload = runner.dry_run()
     assert payload["api_key_read"] is False
     assert payload["live_opt_in_used"] is False
@@ -115,6 +117,11 @@ def test_dry_run_without_opt_in_or_key(runner: ModuleType, monkeypatch: pytest.M
     assert payload["wire_expected_sdk_version"] == "1.8.0"
     assert payload["actual_sdk_version"] is None
     assert [item["probe_id"] for item in payload["wire_probes"]] == ["A", "B", "C"]
+    assert payload["terminal_probe_count"] == 2
+    assert payload["terminal_max_live_calls"] == 2
+    assert payload["terminal_expected_sdk_version"] == "1.8.0"
+    assert payload["terminal_actual_sdk_version"] is None
+    assert [item["probe_id"] for item in payload["terminal_probes"]] == ["T-A", "T-B"]
     assert payload["matrix_executions"] == 26
     assert payload["quality_threshold"] == 21
     assert payload["tier1_executions"] == 6
@@ -1594,3 +1601,495 @@ def test_wire_diagnostic_exit_codes(runner: ModuleType, monkeypatch: pytest.Monk
         assert runner.wire_diagnostic_exit_code(partial) == 1
         monkeypatch.setattr(runner, "run_wire_probes", lambda payload=partial: payload)
         assert runner.main(["prog", "run-wire-probes"]) == 1
+
+
+def _terminal_client(runner: ModuleType, outcomes: list[object]) -> object:
+    return runner.BudgetedRecordingMessagesClient(
+        _ScriptedMessages(outcomes),
+        max_calls=runner.TERMINAL_MAX_LIVE_CALLS,
+    )
+
+
+def _terminal_message(
+    content: list[object] | None,
+    *,
+    stop_reason: str = "end_turn",
+    message_id: str = "msg_term",
+    model: str = "claude-sonnet-4-6",
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "type": "message",
+        "role": "assistant",
+        "model": model,
+        "id": message_id,
+        "stop_reason": stop_reason,
+        "usage": {"input_tokens": 5, "output_tokens": 3},
+    }
+    if content is not None:
+        payload["content"] = content
+    return payload
+
+
+def _terminal_text(body: object, **kwargs: object) -> dict[str, object]:
+    return _terminal_message(
+        [{"type": "text", "text": body if isinstance(body, str) else json.dumps(body)}],
+        **kwargs,
+    )
+
+
+_DECISION_SCHEMA = "wilvor.ai.decision_model_decision.v1"
+
+
+def _unsupported(reason: str = "ROUTE_GENERATION_NOT_IMPLEMENTED") -> dict[str, object]:
+    return {
+        "schema_version": _DECISION_SCHEMA,
+        "kind": "UNSUPPORTED",
+        "unsupported_reason": reason,
+    }
+
+
+def _final_claims() -> dict[str, object]:
+    return {
+        "schema_version": _DECISION_SCHEMA,
+        "kind": "FINAL_CLAIMS",
+        "claims": [
+            {
+                "kind": "RISK_PRESENT",
+                "evidence_ref": "de-1",
+                "evidence_scope": "CURRENT",
+                "encounter_id": None,
+                "risk_id": "risk-9",
+                "risk_level": "HIGH",
+                "risk_score": 91,
+            }
+        ],
+    }
+
+
+def _provider_error(
+    name: str,
+    message: str,
+    status_code: int | None = None,
+    error_type: str = "invalid_request_error",
+) -> _WireError:
+    return type(name, (_WireError,), {})(
+        message,
+        status_code=status_code,
+        error_type=error_type,
+    )
+
+
+def test_terminal_identity_budget_and_opt_in_isolation(
+    runner: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert runner.TERMINAL_ACTION == "run-terminal-probes"
+    assert runner.TERMINAL_PROBE_SPECS == (
+        ("T-A", "unsupported_route_terminal", "UNSUPPORTED"),
+        ("T-B", "high_risk_final_claims_terminal", "FINAL_CLAIMS"),
+    )
+    assert runner.TERMINAL_MAX_LIVE_CALLS == 2
+    assert runner.LIVE_MAX_RETRIES == 0
+    assert runner.WIRE_MAX_LIVE_CALLS == 3
+    assert runner.TIER1_MAX_LIVE_CALLS == 16
+    assert runner.MATRIX_MAX_LIVE_CALLS == 80
+    assert runner.TERMINAL_ACTION not in runner.LIVE_ACTIONS
+    assert runner.TERMINAL_ACTION not in runner.WIRE_ACTIONS
+    inner = _ScriptedMessages([{"id": "msg", "content": [], "usage": {}}] * 3)
+    client = runner.BudgetedRecordingMessagesClient(inner, max_calls=2)
+    client.messages_create(messages=[{"role": "user", "content": "probe"}])
+    client.messages_create(messages=[{"role": "user", "content": "probe"}])
+    with pytest.raises(runner.CallBudgetExceeded):
+        client.messages_create(messages=[{"role": "user", "content": "probe"}])
+    assert client.current_call_count == 2
+
+    monkeypatch.setattr(runner, "read_live_api_key", lambda environ=None: "local-key")
+    assert runner.prepare_terminal_live({runner.TERMINAL_OPT_IN_ENV: "1"}) == "local-key"
+    with pytest.raises(runner.LiveHarnessError, match="ANTHROPIC_TERMINAL"):
+        runner.prepare_terminal_live({runner.LIVE_OPT_IN_ENV: "1"})
+    with pytest.raises(runner.LiveHarnessError, match="ANTHROPIC_TERMINAL"):
+        runner.prepare_terminal_live({runner.WIRE_OPT_IN_ENV: "1"})
+    with pytest.raises(runner.LiveHarnessError, match="WILVOR_RUN_LIVE_DECISION_ANTHROPIC=1"):
+        runner.prepare_live("run-tier1", {runner.TERMINAL_OPT_IN_ENV: "1"})
+    with pytest.raises(runner.LiveHarnessError, match="WILVOR_RUN_LIVE_DECISION_ANTHROPIC=1"):
+        runner.prepare_live("run-matrix", {runner.TERMINAL_OPT_IN_ENV: "1"})
+    with pytest.raises(runner.LiveHarnessError, match="ANTHROPIC_WIRE"):
+        runner.prepare_wire_live({runner.TERMINAL_OPT_IN_ENV: "1"})
+
+
+def test_terminal_missing_opt_in_and_key_order(
+    runner: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_key = runner.read_live_api_key
+
+    def explode_key(*_args: object, **_kwargs: object) -> str:
+        raise AssertionError("api key read")
+
+    monkeypatch.setattr(runner, "read_live_api_key", explode_key)
+    with pytest.raises(runner.LiveHarnessError, match="ANTHROPIC_TERMINAL"):
+        runner.prepare_terminal_live({})
+    monkeypatch.setattr(runner, "read_live_api_key", original_key)
+
+    def explode_sdk(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("sdk imported")
+
+    monkeypatch.setattr(runner, "import_anthropic_sdk", explode_sdk)
+    with pytest.raises(runner.LiveHarnessError, match="missing ANTHROPIC_API_KEY"):
+        runner.run_terminal_probes({runner.TERMINAL_OPT_IN_ENV: "1"})
+
+
+def test_terminal_sdk_version_gate(
+    runner: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    constructed: list[str] = []
+
+    class _FakeSDK:
+        def __init__(self) -> None:
+            self.messages = self
+
+        def create(self, **_kwargs: object) -> object:
+            message = SimpleNamespace(_request_id="req_term")
+            message.to_dict = lambda mode="json": _terminal_text(_unsupported())  # noqa: ARG005
+            return message
+
+    def allow(_key: str, _sdk: object) -> _FakeSDK:
+        constructed.append("allowed")
+        return _FakeSDK()
+
+    def deny(_key: str, _sdk: object) -> object:
+        constructed.append("denied")
+        raise AssertionError("provider client constructed")
+
+    monkeypatch.setattr(runner, "import_anthropic_sdk", lambda: object())
+    monkeypatch.setattr(runner, "write_terminal_report", lambda payload: payload)
+    matched = runner.run_terminal_probes(
+        {runner.TERMINAL_OPT_IN_ENV: "1", runner.API_KEY_ENV: "local-key"},
+        version_lookup=lambda: "1.8.0",
+        sdk_client_factory=allow,
+    )
+    assert constructed == ["allowed"]
+    assert matched["actual_sdk_version"] == "1.8.0"
+    assert matched["live_call_attempts"] == 2
+    assert "local-key" not in json.dumps(matched)
+
+    mismatched = runner.run_terminal_probes(
+        {runner.TERMINAL_OPT_IN_ENV: "1", runner.API_KEY_ENV: "local-key"},
+        version_lookup=lambda: "9.9.9",
+        sdk_client_factory=deny,
+    )
+    assert constructed == ["allowed"]
+    assert mismatched["stopped_on"] == "LOCAL_HARNESS_FAILURE"
+    assert mismatched["actual_sdk_version"] == "9.9.9"
+    assert mismatched["live_call_attempts"] == 0
+    assert mismatched["probes"] == []
+
+    def unavailable() -> str:
+        raise RuntimeError(r"C:\packages\anthropic")
+
+    failed = runner.run_terminal_probes(
+        {runner.TERMINAL_OPT_IN_ENV: "1", runner.API_KEY_ENV: "local-key"},
+        version_lookup=unavailable,
+        sdk_client_factory=deny,
+    )
+    assert constructed == ["allowed"]
+    assert failed["actual_sdk_version"] is None
+    assert failed["live_call_attempts"] == 0
+    assert r"C:\packages" not in json.dumps(failed)
+
+
+def test_terminal_requests_keep_strict_tools_and_drop_only_output_config(
+    runner: ModuleType,
+) -> None:
+    invocation = runner.terminal_high_risk_invocation()
+    raw = invocation.raw_tool_result
+    projection = invocation.model_projection
+    assert raw.status is runner.ToolResultStatus.SUCCESS
+    assert raw.temporal_scope is runner.TemporalScope.CURRENT
+    assert raw.data["aircraft_id"] == "abc123"
+    assert raw.data["risk"]["presence"] == "PRESENT"
+    assert raw.data["risk"]["risk_level"] == "HIGH"
+    assert raw.data["risk"]["risk_score"] == 80
+    assert projection.status is runner.ToolResultStatus.SUCCESS
+    assert projection.temporal_scope is runner.TemporalScope.CURRENT
+    assert projection.data["aircraft_id"] == "abc123"
+    assert projection.data["risk"]["presence"] == "PRESENT"
+    assert projection.data["risk"]["risk_level"] == "HIGH"
+    assert projection.data["risk"]["risk_score"] == 80
+    assert type(invocation).__name__ == "DecisionToolInvocation"
+    checked = runner.validate_terminal_static_configuration()
+    snapshot = checked["snapshot"]
+    assert snapshot.evidence_ref == "de-1"
+    assert snapshot.projection is not raw
+    system = checked["probes"]["T-A"]["system"]
+    assert "tool_call_id" in system
+    assert "correlation_id" in system
+    assert "now_epoch" in system
+    assert "query_timestamp_utc" in system
+    assert "tables" in system
+    assert runner.terminal_trusted_keys_in_tree(system) == ()
+    assert runner.terminal_trusted_keys_in_tree(snapshot.to_dict()) == ()
+    assert runner.terminal_trusted_keys_in_tree(checked["probes"]["T-B"]["messages"]) == ()
+    visible = json.dumps(
+        {
+            "system": checked["probes"]["T-B"]["system"],
+            "messages": checked["probes"]["T-B"]["messages"],
+            "tools": checked["probes"]["T-B"]["tools"],
+            "tool_choice": checked["probes"]["T-B"]["tool_choice"],
+        }
+    )
+    assert runner.TERMINAL_TOOL_CALL_ID not in visible
+    assert runner.TERMINAL_CORRELATION_ID not in visible
+    assert runner.TERMINAL_TOOL_CALL_ID != "decision-call-dry"
+    assert runner.TERMINAL_CORRELATION_ID != "corr-dlv1-dry-run"
+    for probe_id, user_text, snapshots in (
+        ("T-A", runner.PROMPT_ROUTE, 0),
+        ("T-B", runner.PROMPT_HIGH, 1),
+    ):
+        request = checked["requests"][probe_id]
+        produced = runner.build_decision_messages_kwargs(request, runner.DEFAULT_MODEL_ID)
+        assert checked["built"][probe_id] == produced
+        assert request.user_text == user_text
+        assert request.validation_feedback is None
+        assert len(request.evidence_snapshots) == snapshots
+        stripped = checked["probes"][probe_id]
+        assert set(produced) - set(stripped) == {"output_config"}
+        assert all(tool["strict"] is True for tool in stripped["tools"])
+        assert len(stripped["tools"]) == 4
+        assert "output_config" not in stripped
+    assert checked["fingerprints"]["T-A"]["evidence_snapshot_count"] == 0
+    assert checked["fingerprints"]["T-A"]["evidence_refs"] == []
+    assert checked["fingerprints"]["T-B"]["evidence_refs"] == ["de-1"]
+    assert checked["requests"]["T-A"].to_dict() == runner.terminal_turn_request(
+        runner.PROMPT_ROUTE
+    ).to_dict()
+
+
+def test_terminal_parser_classifies_without_persisting_model_text(runner: ModuleType) -> None:
+    checked = runner.validate_terminal_static_configuration()
+    calls = {"invoke": 0}
+    original = runner.DecisionToolsAdapter.invoke
+
+    def guarded(self: object, *args: object, **kwargs: object) -> object:
+        calls["invoke"] += 1
+        return original(self, *args, **kwargs)
+
+    runner.DecisionToolsAdapter.invoke = guarded  # type: ignore[method-assign]
+    try:
+        tool_use = _terminal_message(
+            [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_secret_terminal",
+                    "name": "get_current_risk_evidence",
+                    "input": {"aircraft_id": "abc123", "raw_argument": "DO_NOT_PERSIST_TERMINAL"},
+                }
+            ],
+            stop_reason="tool_use",
+        )
+        mixed = _terminal_message(
+            [
+                {"type": "text", "text": json.dumps(_unsupported())},
+                {
+                    "type": "tool_use",
+                    "id": "toolu_mix",
+                    "name": "get_current_risk_evidence",
+                    "input": {"aircraft_id": "abc123"},
+                },
+            ],
+            stop_reason="tool_use",
+        )
+        outcomes = [
+            (
+                _terminal_text(_unsupported()),
+                _terminal_text(_final_claims()),
+                ["PARSED_EXPECTED_TERMINAL", "PARSED_EXPECTED_TERMINAL"],
+            ),
+            (
+                _terminal_text(_unsupported("LIVE_OPS")),
+                _terminal_message(None, stop_reason="refusal"),
+                ["PARSED_UNEXPECTED_TERMINAL", "PARSED_UNEXPECTED_TERMINAL"],
+            ),
+            (
+                tool_use,
+                _terminal_text(_final_claims()),
+                ["NON_TERMINAL_TOOL_USE", "PARSED_EXPECTED_TERMINAL"],
+            ),
+            (
+                _terminal_text("DO_NOT_PERSIST_PROSE"),
+                _terminal_text("```json\n{}\n```"),
+                ["MALFORMED_TERMINAL", "MALFORMED_TERMINAL"],
+            ),
+            (
+                _terminal_message(
+                    [
+                        {"type": "text", "text": "{}"},
+                        {"type": "text", "text": "{}"},
+                    ]
+                ),
+                _terminal_text(
+                    {
+                        "schema_version": "wilvor.ai.decision_model_decision.v0",
+                        "kind": "UNSUPPORTED",
+                        "unsupported_reason": "OUT_OF_CATALOG",
+                    }
+                ),
+                ["MALFORMED_TERMINAL", "MALFORMED_TERMINAL"],
+            ),
+            (
+                mixed,
+                _terminal_text(_final_claims()),
+                ["MALFORMED_TERMINAL", "PARSED_EXPECTED_TERMINAL"],
+            ),
+        ]
+        for first, second, expected in outcomes:
+            client = _terminal_client(runner, [first, second])
+            before = calls["invoke"]
+            probes, stopped = runner.execute_terminal_probes(client, checked)
+            assert stopped is None
+            assert [item["classification"] for item in probes] == expected
+            assert calls["invoke"] == before
+            rendered = json.dumps(probes)
+            assert "DO_NOT_PERSIST_PROSE" not in rendered
+            assert "DO_NOT_PERSIST_TERMINAL" not in rendered
+            assert "toolu_secret_terminal" not in rendered
+            assert "toolu_mix" not in rendered
+            assert "```json" not in rendered
+            assert "risk-9" not in rendered
+            assert "risk_score" not in rendered
+            assert "refusal_code" not in rendered
+            for probe in probes:
+                if probe["classification"] == "PARSED_EXPECTED_TERMINAL" and probe["probe_id"] == "T-B":
+                    assert probe["parsed_kind"] == "FINAL_CLAIMS"
+                    assert probe["claim_kinds"] == ["RISK_PRESENT"]
+                    assert probe["claim_count"] == 1
+                if probe["classification"] == "PARSED_EXPECTED_TERMINAL" and probe["probe_id"] == "T-A":
+                    assert probe["parsed_kind"] == "UNSUPPORTED"
+                    assert probe["unsupported_reason"] == "ROUTE_GENERATION_NOT_IMPLEMENTED"
+                if probe["classification"] == "NON_TERMINAL_TOOL_USE":
+                    assert probe["selected_tool_names"] == ["get_current_risk_evidence"]
+                    assert probe["provider_tool_id_present"] is True
+                if probe["classification"] == "MALFORMED_TERMINAL":
+                    assert probe["parser_error_code"] in runner.TERMINAL_PARSER_ERROR_CODES
+                if probe["classification"] == "PARSED_UNEXPECTED_TERMINAL" and probe["probe_id"] == "T-B":
+                    assert probe["parsed_kind"] == "REFUSAL"
+        unknown = runner.terminal_parser_error_code(RuntimeError("secret traceback text"))
+        assert unknown == "unclassified_parser_error"
+        assert "secret traceback text" not in unknown
+    finally:
+        runner.DecisionToolsAdapter.invoke = original  # type: ignore[method-assign]
+
+
+def test_terminal_transport_continues_or_stops(runner: ModuleType) -> None:
+    checked = runner.validate_terminal_static_configuration()
+    rejected = _provider_error("BadRequestError", "compiled grammar is too large", 400)
+    unprocessable = _provider_error("UnprocessableEntityError", "unprocessable schema", 422)
+    client = _terminal_client(runner, [rejected, unprocessable])
+    probes, stopped = runner.execute_terminal_probes(client, checked)
+    assert stopped is None
+    assert [item["classification"] for item in probes] == [
+        "REJECTED_INVALID_REQUEST",
+        "REJECTED_INVALID_REQUEST",
+    ]
+    assert probes[0]["provider_http_status"] == 400
+    assert probes[1]["provider_http_status"] == 422
+    assert "traceback" not in json.dumps(probes)
+
+    def stop_on(error: Exception) -> None:
+        stopped_client = _terminal_client(
+            runner,
+            [_terminal_text(_unsupported()), error],
+        )
+        stopped_probes, stopped_on = runner.execute_terminal_probes(stopped_client, checked)
+        assert len(stopped_probes) == 2
+        assert stopped_on == stopped_probes[1]["classification"]
+        assert stopped_on in runner.TERMINAL_STOP_CLASSIFICATIONS
+        assert stopped_client._inner.calls == 2
+
+    stop_on(_provider_error("AuthenticationError", "unauthorized", 401, "authentication_error"))
+    stop_on(_provider_error("RateLimitError", "slow down", 429, "rate_limit_error"))
+    stop_on(_provider_error("APITimeoutError", "timed out"))
+    stop_on(_provider_error("APIConnectionError", "connection reset"))
+    stop_on(_provider_error("InternalServerError", "unavailable", 503, "api_error"))
+    stop_on(_provider_error("APIStatusError", "overloaded", 529, "overloaded_error"))
+    first_only = _terminal_client(
+        runner,
+        [_provider_error("AuthenticationError", "unauthorized", 401, "authentication_error")],
+    )
+    early, early_stop = runner.execute_terminal_probes(first_only, checked)
+    assert len(early) == 1
+    assert early_stop == "AUTH_BLOCKED"
+    assert first_only._inner.calls == 1
+
+
+def test_terminal_report_cannot_authorize_matrix(
+    runner: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    checked = runner.validate_terminal_static_configuration()
+    client = _terminal_client(
+        runner,
+        [_terminal_text(_unsupported()), _terminal_text(_final_claims())],
+    )
+    probes, stopped = runner.execute_terminal_probes(client, checked)
+    payload = runner.terminal_report_payload(
+        actual_sdk_version="1.8.0",
+        live_call_attempts=2,
+        stopped_on=stopped,
+        probes=probes,
+    )
+    runner.reject_unsafe_report(payload)
+    assert payload["schema_version"] == "wilvor.decision.live_terminal_probe.v1"
+    assert "safety_gate" not in payload
+    assert "quality_gate" not in payload
+    rendered = json.dumps(payload)
+    assert runner.TERMINAL_TOOL_CALL_ID not in rendered
+    assert runner.TERMINAL_CORRELATION_ID not in rendered
+    assert "risk-9" not in rendered
+    assert "risk_score" not in rendered
+    path = tmp_path / "terminal.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def explode(*_args: object, **_kwargs: object) -> str:
+        raise AssertionError("api key read")
+
+    monkeypatch.setattr(runner, "read_live_api_key", explode)
+    with pytest.raises(runner.LiveHarnessError, match="schema mismatch"):
+        runner.run_live("run-matrix", tier1_report_path=str(path))
+
+
+def test_terminal_cli_and_exit_codes(
+    runner: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    completed = {
+        "action": "run-terminal-probes",
+        "stopped_on": None,
+        "live_call_attempts": 2,
+        "expected_sdk_version": "1.8.0",
+        "actual_sdk_version": "1.8.0",
+        "probes": [
+            {"classification": "MALFORMED_TERMINAL"},
+            {"classification": "PARSED_UNEXPECTED_TERMINAL"},
+        ],
+    }
+    monkeypatch.setattr(runner, "run_terminal_probes", lambda: completed)
+    assert runner.terminal_diagnostic_exit_code(completed) == 0
+    assert runner.main(["prog", "run-terminal-probes"]) == 0
+    assert runner.resolve_cli(["prog", "run-wire-probes"]) == ("run-wire-probes", None)
+    assert runner.resolve_cli(["prog", "run-tier1"]) == ("run-tier1", None)
+    with pytest.raises(runner.LiveHarnessError, match="tier1 report"):
+        runner.resolve_cli(["prog", "run-matrix"])
+    for stopped in (
+        "AUTH_BLOCKED",
+        "RATE_LIMITED",
+        "TRANSIENT_FAILURE",
+        "LOCAL_HARNESS_FAILURE",
+        "CALL_BUDGET_EXCEEDED",
+    ):
+        partial = {**completed, "stopped_on": stopped, "probes": [{"classification": stopped}]}
+        assert runner.terminal_diagnostic_exit_code(partial) == 1
+        monkeypatch.setattr(runner, "run_terminal_probes", lambda payload=partial: payload)
+        assert runner.main(["prog", "run-terminal-probes"]) == 1

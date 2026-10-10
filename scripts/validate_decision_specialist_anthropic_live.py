@@ -30,7 +30,12 @@ if str(SHARED_DIR) not in sys.path:
     sys.path.insert(0, str(SHARED_DIR))
 
 from wilvor_ai.contracts import TemporalScope, ToolResultStatus  # noqa: E402
-from wilvor_ai.decision_model_contracts import DecisionModelTurnRequest  # noqa: E402
+from wilvor_ai.decision_model_contracts import (  # noqa: E402
+    DecisionEvidenceSnapshot,
+    DecisionModelTurnRequest,
+    DecisionUnsupportedReason,
+)
+from wilvor_ai.model_contracts import ModelDecisionKind  # noqa: E402
 from wilvor_ai.decision_specialist import (  # noqa: E402
     DECISION_SPECIALIST_INSTRUCTION_REF,
     MAX_MODEL_TURNS,
@@ -52,21 +57,32 @@ from wilvor_ai.providers.anthropic_decision_messages import (  # noqa: E402
     AnthropicDecisionMessagesProvider,
     build_decision_messages_kwargs,
     decision_terminal_json_schema,
+    parse_decision_messages_response,
+)
+from wilvor_ai.providers.errors import (  # noqa: E402
+    ModelProviderContextLengthError,
+    ModelProviderMalformedDecisionError,
 )
 from wilvor_operational import readers  # noqa: E402
 
 
 LIVE_OPT_IN_ENV = "WILVOR_RUN_LIVE_DECISION_ANTHROPIC"
 WIRE_OPT_IN_ENV = "WILVOR_RUN_LIVE_DECISION_ANTHROPIC_WIRE"
+TERMINAL_OPT_IN_ENV = "WILVOR_RUN_LIVE_DECISION_ANTHROPIC_TERMINAL"
 API_KEY_ENV = "ANTHROPIC_API_KEY"
 LIVE_REPORT_SCHEMA_VERSION = "wilvor.decision.live_validation.v1"
 WIRE_REPORT_SCHEMA_VERSION = "wilvor.decision.live_wire_probe.v1"
+TERMINAL_REPORT_SCHEMA_VERSION = "wilvor.decision.live_terminal_probe.v1"
 LIVE_MAX_RETRIES = 0
 LIVE_TIMEOUT_SECONDS = 240.0
 TIER1_MAX_LIVE_CALLS = 16
 MATRIX_MAX_LIVE_CALLS = 80
 WIRE_MAX_LIVE_CALLS = 3
+TERMINAL_MAX_LIVE_CALLS = 2
 EXPECTED_SDK_VERSION = "1.8.0"
+TERMINAL_TOOL_CALL_ID = "decision-terminal-seed"
+TERMINAL_CORRELATION_ID = "corr-dlv2-terminal"
+TERMINAL_EVIDENCE_REF = "de-1"
 QUALITY_THRESHOLD = 21
 MATRIX_EXECUTION_COUNT = 26
 TIER1_EXECUTION_COUNT = 6
@@ -148,7 +164,6 @@ REFUSAL_PROFILES = frozenset(
 LIVE_ACTIONS = frozenset({"run-tier1", "run-matrix"})
 WIRE_ACTION = "run-wire-probes"
 WIRE_ACTIONS = frozenset({WIRE_ACTION})
-ACTIONS = ("dry-run", "run-tier1", "run-matrix", WIRE_ACTION)
 WIRE_CLASSIFICATIONS = (
     "ACCEPTED",
     "REJECTED_INVALID_REQUEST",
@@ -172,6 +187,62 @@ WIRE_PROBE_SPECS = (
     ("A", "strict_tools_only"),
     ("B", "terminal_schema_only"),
     ("C", "terminal_plus_non_strict_tools"),
+)
+TERMINAL_ACTION = "run-terminal-probes"
+TERMINAL_ACTIONS = frozenset({TERMINAL_ACTION})
+ACTIONS = ("dry-run", "run-tier1", "run-matrix", WIRE_ACTION, TERMINAL_ACTION)
+TERMINAL_PROBE_SPECS = (
+    ("T-A", "unsupported_route_terminal", "UNSUPPORTED"),
+    ("T-B", "high_risk_final_claims_terminal", "FINAL_CLAIMS"),
+)
+TERMINAL_DIAGNOSTIC_CLASSIFICATIONS = frozenset(
+    {
+        "PARSED_EXPECTED_TERMINAL",
+        "PARSED_UNEXPECTED_TERMINAL",
+        "NON_TERMINAL_TOOL_USE",
+        "MALFORMED_TERMINAL",
+        "REJECTED_INVALID_REQUEST",
+    }
+)
+TERMINAL_STOP_CLASSIFICATIONS = frozenset(
+    {
+        "AUTH_BLOCKED",
+        "RATE_LIMITED",
+        "TRANSIENT_FAILURE",
+        "LOCAL_HARNESS_FAILURE",
+        "CALL_BUDGET_EXCEEDED",
+    }
+)
+TERMINAL_TRUSTED_KEYS = frozenset(
+    {
+        "tool_call_id",
+        "correlation_id",
+        "tables",
+        "now_epoch",
+        "query_timestamp_utc",
+    }
+)
+TERMINAL_PARSER_ERROR_CODES = frozenset(
+    {
+        "unexpected_response_type",
+        "unexpected_response_role",
+        "unexpected_response_model",
+        "malformed_message_id",
+        "malformed_content",
+        "unexpected_content_block",
+        "malformed_terminal_json",
+        "invalid_model_decision",
+        "unexpected_stop_reason",
+        "max_tokens",
+        "stop_sequence_not_configured",
+        "pause_turn",
+        "tool_use_without_tool_use_blocks",
+        "contradictory_terminal_decision",
+        "malformed_tool_use",
+        "invalid_proposed_tool_call",
+        "end_turn_contains_tool_use",
+        "model_context_window_exceeded",
+    }
 )
 TRUSTED_ARGUMENT_NAMES = frozenset(
     {
@@ -2024,6 +2095,7 @@ class BudgetedRecordingMessagesClient:
         if inner is None or not callable(getattr(inner, "messages_create", None)):
             raise TypeError("inner must implement messages_create")
         if max_calls not in {
+            TERMINAL_MAX_LIVE_CALLS,
             WIRE_MAX_LIVE_CALLS,
             TIER1_MAX_LIVE_CALLS,
             MATRIX_MAX_LIVE_CALLS,
@@ -3075,10 +3147,519 @@ def run_wire_probes(
     return payload
 
 
+def _risk_facts(data: Any) -> None:
+    if not isinstance(data, Mapping):
+        raise LiveHarnessError("terminal risk data missing")
+    if data.get("aircraft_id") != AIRCRAFT_ID:
+        raise LiveHarnessError("terminal aircraft mismatch")
+    risk = data.get("risk")
+    if not isinstance(risk, Mapping):
+        raise LiveHarnessError("terminal risk missing")
+    if risk.get("presence") != "PRESENT":
+        raise LiveHarnessError("terminal risk presence mismatch")
+    if risk.get("risk_level") != "HIGH":
+        raise LiveHarnessError("terminal risk level mismatch")
+    if risk.get("risk_score") != 80:
+        raise LiveHarnessError("terminal risk score mismatch")
+
+
+def terminal_high_risk_invocation() -> Any:
+    """Run CURRENT_HIGH through the real DecisionToolsAdapter."""
+
+    runtime = DecisionToolsRuntime(
+        tables=build_fixture("CURRENT_HIGH"),
+        now_epoch=FIXED_NOW_EPOCH,
+        query_timestamp_utc=FIXED_NOW_UTC,
+        correlation_id=TERMINAL_CORRELATION_ID,
+    )
+    return DecisionToolsAdapter(runtime).invoke(
+        RISK_TOOL,
+        {"aircraft_id": AIRCRAFT_ID},
+        tool_call_id=TERMINAL_TOOL_CALL_ID,
+    )
+
+
+def terminal_high_risk_snapshot() -> DecisionEvidenceSnapshot:
+    """Seed de-1 from the real CURRENT_HIGH adapter result."""
+
+    invocation = terminal_high_risk_invocation()
+    raw = invocation.raw_tool_result
+    if raw.status is not ToolResultStatus.SUCCESS:
+        raise LiveHarnessError("terminal raw status mismatch")
+    if raw.temporal_scope is not TemporalScope.CURRENT:
+        raise LiveHarnessError("terminal raw scope mismatch")
+    _risk_facts(raw.data)
+    projection = invocation.model_projection
+    if projection.status is not ToolResultStatus.SUCCESS:
+        raise LiveHarnessError("terminal projection status mismatch")
+    if projection.temporal_scope is not TemporalScope.CURRENT:
+        raise LiveHarnessError("terminal projection scope mismatch")
+    _risk_facts(projection.data)
+    snapshot = DecisionEvidenceSnapshot(
+        evidence_ref=TERMINAL_EVIDENCE_REF,
+        projection=projection,
+    )
+    if snapshot.evidence_ref != TERMINAL_EVIDENCE_REF:
+        raise LiveHarnessError("terminal evidence ref mismatch")
+    return snapshot
+
+
+def terminal_turn_request(
+    user_text: str,
+    snapshots: tuple[DecisionEvidenceSnapshot, ...] = (),
+) -> DecisionModelTurnRequest:
+    return DecisionModelTurnRequest(
+        user_text=user_text,
+        instruction_ref=DECISION_SPECIALIST_INSTRUCTION_REF,
+        tools=decision_tool_schemas(),
+        evidence_snapshots=snapshots,
+        validation_feedback=None,
+    )
+
+
+def strip_terminal_output_config(built: Mapping[str, Any]) -> dict[str, Any]:
+    """Copy production kwargs and delete only output_config."""
+
+    if "output_config" not in built:
+        raise LiveHarnessError("terminal output_config missing")
+    control = copy.deepcopy(dict(built))
+    copied = copy.deepcopy(dict(built))
+    del copied["output_config"]
+    if dict(built) != control:
+        raise LiveHarnessError("terminal base kwargs mutated")
+    if set(copied) != set(control) - {"output_config"}:
+        raise LiveHarnessError("terminal probe changed request fields")
+    for key, value in copied.items():
+        if value != control[key]:
+            raise LiveHarnessError("terminal probe changed request fields")
+    tools = copied.get("tools")
+    if not isinstance(tools, list) or len(tools) != 4:
+        raise LiveHarnessError("terminal tools missing")
+    if any(not isinstance(tool, Mapping) or tool.get("strict") is not True for tool in tools):
+        raise LiveHarnessError("terminal strict tool missing")
+    if copied.get("tool_choice") != {"type": "auto"}:
+        raise LiveHarnessError("terminal tool_choice changed")
+    return copied
+
+
+def terminal_request_fingerprint(
+    request: DecisionModelTurnRequest,
+    kwargs: Mapping[str, Any],
+) -> dict[str, Any]:
+    tools = kwargs.get("tools") if "tools" in kwargs else None
+    tool_list = tools if isinstance(tools, list) else []
+    strict_tool_count = sum(
+        1
+        for tool in tool_list
+        if isinstance(tool, Mapping) and tool.get("strict") is True
+    )
+    return {
+        "has_tools": "tools" in kwargs and bool(tool_list),
+        "tool_count": len(tool_list) if "tools" in kwargs else 0,
+        "strict_tool_count": strict_tool_count if "tools" in kwargs else 0,
+        "has_tool_choice": "tool_choice" in kwargs,
+        "has_output_config": "output_config" in kwargs,
+        "evidence_snapshot_count": len(request.evidence_snapshots),
+        "evidence_refs": [item.evidence_ref for item in request.evidence_snapshots],
+    }
+
+
+def terminal_trusted_keys_in_tree(value: Any) -> tuple[str, ...]:
+    """Return trusted runtime key names. Plain instruction text has no keys."""
+
+    found: list[str] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, Mapping):
+            for key, item in node.items():
+                if isinstance(key, str) and key.casefold() in TERMINAL_TRUSTED_KEYS:
+                    found.append(key)
+                walk(item)
+        elif isinstance(node, list):
+            for item in node:
+                walk(item)
+
+    walk(value)
+    return tuple(found)
+
+
+def assert_terminal_evidence_untrusted(
+    snapshot: DecisionEvidenceSnapshot | None,
+    kwargs: Mapping[str, Any],
+) -> None:
+    """Scan evidence payloads for trusted keys, not the system instruction."""
+
+    messages = kwargs.get("messages")
+    if snapshot is not None and terminal_trusted_keys_in_tree(snapshot.to_dict()):
+        raise LiveHarnessError("terminal trusted field in evidence")
+    if terminal_trusted_keys_in_tree(messages):
+        raise LiveHarnessError("terminal trusted field in messages")
+    visible = {
+        "system": kwargs.get("system"),
+        "messages": messages,
+        "tools": kwargs.get("tools"),
+        "tool_choice": kwargs.get("tool_choice"),
+    }
+    rendered = json.dumps(visible)
+    if TERMINAL_TOOL_CALL_ID in rendered or TERMINAL_CORRELATION_ID in rendered:
+        raise LiveHarnessError("terminal runtime id leaked")
+
+
+def validate_terminal_static_configuration() -> dict[str, Any]:
+    """Build T-A and T-B offline. Does not read opt-in, key, or the SDK."""
+
+    snapshot = terminal_high_risk_snapshot()
+    requests = {
+        "T-A": terminal_turn_request(PROMPT_ROUTE),
+        "T-B": terminal_turn_request(PROMPT_HIGH, (snapshot,)),
+    }
+    request_controls = {
+        probe_id: copy.deepcopy(request.to_dict()) for probe_id, request in requests.items()
+    }
+    built: dict[str, dict[str, Any]] = {}
+    probes: dict[str, dict[str, Any]] = {}
+    for probe_id, request in requests.items():
+        produced = build_decision_messages_kwargs(request, DEFAULT_MODEL_ID)
+        if not isinstance(produced, dict):
+            raise LiveHarnessError("terminal base kwargs invalid")
+        built[probe_id] = produced
+        probes[probe_id] = strip_terminal_output_config(produced)
+        if request.to_dict() != request_controls[probe_id]:
+            raise LiveHarnessError("terminal request mutated")
+    expected = {
+        "T-A": {
+            "has_tools": True,
+            "tool_count": 4,
+            "strict_tool_count": 4,
+            "has_tool_choice": True,
+            "has_output_config": False,
+            "evidence_snapshot_count": 0,
+            "evidence_refs": [],
+        },
+        "T-B": {
+            "has_tools": True,
+            "tool_count": 4,
+            "strict_tool_count": 4,
+            "has_tool_choice": True,
+            "has_output_config": False,
+            "evidence_snapshot_count": 1,
+            "evidence_refs": [TERMINAL_EVIDENCE_REF],
+        },
+    }
+    fingerprints = {
+        probe_id: terminal_request_fingerprint(requests[probe_id], kwargs)
+        for probe_id, kwargs in probes.items()
+    }
+    for probe_id, fingerprint in expected.items():
+        if fingerprints[probe_id] != fingerprint:
+            raise LiveHarnessError("terminal probe fingerprint mismatch")
+        assert_terminal_evidence_untrusted(
+            None if probe_id == "T-A" else snapshot,
+            probes[probe_id],
+        )
+    if len(probes["T-A"]["messages"]) != 1 or len(probes["T-B"]["messages"]) != 2:
+        raise LiveHarnessError("terminal evidence message mismatch")
+    return {
+        "requests": requests,
+        "built": built,
+        "probes": probes,
+        "fingerprints": fingerprints,
+        "snapshot": snapshot,
+    }
+
+
+def require_terminal_opt_in(environ: Mapping[str, str] | None = None) -> None:
+    env = os.environ if environ is None else environ
+    if env.get(TERMINAL_OPT_IN_ENV) != "1":
+        raise LiveHarnessError(
+            "terminal opt-in WILVOR_RUN_LIVE_DECISION_ANTHROPIC_TERMINAL=1 is required"
+        )
+
+
+def prepare_terminal_live(environ: Mapping[str, str] | None = None) -> str:
+    """Authorize terminal probes without the ordinary or wire opt-in."""
+
+    validate_terminal_static_configuration()
+    require_terminal_opt_in(environ)
+    return read_live_api_key(environ)
+
+
+def terminal_parser_error_code(exc: BaseException) -> str:
+    if isinstance(exc, (ModelProviderMalformedDecisionError, ModelProviderContextLengthError)):
+        message = exc.args[0] if exc.args else None
+        if isinstance(message, str) and message in TERMINAL_PARSER_ERROR_CODES:
+            return message
+    return "unclassified_parser_error"
+
+
+def classify_terminal_parse(probe_id: str, decision: Any) -> str:
+    if getattr(decision, "kind", None) is ModelDecisionKind.TOOL_CALLS:
+        return "NON_TERMINAL_TOOL_USE"
+    if probe_id == "T-A":
+        if (
+            decision.kind is ModelDecisionKind.UNSUPPORTED
+            and decision.unsupported_reason
+            is DecisionUnsupportedReason.ROUTE_GENERATION_NOT_IMPLEMENTED
+        ):
+            return "PARSED_EXPECTED_TERMINAL"
+        return "PARSED_UNEXPECTED_TERMINAL"
+    if probe_id == "T-B" and decision.kind is ModelDecisionKind.FINAL_CLAIMS:
+        return "PARSED_EXPECTED_TERMINAL"
+    if probe_id == "T-B":
+        return "PARSED_UNEXPECTED_TERMINAL"
+    return "LOCAL_HARNESS_FAILURE"
+
+
+def _claim_kind_name(claim: Any) -> str:
+    rendered = claim.to_dict()
+    kind = rendered.get("kind") if isinstance(rendered, Mapping) else None
+    if not isinstance(kind, str) or not kind:
+        raise LiveHarnessError("terminal claim kind missing")
+    return kind
+
+
+def _empty_terminal_parser_metadata() -> dict[str, Any]:
+    return {
+        "parsed_kind": None,
+        "unsupported_reason": None,
+        "claim_count": None,
+        "claim_kinds": None,
+        "parser_error_code": None,
+    }
+
+
+def terminal_parser_metadata(decision: Any) -> dict[str, Any]:
+    metadata = _empty_terminal_parser_metadata()
+    metadata["parsed_kind"] = decision.kind.value
+    if decision.kind is ModelDecisionKind.UNSUPPORTED and decision.unsupported_reason is not None:
+        metadata["unsupported_reason"] = decision.unsupported_reason.value
+    if decision.kind is ModelDecisionKind.FINAL_CLAIMS:
+        metadata["claim_count"] = len(decision.claims)
+        metadata["claim_kinds"] = [_claim_kind_name(claim) for claim in decision.claims]
+    return metadata
+
+
+def _terminal_probe_result(
+    probe_id: str,
+    name: str,
+    expected_kind: str,
+    classification: str,
+    fingerprint: dict[str, Any],
+    record: RecordedProviderCall | None,
+    parser_metadata: Mapping[str, Any],
+    diagnostics: Mapping[str, Any],
+) -> dict[str, Any]:
+    metadata = _empty_wire_metadata()
+    if record is not None:
+        metadata = {
+            "stop_reason": record.stop_reason,
+            "selected_tool_names": list(record.selected_tool_names),
+            "provider_tool_id_present": record.provider_tool_id_present,
+            "message_id": record.message_id,
+            "request_id": record.request_id,
+            "input_tokens": record.input_tokens,
+            "output_tokens": record.output_tokens,
+            "latency_ms": record.latency_ms,
+        }
+    payload = {
+        "probe_id": probe_id,
+        "name": name,
+        "classification": classification,
+        "expected_terminal_kind": expected_kind,
+        "request_fingerprint": fingerprint,
+        **metadata,
+        "parsed_kind": parser_metadata.get("parsed_kind"),
+        "unsupported_reason": parser_metadata.get("unsupported_reason"),
+        "claim_count": parser_metadata.get("claim_count"),
+        "claim_kinds": parser_metadata.get("claim_kinds"),
+        "parser_error_code": parser_metadata.get("parser_error_code"),
+        "provider_error_class": diagnostics.get("provider_error_class"),
+        "provider_http_status": diagnostics.get("provider_http_status"),
+        "provider_error_type": diagnostics.get("provider_error_type"),
+        "provider_error_code": diagnostics.get("provider_error_code"),
+        "provider_error_message": diagnostics.get("provider_error_message"),
+        "provider_error_request_id": diagnostics.get("provider_error_request_id"),
+    }
+    if probe_id == "T-A":
+        payload["expected_unsupported_reason"] = (
+            DecisionUnsupportedReason.ROUTE_GENERATION_NOT_IMPLEMENTED.value
+        )
+    return payload
+
+
+def execute_terminal_probes(
+    client: BudgetedRecordingMessagesClient,
+    checked: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Send T-A and T-B. Parse accepted responses with the production parser."""
+
+    probes: list[dict[str, Any]] = []
+    stopped_on = None
+    names = {probe_id: name for probe_id, name, _expected in TERMINAL_PROBE_SPECS}
+    expected_kinds = {probe_id: expected for probe_id, _name, expected in TERMINAL_PROBE_SPECS}
+    for probe_id, _name, _expected in TERMINAL_PROBE_SPECS:
+        kwargs = checked["probes"][probe_id]
+        fingerprint = checked["fingerprints"][probe_id]
+        record_count = len(client.records)
+        record = None
+        diagnostics = empty_provider_error_diagnostics()
+        parser_metadata = _empty_terminal_parser_metadata()
+        try:
+            response = client.messages_create(**kwargs)
+        except Exception as exc:
+            classification = classify_wire_exception(exc)
+            if not isinstance(exc, (CallBudgetExceeded, LiveHarnessError)):
+                diagnostics = extract_provider_error_diagnostics(exc)
+        else:
+            decision = None
+            try:
+                decision = parse_decision_messages_response(response, DEFAULT_MODEL_ID)
+            except (ModelProviderMalformedDecisionError, ModelProviderContextLengthError) as exc:
+                classification = "MALFORMED_TERMINAL"
+                parser_metadata["parser_error_code"] = terminal_parser_error_code(exc)
+            except Exception:
+                classification = "LOCAL_HARNESS_FAILURE"
+            else:
+                classification = classify_terminal_parse(probe_id, decision)
+                if classification != "LOCAL_HARNESS_FAILURE":
+                    parser_metadata = terminal_parser_metadata(decision)
+            finally:
+                del response
+                del decision
+            if len(client.records) == record_count + 1:
+                record = client.records[-1]
+            elif classification in TERMINAL_DIAGNOSTIC_CLASSIFICATIONS:
+                classification = "LOCAL_HARNESS_FAILURE"
+        client.consume_transient_provider_ids()
+        probes.append(
+            _terminal_probe_result(
+                probe_id,
+                names[probe_id],
+                expected_kinds[probe_id],
+                classification,
+                fingerprint,
+                record,
+                parser_metadata,
+                diagnostics,
+            )
+        )
+        if classification not in TERMINAL_DIAGNOSTIC_CLASSIFICATIONS:
+            stopped_on = classification
+            break
+    return probes, stopped_on
+
+
+def terminal_report_directory() -> Path:
+    return REPO_ROOT / "test-results" / "live-anthropic" / "decision-terminal"
+
+
+def terminal_report_payload(
+    *,
+    actual_sdk_version: str | None,
+    live_call_attempts: int,
+    stopped_on: str | None,
+    probes: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "schema_version": TERMINAL_REPORT_SCHEMA_VERSION,
+        "action": TERMINAL_ACTION,
+        "model": DEFAULT_MODEL_ID,
+        "expected_sdk_version": EXPECTED_SDK_VERSION,
+        "actual_sdk_version": actual_sdk_version,
+        "live_call_attempts": live_call_attempts,
+        "max_approved_live_calls": TERMINAL_MAX_LIVE_CALLS,
+        "max_retries": LIVE_MAX_RETRIES,
+        "timeout_seconds": LIVE_TIMEOUT_SECONDS,
+        "stopped_on": stopped_on,
+        "probes": list(probes),
+    }
+
+
+def write_terminal_report(payload: Mapping[str, Any]) -> Path:
+    if not artifacts_dir_is_gitignored():
+        raise LiveHarnessError("test-results is not gitignored")
+    reject_unsafe_report(payload)
+    directory = terminal_report_directory()
+    directory.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    path = directory / f"{stamp}.json"
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
+def terminal_diagnostic_exit_code(payload: Mapping[str, Any]) -> int:
+    """A finished two-probe diagnostic exits 0 even when the model output is unusable."""
+
+    if payload.get("stopped_on") is not None:
+        return 1
+    probes = payload.get("probes")
+    if not isinstance(probes, list) or len(probes) != len(TERMINAL_PROBE_SPECS):
+        return 1
+    for probe in probes:
+        if not isinstance(probe, Mapping):
+            return 1
+        if probe.get("classification") not in TERMINAL_DIAGNOSTIC_CLASSIFICATIONS:
+            return 1
+    return 0
+
+
+def run_terminal_probes(
+    environ: Mapping[str, str] | None = None,
+    *,
+    version_lookup: Callable[[], str] | None = None,
+    sdk_client_factory: Callable[[str, Any], Any] | None = None,
+) -> dict[str, Any]:
+    """Run T-A and T-B. The terminal opt-in does not authorize other live actions."""
+
+    key = prepare_terminal_live(environ)
+    lookup = installed_anthropic_sdk_version if version_lookup is None else version_lookup
+    actual: str | None = None
+    try:
+        try:
+            sdk = import_anthropic_sdk()
+            try:
+                actual = lookup()
+            except Exception as exc:
+                raise LiveHarnessError("anthropic sdk version unavailable") from exc
+            if actual != EXPECTED_SDK_VERSION:
+                raise LiveHarnessError("anthropic sdk version mismatch")
+            if sdk_client_factory is None:
+                sdk_client = construct_live_sdk_client(key, sdk)
+            else:
+                sdk_client = sdk_client_factory(key, sdk)
+        except LiveHarnessError:
+            payload = terminal_report_payload(
+                actual_sdk_version=actual,
+                live_call_attempts=0,
+                stopped_on="LOCAL_HARNESS_FAILURE",
+                probes=[],
+            )
+            write_terminal_report(payload)
+            return payload
+    finally:
+        key = ""
+        del key
+    client = BudgetedRecordingMessagesClient(
+        AnthropicSDKMessagesClient(sdk_client),
+        max_calls=TERMINAL_MAX_LIVE_CALLS,
+    )
+    checked = validate_terminal_static_configuration()
+    probes, stopped_on = execute_terminal_probes(client, checked)
+    payload = terminal_report_payload(
+        actual_sdk_version=actual,
+        live_call_attempts=client.current_call_count,
+        stopped_on=stopped_on,
+        probes=probes,
+    )
+    write_terminal_report(payload)
+    return payload
+
+
 def dry_run() -> dict[str, Any]:
     validate_static_configuration()
     fixtures = validate_fixtures()
     wire = validate_wire_static_configuration()
+    terminal = validate_terminal_static_configuration()
     return {
         "action": "dry-run",
         "live_report_schema": LIVE_REPORT_SCHEMA_VERSION,
@@ -3105,6 +3686,19 @@ def dry_run() -> dict[str, Any]:
                 "request_fingerprint": wire["fingerprints"][probe_id],
             }
             for probe_id, name in WIRE_PROBE_SPECS
+        ],
+        "terminal_probe_count": len(TERMINAL_PROBE_SPECS),
+        "terminal_max_live_calls": TERMINAL_MAX_LIVE_CALLS,
+        "terminal_expected_sdk_version": EXPECTED_SDK_VERSION,
+        "terminal_actual_sdk_version": None,
+        "terminal_probes": [
+            {
+                "probe_id": probe_id,
+                "name": name,
+                "expected_terminal_kind": expected_kind,
+                "request_fingerprint": terminal["fingerprints"][probe_id],
+            }
+            for probe_id, name, expected_kind in TERMINAL_PROBE_SPECS
         ],
         "tier1_executions": execution_count(TIER1_SPECS),
         "matrix_executions": execution_count(MATRIX_SPECS),
@@ -3133,13 +3727,13 @@ def dry_run() -> dict[str, Any]:
 def resolve_cli(argv: Sequence[str]) -> tuple[str, str | None]:
     usage = (
         "usage: python scripts/validate_decision_specialist_anthropic_live.py "
-        "{dry-run|run-tier1|run-matrix --tier1-report PATH|run-wire-probes}"
+        "{dry-run|run-tier1|run-matrix --tier1-report PATH|run-wire-probes|run-terminal-probes}"
     )
     args = list(argv)
     if len(args) < 2 or args[1] not in ACTIONS:
         raise SystemExit(usage)
     action = args[1]
-    if action in {"dry-run", "run-tier1", WIRE_ACTION}:
+    if action in {"dry-run", "run-tier1", WIRE_ACTION, TERMINAL_ACTION}:
         if len(args) != 2:
             raise SystemExit(usage)
         return action, None
@@ -3173,6 +3767,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         )
         return wire_diagnostic_exit_code(payload)
+    if action == TERMINAL_ACTION:
+        payload = run_terminal_probes()
+        print(
+            json.dumps(
+                {
+                    "action": payload["action"],
+                    "stopped_on": payload["stopped_on"],
+                    "live_call_attempts": payload["live_call_attempts"],
+                    "expected_sdk_version": payload["expected_sdk_version"],
+                    "actual_sdk_version": payload["actual_sdk_version"],
+                    "probe_classifications": [
+                        item["classification"] for item in payload["probes"]
+                    ],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return terminal_diagnostic_exit_code(payload)
     payload = run_live(action, tier1_report_path=tier1_report_path)
     print(
         json.dumps(
