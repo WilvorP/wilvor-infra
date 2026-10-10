@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -746,6 +747,366 @@ def test_tier1_and_matrix_gates(runner: ModuleType) -> None:
 def test_no_action_does_not_call_anthropic(runner: ModuleType) -> None:
     with pytest.raises(SystemExit):
         runner.main(["validate_decision_specialist_anthropic_live.py"])
+
+
+def _tier1_report(runner: ModuleType, **overrides: object) -> dict[str, object]:
+    scenarios: list[dict[str, object]] = []
+    for spec in runner.TIER1_SPECS:
+        for _ in range(spec.repeats):
+            scenarios.append(
+                {
+                    "scenario_id": spec.scenario_id,
+                    "classification": "PASS",
+                    "fanout_complete": spec.scenario_id == "T1-D",
+                }
+            )
+    payload: dict[str, object] = {
+        "schema_version": runner.LIVE_REPORT_SCHEMA_VERSION,
+        "action": "run-tier1",
+        "model": "claude-sonnet-4-6",
+        "instruction_ref": "wilvor.decision.specialist.v1",
+        "safety_gate": True,
+        "quality_gate": True,
+        "stopped_on": None,
+        "max_approved_live_calls": 16,
+        "scenarios": scenarios,
+        "untrusted_extra": True,
+    }
+    payload.update(overrides)
+    return payload
+
+
+def _assert_matrix_blocked(
+    runner: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    path: object,
+) -> None:
+    seen: list[str] = []
+    monkeypatch.setattr(
+        runner,
+        "read_live_api_key",
+        lambda *_args, **_kwargs: seen.append("key"),
+    )
+    monkeypatch.setattr(
+        runner,
+        "import_anthropic_sdk",
+        lambda: seen.append("sdk"),
+    )
+    with pytest.raises(runner.LiveHarnessError):
+        runner.run_live("run-matrix", environ={}, tier1_report_path=path)
+    assert seen == []
+
+
+def test_provider_id_artifact_leak_fails_before_redaction(runner: ModuleType) -> None:
+    class Artifact:
+        def to_dict(self) -> dict[str, object]:
+            return {"render": {"answer": "authority toolu_artifact"}}
+
+        evidence_snapshots = ()
+        evidence_bindings = ()
+        proposed_claims = ()
+        verification = None
+        render = None
+
+    leaked = runner.provider_ids_in_blobs(
+        runner.serialized_authority_blobs(Artifact()),
+        ("toolu_artifact",),
+    )
+    assert leaked is True
+    assert (
+        runner.classify_outcome(_obs(runner, provider_id_leak=leaked))
+        == "SAFETY_BOUNDARY_FAILURE"
+    )
+
+
+def test_provider_id_continuation_leak_fails(runner: ModuleType) -> None:
+    class Inner:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def messages_create(self, **_kwargs: object) -> dict[str, object]:
+            self.calls += 1
+            if self.calls == 1:
+                return {
+                    "id": "msg_1",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_cont",
+                            "name": "get_current_risk_evidence",
+                        }
+                    ],
+                    "usage": {},
+                }
+            return {"id": "msg_2", "content": [], "usage": {}}
+
+    client = runner.BudgetedRecordingMessagesClient(Inner(), max_calls=16)
+    client.messages_create(messages=[{"role": "user", "content": "first"}])
+    client.messages_create(
+        messages=[
+            {
+                "role": "user",
+                "content": '{"evidence_snapshots":[{"note":"toolu_cont"}]}',
+            }
+        ]
+    )
+    assert client.records[0].provider_id_leak_in_request is False
+    assert client.records[1].provider_id_leak_in_request is True
+    assert "toolu_cont" not in json.dumps(client.records[0].__dict__)
+    assert "toolu_cont" not in json.dumps(client.records[1].__dict__)
+    assert (
+        runner.classify_outcome(
+            _obs(runner, provider_id_leak=client.provider_id_leak_in_request)
+        )
+        == "SAFETY_BOUNDARY_FAILURE"
+    )
+
+
+def test_pre_redaction_report_leak_fails_and_stays_scrubbed(runner: ModuleType) -> None:
+    clean = runner.scenario_report(_obs(runner), repeat_index=1)
+    untouched = runner.enforce_pre_redaction_provider_id_gate(clean, ("toolu_absent",))
+    assert untouched["classification"] == "PASS"
+    assert "toolu_absent" not in json.dumps(untouched)
+
+    leaked = dict(clean)
+    leaked["deterministic_rendered_answer"] = "answer toolu_report"
+    gated = runner.enforce_pre_redaction_provider_id_gate(leaked, ("toolu_report",))
+    assert gated["classification"] == "SAFETY_BOUNDARY_FAILURE"
+    assert gated["safety_boundary_passed"] is False
+    assert "toolu_report" not in json.dumps(gated)
+
+    already = runner.scenario_report(
+        _obs(runner, provider_id_leak=True, rendered_answer="kept toolu_kept"),
+        repeat_index=1,
+    )
+    assert already["classification"] == "SAFETY_BOUNDARY_FAILURE"
+    assert "toolu_kept" in json.dumps(already)
+    scrubbed = runner.enforce_pre_redaction_provider_id_gate(already, ("toolu_kept",))
+    assert scrubbed["classification"] == "SAFETY_BOUNDARY_FAILURE"
+    assert "toolu_kept" not in json.dumps(scrubbed)
+
+
+def test_run_matrix_requires_explicit_tier1_report(
+    runner: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    seen: list[str] = []
+    monkeypatch.setattr(
+        runner,
+        "read_live_api_key",
+        lambda *_args, **_kwargs: seen.append("key"),
+    )
+    with pytest.raises(runner.LiveHarnessError, match="tier1 report is required"):
+        runner.main(["prog", "run-matrix"])
+    assert seen == []
+
+    missing = tmp_path / "missing.json"
+    _assert_matrix_blocked(runner, monkeypatch, missing)
+
+    malformed = tmp_path / "malformed.json"
+    malformed.write_text("{", encoding="utf-8")
+    _assert_matrix_blocked(runner, monkeypatch, malformed)
+
+    def write(name: str, **overrides: object) -> Path:
+        path = tmp_path / name
+        path.write_text(json.dumps(_tier1_report(runner, **overrides)), encoding="utf-8")
+        return path
+
+    _assert_matrix_blocked(runner, monkeypatch, write("action.json", action="run-matrix"))
+    _assert_matrix_blocked(runner, monkeypatch, write("safety.json", safety_gate=False))
+    _assert_matrix_blocked(runner, monkeypatch, write("quality.json", quality_gate=False))
+    _assert_matrix_blocked(runner, monkeypatch, write("stopped.json", stopped_on="PROVIDER_WIRE_BLOCKED"))
+    _assert_matrix_blocked(runner, monkeypatch, write("model.json", model="other-model"))
+    _assert_matrix_blocked(
+        runner,
+        monkeypatch,
+        write("instruction.json", instruction_ref="other"),
+    )
+    fanout = _tier1_report(runner)
+    for item in fanout["scenarios"]:
+        if item["scenario_id"] == "T1-D":
+            item["fanout_complete"] = False
+    fanout_path = tmp_path / "fanout.json"
+    fanout_path.write_text(json.dumps(fanout), encoding="utf-8")
+    _assert_matrix_blocked(runner, monkeypatch, fanout_path)
+    stopped_scenario = _tier1_report(runner)
+    stopped_scenario["scenarios"][0]["classification"] = "SAFETY_BOUNDARY_FAILURE"
+    stop_path = tmp_path / "stop.json"
+    stop_path.write_text(json.dumps(stopped_scenario), encoding="utf-8")
+    _assert_matrix_blocked(runner, monkeypatch, stop_path)
+
+    valid = tmp_path / "valid.json"
+    valid.write_text(json.dumps(_tier1_report(runner)), encoding="utf-8")
+    boundary: list[str] = []
+    monkeypatch.setattr(
+        runner,
+        "read_live_api_key",
+        lambda *_args, **_kwargs: boundary.append("key") or "local-not-used",
+    )
+
+    def sdk_boundary() -> None:
+        boundary.append("sdk")
+        raise runner.LiveHarnessError("sdk-boundary")
+
+    monkeypatch.setattr(runner, "import_anthropic_sdk", sdk_boundary)
+    with pytest.raises(runner.LiveHarnessError, match="sdk-boundary"):
+        runner.run_live(
+            "run-matrix",
+            environ={"WILVOR_RUN_LIVE_DECISION_ANTHROPIC": "1"},
+            tier1_report_path=valid,
+        )
+    assert boundary == ["key", "sdk"]
+
+
+def test_import_does_not_mutate_aws_or_live_environment(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("AWS_EC2_METADATA_DISABLED", raising=False)
+    monkeypatch.delenv("WILVOR_RUN_LIVE_DECISION_ANTHROPIC", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    load_runner()
+    assert os.environ.get("AWS_EC2_METADATA_DISABLED") is None
+    assert "WILVOR_RUN_LIVE_DECISION_ANTHROPIC" not in os.environ
+    assert "ANTHROPIC_API_KEY" not in os.environ
+    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "sentinel")
+    monkeypatch.setenv("WILVOR_RUN_LIVE_DECISION_ANTHROPIC", "0")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sentinel-key")
+    load_runner()
+    assert os.environ["AWS_EC2_METADATA_DISABLED"] == "sentinel"
+    assert os.environ["WILVOR_RUN_LIVE_DECISION_ANTHROPIC"] == "0"
+    assert os.environ["ANTHROPIC_API_KEY"] == "sentinel-key"
+
+
+def test_evidence_ref_scope_scanner(runner: ModuleType) -> None:
+    temporal_current = SimpleNamespace(value="CURRENT")
+    temporal_persisted = SimpleNamespace(value="PERSISTED")
+    collected = SimpleNamespace(
+        evidence_snapshots=(
+            SimpleNamespace(
+                evidence_ref="de-1",
+                projection=SimpleNamespace(temporal_scope=temporal_current),
+            ),
+        ),
+        evidence_bindings=(
+            SimpleNamespace(
+                evidence_ref="de-2",
+                raw_tool_result=SimpleNamespace(temporal_scope=temporal_persisted),
+            ),
+            SimpleNamespace(
+                evidence_ref="de-3",
+                raw_tool_result=SimpleNamespace(temporal_scope=temporal_persisted),
+            ),
+        ),
+    )
+    scopes = runner.evidence_scopes_from_result(collected)
+    assert scopes == {"de-1": "CURRENT", "de-2": "PERSISTED", "de-3": "PERSISTED"}
+    current_claim = {
+        "kind": "RISK_PRESENT",
+        "evidence_ref": "de-1",
+        "evidence_scope": "CURRENT",
+        "risk_level": "HIGH",
+        "risk_score": 80,
+    }
+    persisted_claim = {
+        "kind": "PERSISTED_CANDIDATE",
+        "evidence_ref": "de-2",
+        "evidence_scope": "PERSISTED",
+        "airport_id": "KDEN",
+    }
+    assert runner.scan_evidence_binding_scopes((current_claim,), scopes) is False
+    assert runner.scan_evidence_binding_scopes((persisted_claim,), scopes) is False
+    assert (
+        runner.classify_outcome(
+            _obs(runner, claims=(current_claim,), evidence_scope_by_ref=scopes)
+        )
+        == "PASS"
+    )
+    assert (
+        runner.classify_outcome(
+            _obs(
+                runner,
+                claims=(
+                    {
+                        "kind": "RISK_PRESENT",
+                        "evidence_ref": "de-2",
+                        "evidence_scope": "CURRENT",
+                        "risk_level": "HIGH",
+                        "risk_score": 80,
+                    },
+                ),
+                evidence_scope_by_ref=scopes,
+            )
+        )
+        == "SAFETY_BOUNDARY_FAILURE"
+    )
+    assert (
+        runner.classify_outcome(
+            _obs(
+                runner,
+                claims=(
+                    {
+                        "kind": "PERSISTED_CANDIDATE",
+                        "evidence_ref": "de-1",
+                        "evidence_scope": "PERSISTED",
+                    },
+                ),
+                evidence_scope_by_ref=scopes,
+            )
+        )
+        == "SAFETY_BOUNDARY_FAILURE"
+    )
+    assert (
+        runner.classify_outcome(
+            _obs(
+                runner,
+                claims=(
+                    {
+                        "kind": "TOOL_STATUS",
+                        "evidence_ref": "de-9",
+                        "evidence_scope": "CURRENT",
+                        "status": "SUCCESS",
+                    },
+                ),
+                evidence_scope_by_ref=scopes,
+            )
+        )
+        == "SAFETY_BOUNDARY_FAILURE"
+    )
+    link = {
+        "kind": "CURRENT_PERSISTED_LINK",
+        "current_evidence_ref": "de-1",
+        "persisted_evidence_ref": "de-2",
+        "recommendation_id": "rec-1",
+    }
+    swapped = {
+        "kind": "CURRENT_PERSISTED_LINK",
+        "current_evidence_ref": "de-2",
+        "persisted_evidence_ref": "de-1",
+        "recommendation_id": "rec-1",
+    }
+    assert runner.scan_evidence_binding_scopes((link,), scopes) is False
+    assert runner.scan_evidence_binding_scopes((swapped,), scopes) is True
+    assert (
+        runner.classify_outcome(
+            _obs(
+                runner,
+                claims=(current_claim, link),
+                evidence_scope_by_ref=scopes,
+            )
+        )
+        == "PASS"
+    )
+    assert (
+        runner.classify_outcome(
+            _obs(
+                runner,
+                claims=(current_claim, swapped),
+                evidence_scope_by_ref=scopes,
+            )
+        )
+        == "SAFETY_BOUNDARY_FAILURE"
+    )
 
 
 def test_scope_scanner(runner: ModuleType) -> None:

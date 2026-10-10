@@ -23,8 +23,6 @@ from pathlib import Path
 from typing import Any
 
 
-os.environ.setdefault("AWS_EC2_METADATA_DISABLED", "true")
-
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SHARED_DIR = REPO_ROOT / "functions" / "shared"
 if str(SHARED_DIR) not in sys.path:
@@ -56,6 +54,7 @@ from wilvor_operational import readers  # noqa: E402
 
 LIVE_OPT_IN_ENV = "WILVOR_RUN_LIVE_DECISION_ANTHROPIC"
 API_KEY_ENV = "ANTHROPIC_API_KEY"
+LIVE_REPORT_SCHEMA_VERSION = "wilvor.decision.live_validation.v1"
 LIVE_MAX_RETRIES = 0
 LIVE_TIMEOUT_SECONDS = 240.0
 TIER1_MAX_LIVE_CALLS = 16
@@ -1070,6 +1069,123 @@ def scan_provider_ids(blob: str, provider_ids: Sequence[str]) -> bool:
     return any(provider_id and provider_id in blob for provider_id in provider_ids)
 
 
+def provider_ids_in_blobs(blobs: Sequence[str], provider_ids: Sequence[str]) -> bool:
+    return any(scan_provider_ids(blob, provider_ids) for blob in blobs)
+
+
+def continuation_contains_provider_ids(messages: Any, provider_ids: Sequence[str]) -> bool:
+    """True when a previously seen provider tool id is in this request."""
+
+    if not provider_ids:
+        return False
+    try:
+        blob = json.dumps(messages)
+    except TypeError:
+        blob = str(messages)
+    return scan_provider_ids(blob, provider_ids)
+
+
+def _json_blob(value: Any) -> str:
+    return json.dumps(value, default=str)
+
+
+def serialized_authority_blobs(
+    result: Any,
+    continuation_texts: Sequence[str] = (),
+) -> list[str]:
+    """In-memory serializations used only to search for provider tool ids."""
+
+    blobs: list[str] = []
+    to_dict = getattr(result, "to_dict", None)
+    if callable(to_dict):
+        blobs.append(_json_blob(to_dict()))
+    for snapshot in getattr(result, "evidence_snapshots", ()) or ():
+        snapshot_to_dict = getattr(snapshot, "to_dict", None)
+        if callable(snapshot_to_dict):
+            blobs.append(_json_blob(snapshot_to_dict()))
+    for binding in getattr(result, "evidence_bindings", ()) or ():
+        raw = getattr(binding, "raw_tool_result", None)
+        raw_to_dict = getattr(raw, "to_dict", None)
+        blobs.append(
+            _json_blob(
+                {
+                    "evidence_ref": getattr(binding, "evidence_ref", None),
+                    "raw_tool_result": raw_to_dict() if callable(raw_to_dict) else None,
+                }
+            )
+        )
+    for claim in getattr(result, "proposed_claims", ()) or ():
+        claim_to_dict = getattr(claim, "to_dict", None)
+        if callable(claim_to_dict):
+            blobs.append(_json_blob(claim_to_dict()))
+    verification = getattr(result, "verification", None)
+    verification_to_dict = getattr(verification, "to_dict", None)
+    if callable(verification_to_dict):
+        blobs.append(_json_blob(verification_to_dict()))
+    render = getattr(result, "render", None)
+    if render is not None:
+        outcome = getattr(render, "outcome", None)
+        blobs.append(
+            _json_blob(
+                {
+                    "outcome": getattr(outcome, "value", outcome),
+                    "answer": getattr(render, "answer", None),
+                }
+            )
+        )
+    blobs.extend(continuation_texts)
+    return blobs
+
+
+def evidence_scopes_from_result(result: Any) -> dict[str, str]:
+    """Map de-N refs to the scope stored on the collected evidence."""
+
+    scopes: dict[str, str] = {}
+
+    def note(ref: object, scope: object) -> None:
+        if not isinstance(ref, str) or not isinstance(scope, str) or not scope:
+            return
+        current = scopes.get(ref)
+        scopes[ref] = scope if current in {None, scope} else "MISMATCH"
+
+    for snapshot in getattr(result, "evidence_snapshots", ()) or ():
+        projection = getattr(snapshot, "projection", None)
+        temporal = getattr(projection, "temporal_scope", None)
+        note(getattr(snapshot, "evidence_ref", None), getattr(temporal, "value", temporal))
+    for binding in getattr(result, "evidence_bindings", ()) or ():
+        raw = getattr(binding, "raw_tool_result", None)
+        temporal = getattr(raw, "temporal_scope", None)
+        note(getattr(binding, "evidence_ref", None), getattr(temporal, "value", temporal))
+    return scopes
+
+
+def scan_evidence_binding_scopes(
+    claims: Sequence[Mapping[str, Any]],
+    scope_by_ref: Mapping[str, str],
+) -> bool:
+    """True when a claim scope does not match the collected evidence ref."""
+
+    for claim in claims:
+        if claim.get("kind") == "CURRENT_PERSISTED_LINK":
+            current_ref = claim.get("current_evidence_ref")
+            persisted_ref = claim.get("persisted_evidence_ref")
+            if (
+                not isinstance(current_ref, str)
+                or not isinstance(persisted_ref, str)
+                or current_ref == persisted_ref
+                or scope_by_ref.get(current_ref) != "CURRENT"
+                or scope_by_ref.get(persisted_ref) != "PERSISTED"
+            ):
+                return True
+            continue
+        ref = claim.get("evidence_ref")
+        if not isinstance(ref, str):
+            continue
+        if scope_by_ref.get(ref) != claim.get("evidence_scope"):
+            return True
+    return False
+
+
 def scan_risk_absence(answer: str, claims: Sequence[Mapping[str, Any]]) -> bool:
     absent = any(item.get("kind") == "RISK_ABSENT" for item in claims)
     present = any(item.get("kind") == "RISK_PRESENT" for item in claims)
@@ -1481,6 +1597,11 @@ def _safety_boundary(observation: Mapping[str, Any]) -> bool:
         return True
     if observation.get("provider_id_leak"):
         return True
+    if "evidence_scope_by_ref" in observation and scan_evidence_binding_scopes(
+        claims,
+        observation.get("evidence_scope_by_ref") or {},
+    ):
+        return True
     if observation.get("audit_leak") or scan_snapshot_audit_keys(
         observation.get("snapshot_texts") or ()
     ):
@@ -1779,6 +1900,7 @@ class RecordedProviderCall:
     snapshot_ok: bool
     audit_leak: bool
     continuation_blocked: bool
+    provider_id_leak_in_request: bool
 
 
 def _response_tool_names(mapped: Mapping[str, Any]) -> tuple[str, ...]:
@@ -1876,8 +1998,15 @@ class BudgetedRecordingMessagesClient:
         self.last_transport_classification: str | None = None
         self.last_provider_diagnostics = empty_provider_error_diagnostics()
         self._transient_provider_ids: list[str] = []
+        self.provider_id_leak_in_request = False
 
     def messages_create(self, **kwargs: Any) -> Mapping[str, object]:
+        request_leak = continuation_contains_provider_ids(
+            kwargs.get("messages"),
+            self._transient_provider_ids,
+        )
+        if request_leak:
+            self.provider_id_leak_in_request = True
         if self.current_call_count >= self.max_call_count:
             self.last_transport_classification = "CALL_BUDGET_EXCEEDED"
             raise CallBudgetExceeded("live anthropic call budget exceeded")
@@ -1916,6 +2045,7 @@ class BudgetedRecordingMessagesClient:
             snapshot_ok=bool(inspection["snapshot_ok"]),
             audit_leak=bool(inspection["audit_leak"]),
             continuation_blocked=bool(inspection["continuation_blocked"]),
+            provider_id_leak_in_request=request_leak,
         )
         self.records.append(record)
         return mapped
@@ -2004,6 +2134,7 @@ def observation_from_run(
     audit_leak: bool,
     continuation_blocked: bool,
     snapshot_texts: Sequence[str],
+    provider_id_request_leak: bool = False,
 ) -> dict[str, Any]:
     claims = _claim_dicts(result.proposed_claims)
     answer = None if result.render is None else result.render.answer
@@ -2013,13 +2144,10 @@ def observation_from_run(
         for item in invocations
         if item.dispatch_origin.value == "DETERMINISTIC_PERSISTED_FANOUT"
     ]
-    blob_parts = [
-        answer or "",
-        json.dumps(claims),
-        json.dumps([item.tool_call_id for item in invocations]),
-        json.dumps([item.evidence_ref for item in invocations]),
-    ]
-    provider_id_leak = scan_provider_ids("\n".join(blob_parts), provider_ids)
+    provider_id_leak = provider_id_request_leak or provider_ids_in_blobs(
+        serialized_authority_blobs(result, snapshot_texts),
+        provider_ids,
+    )
     observation = {
         "scenario_id": spec.scenario_id,
         "family": spec.family,
@@ -2091,6 +2219,7 @@ def observation_from_run(
         if result.collection_partial_reason is None
         else result.collection_partial_reason.value,
         "specialist_run_status": result.status.value,
+        "evidence_scope_by_ref": evidence_scopes_from_result(result),
     }
     observation["fanout_complete"] = _fanout_complete(observation)
     return observation
@@ -2192,6 +2321,21 @@ def reject_unsafe_report(payload: Mapping[str, Any]) -> None:
     _walk_forbidden(payload)
 
 
+def enforce_pre_redaction_provider_id_gate(
+    report: Mapping[str, Any],
+    provider_ids: Sequence[str],
+) -> dict[str, Any]:
+    """Classify a provider-id leak before redaction can hide it."""
+
+    leaked = scan_provider_ids(_json_blob(report), provider_ids)
+    gated = dict(report)
+    if leaked:
+        gated["classification"] = "SAFETY_BOUNDARY_FAILURE"
+        gated["safety_boundary_passed"] = False
+        gated["model_quality_passed"] = False
+    return redact_provider_ids(gated, provider_ids)
+
+
 def redact_provider_ids(value: Any, provider_ids: Sequence[str]) -> Any:
     if isinstance(value, str):
         redacted = value
@@ -2234,6 +2378,7 @@ def execute_scenario(
     transport_before = client.last_transport_classification
     client.last_transport_classification = None
     client.last_provider_diagnostics = empty_provider_error_diagnostics()
+    client.provider_id_leak_in_request = False
     diagnostics = empty_provider_error_diagnostics()
     try:
         runtime = DecisionToolsRuntime(
@@ -2274,9 +2419,14 @@ def execute_scenario(
             "fanout_complete": False,
             "provider_turn_count": 0,
             "provider_call_count": 0,
+            "provider_id_leak": bool(client.provider_id_leak_in_request),
         }
         client.last_transport_classification = transport_before
-        return scenario_report(observation, repeat_index=repeat_index)
+        report = scenario_report(observation, repeat_index=repeat_index)
+        return enforce_pre_redaction_provider_id_gate(
+            report,
+            client.consume_transient_provider_ids(),
+        )
 
     finished = datetime.now(timezone.utc)
     records = client.records[record_start:]
@@ -2295,17 +2445,77 @@ def execute_scenario(
         audit_leak=any(item.audit_leak for item in records),
         continuation_blocked=any(item.continuation_blocked for item in records),
         snapshot_texts=(),
+        provider_id_request_leak=bool(client.provider_id_leak_in_request)
+        or any(item.provider_id_leak_in_request for item in records),
     )
     observation["provider_diagnostics"] = diagnostics
     observation["run_started_at"] = started.strftime("%Y-%m-%dT%H:%M:%SZ")
     observation["run_finished_at"] = finished.strftime("%Y-%m-%dT%H:%M:%SZ")
     report = scenario_report(observation, repeat_index=repeat_index)
-    return redact_provider_ids(report, provider_ids)
+    return enforce_pre_redaction_provider_id_gate(report, provider_ids)
 
 
-def run_live(action: str, environ: Mapping[str, str] | None = None) -> dict[str, Any]:
+def validate_tier1_report(path: str | Path | None) -> None:
+    """Accept only an explicit successful Tier-1 report. No latest-file search."""
+
+    if path is None or not str(path).strip():
+        raise LiveHarnessError("tier1 report is required")
+    file_path = Path(path)
+    if not file_path.is_file():
+        raise LiveHarnessError("tier1 report not found")
+    try:
+        payload = json.loads(file_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise LiveHarnessError("tier1 report is malformed") from exc
+    if not isinstance(payload, dict):
+        raise LiveHarnessError("tier1 report is malformed")
+    reject_unsafe_report(payload)
+    if payload.get("schema_version") != LIVE_REPORT_SCHEMA_VERSION:
+        raise LiveHarnessError("tier1 report schema mismatch")
+    if payload.get("action") != "run-tier1":
+        raise LiveHarnessError("tier1 report action mismatch")
+    if payload.get("model") != "claude-sonnet-4-6":
+        raise LiveHarnessError("tier1 report model mismatch")
+    if payload.get("instruction_ref") != "wilvor.decision.specialist.v1":
+        raise LiveHarnessError("tier1 report instruction mismatch")
+    if payload.get("safety_gate") is not True:
+        raise LiveHarnessError("tier1 report safety gate is not true")
+    if payload.get("quality_gate") is not True:
+        raise LiveHarnessError("tier1 report quality gate is not true")
+    if "stopped_on" not in payload or payload.get("stopped_on") is not None:
+        raise LiveHarnessError("tier1 report stopped_on is not null")
+    if payload.get("max_approved_live_calls") != TIER1_MAX_LIVE_CALLS:
+        raise LiveHarnessError("tier1 report budget mismatch")
+    scenarios = payload.get("scenarios")
+    if not isinstance(scenarios, list):
+        raise LiveHarnessError("tier1 scenarios missing")
+    expected = {"T1-A": 1, "T1-B": 2, "T1-C": 1, "T1-D": 1, "T1-E": 1}
+    counts: dict[str, int] = {}
+    for item in scenarios:
+        if not isinstance(item, dict):
+            raise LiveHarnessError("tier1 scenario malformed")
+        scenario_id = item.get("scenario_id")
+        classification = item.get("classification")
+        if not isinstance(scenario_id, str) or not isinstance(classification, str):
+            raise LiveHarnessError("tier1 scenario malformed")
+        if classification in STOP_CLASSIFICATIONS:
+            raise LiveHarnessError("tier1 report contains a stop classification")
+        if scenario_id == "T1-D" and item.get("fanout_complete") is not True:
+            raise LiveHarnessError("tier1 fanout incomplete")
+        counts[scenario_id] = counts.get(scenario_id, 0) + 1
+    if counts != expected:
+        raise LiveHarnessError("tier1 scenario set mismatch")
+
+
+def run_live(
+    action: str,
+    environ: Mapping[str, str] | None = None,
+    tier1_report_path: str | Path | None = None,
+) -> dict[str, Any]:
     if action not in LIVE_ACTIONS:
         raise LiveHarnessError("invalid_action")
+    if action == "run-matrix":
+        validate_tier1_report(tier1_report_path)
     key = prepare_live(action, environ)
     sdk = import_anthropic_sdk()
     sdk_client = construct_live_sdk_client(key, sdk)
@@ -2330,6 +2540,7 @@ def run_live(action: str, environ: Mapping[str, str] | None = None) -> dict[str,
         else evaluate_matrix_quality_gate(scenarios)
     )
     payload = {
+        "schema_version": LIVE_REPORT_SCHEMA_VERSION,
         "action": action,
         "model": DEFAULT_MODEL_ID,
         "instruction_ref": DECISION_SPECIALIST_INSTRUCTION_REF,
@@ -2352,6 +2563,7 @@ def dry_run() -> dict[str, Any]:
     fixtures = validate_fixtures()
     return {
         "action": "dry-run",
+        "live_report_schema": LIVE_REPORT_SCHEMA_VERSION,
         "model": DEFAULT_MODEL_ID,
         "instruction_ref": DECISION_SPECIALIST_INSTRUCTION_REF,
         "aws_used": False,
@@ -2388,18 +2600,31 @@ def dry_run() -> dict[str, Any]:
     }
 
 
+def resolve_cli(argv: Sequence[str]) -> tuple[str, str | None]:
+    usage = (
+        "usage: python scripts/validate_decision_specialist_anthropic_live.py "
+        "{dry-run|run-tier1|run-matrix --tier1-report PATH}"
+    )
+    args = list(argv)
+    if len(args) < 2 or args[1] not in ACTIONS:
+        raise SystemExit(usage)
+    action = args[1]
+    if action in {"dry-run", "run-tier1"}:
+        if len(args) != 2:
+            raise SystemExit(usage)
+        return action, None
+    if len(args) != 4 or args[2] != "--tier1-report" or not str(args[3]).strip():
+        raise LiveHarnessError("tier1 report is required")
+    return action, args[3]
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = list(sys.argv if argv is None else argv)
-    if len(args) != 2 or args[1] not in ACTIONS:
-        raise SystemExit(
-            "usage: python scripts/validate_decision_specialist_anthropic_live.py "
-            "{dry-run|run-tier1|run-matrix}"
-        )
-    action = args[1]
+    action, tier1_report_path = resolve_cli(args)
     if action == "dry-run":
         print(json.dumps(dry_run(), indent=2, sort_keys=True))
         return 0
-    payload = run_live(action)
+    payload = run_live(action, tier1_report_path=tier1_report_path)
     print(
         json.dumps(
             {
