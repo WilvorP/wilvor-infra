@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import importlib.util
 import json
 import os
@@ -98,14 +99,22 @@ def test_dry_run_without_opt_in_or_key(runner: ModuleType, monkeypatch: pytest.M
     monkeypatch.setattr(runner, "import_anthropic_sdk", explode)
     monkeypatch.setattr(runner, "construct_live_sdk_client", explode)
     monkeypatch.setattr(runner, "require_live_opt_in", explode)
+    monkeypatch.setattr(runner, "require_wire_opt_in", explode)
+    monkeypatch.setattr(runner, "installed_anthropic_sdk_version", explode)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("WILVOR_RUN_LIVE_DECISION_ANTHROPIC", raising=False)
+    monkeypatch.delenv("WILVOR_RUN_LIVE_DECISION_ANTHROPIC_WIRE", raising=False)
     payload = runner.dry_run()
     assert payload["api_key_read"] is False
     assert payload["live_opt_in_used"] is False
     assert payload["sdk_imported"] is False
     assert payload["aws_used"] is False
     assert payload["network_used"] is False
+    assert payload["wire_probe_count"] == 3
+    assert payload["wire_max_live_calls"] == 3
+    assert payload["wire_expected_sdk_version"] == "1.8.0"
+    assert payload["actual_sdk_version"] is None
+    assert [item["probe_id"] for item in payload["wire_probes"]] == ["A", "B", "C"]
     assert payload["matrix_executions"] == 26
     assert payload["quality_threshold"] == 21
     assert payload["tier1_executions"] == 6
@@ -1121,3 +1130,467 @@ def test_scope_scanner(runner: ModuleType) -> None:
     assert runner.scan_zero_promoted(
         "A candidate count of zero does not mean that no safe airport exists."
     ) is False
+
+
+class _WireError(Exception):
+    def __init__(
+        self,
+        message: str,
+        *,
+        status_code: int | None = None,
+        error_type: str = "invalid_request_error",
+    ) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.request_id = "req_diag"
+        self.body = {"error": {"type": error_type, "message": message}}
+
+
+class _ScriptedMessages:
+    def __init__(self, outcomes: list[object]) -> None:
+        self.outcomes = list(outcomes)
+        self.calls = 0
+        self.last_request_id = "req_diag"
+
+    def messages_create(self, **_kwargs: object) -> object:
+        self.calls += 1
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return outcome
+
+
+def _wire_client(runner: ModuleType, outcomes: list[object]) -> object:
+    return runner.BudgetedRecordingMessagesClient(
+        _ScriptedMessages(outcomes),
+        max_calls=runner.WIRE_MAX_LIVE_CALLS,
+    )
+
+
+def _accepted_message() -> dict[str, object]:
+    return {
+        "id": "msg_ok",
+        "stop_reason": "tool_use",
+        "content": [
+            {"type": "text", "text": "DO_NOT_PERSIST_PROSE"},
+            {
+                "type": "tool_use",
+                "id": "toolu_secret_id",
+                "name": "get_current_risk_evidence",
+                "input": {"aircraft_id": "abc123", "raw_argument": "DO_NOT_PERSIST_ARG"},
+            },
+        ],
+        "usage": {"input_tokens": 12, "output_tokens": 4},
+    }
+
+
+def test_wire_probe_identity_budget_and_retry(runner: ModuleType) -> None:
+    assert runner.WIRE_PROBE_SPECS == (
+        ("A", "strict_tools_only"),
+        ("B", "terminal_schema_only"),
+        ("C", "terminal_plus_non_strict_tools"),
+    )
+    assert runner.WIRE_MAX_LIVE_CALLS == 3
+    assert runner.LIVE_MAX_RETRIES == 0
+    assert runner.LIVE_TIMEOUT_SECONDS == 240.0
+    assert runner.TIER1_MAX_LIVE_CALLS == 16
+    assert runner.MATRIX_MAX_LIVE_CALLS == 80
+    assert runner.LIVE_ACTIONS == frozenset({"run-tier1", "run-matrix"})
+    assert runner.WIRE_ACTION not in runner.LIVE_ACTIONS
+    inner = _ScriptedMessages([{"id": "msg", "content": [], "usage": {}}] * 4)
+    client = runner.BudgetedRecordingMessagesClient(inner, max_calls=3)
+    for _ in range(3):
+        client.messages_create(messages=[{"role": "user", "content": "probe"}])
+    with pytest.raises(runner.CallBudgetExceeded):
+        client.messages_create(messages=[{"role": "user", "content": "probe"}])
+    assert client.current_call_count == 3
+    assert client.last_transport_classification == "CALL_BUDGET_EXCEEDED"
+    assert runner.classify_wire_exception(runner.CallBudgetExceeded("budget")) == (
+        "CALL_BUDGET_EXCEEDED"
+    )
+
+
+def test_wire_opt_in_is_separate_from_decision_live_opt_in(
+    runner: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runner, "read_live_api_key", lambda environ=None: "local-key")
+    assert runner.prepare_wire_live({runner.WIRE_OPT_IN_ENV: "1"}) == "local-key"
+    with pytest.raises(runner.LiveHarnessError, match="ANTHROPIC_WIRE"):
+        runner.prepare_wire_live({runner.LIVE_OPT_IN_ENV: "1"})
+    with pytest.raises(runner.LiveHarnessError, match="invalid_action"):
+        runner.prepare_live(runner.WIRE_ACTION, {runner.LIVE_OPT_IN_ENV: "1"})
+    with pytest.raises(runner.LiveHarnessError, match="WILVOR_RUN_LIVE_DECISION_ANTHROPIC=1"):
+        runner.prepare_live("run-tier1", {runner.WIRE_OPT_IN_ENV: "1"})
+    with pytest.raises(runner.LiveHarnessError, match="WILVOR_RUN_LIVE_DECISION_ANTHROPIC=1"):
+        runner.prepare_live("run-matrix", {runner.WIRE_OPT_IN_ENV: "1"})
+
+
+def test_wire_missing_opt_in_blocks_before_api_key(
+    runner: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def explode(*_args: object, **_kwargs: object) -> str:
+        raise AssertionError("api key read")
+
+    monkeypatch.setattr(runner, "read_live_api_key", explode)
+    with pytest.raises(runner.LiveHarnessError, match="ANTHROPIC_WIRE"):
+        runner.prepare_wire_live({})
+
+
+def test_wire_missing_key_blocks_before_sdk_import(
+    runner: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def explode(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("sdk imported")
+
+    monkeypatch.setattr(runner, "import_anthropic_sdk", explode)
+    with pytest.raises(runner.LiveHarnessError, match="missing ANTHROPIC_API_KEY"):
+        runner.run_wire_probes({runner.WIRE_OPT_IN_ENV: "1"})
+
+
+def test_wire_sdk_version_gate_blocks_provider_calls(
+    runner: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FakeSDK:
+        def __init__(self) -> None:
+            self.calls = 0
+            self.messages = self
+
+        def create(self, **_kwargs: object) -> object:
+            self.calls += 1
+            message = SimpleNamespace(_request_id="req_ok")
+            message.to_dict = lambda mode="json": {  # noqa: ARG005
+                "id": "msg_ok",
+                "stop_reason": "end_turn",
+                "content": [],
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            }
+            return message
+
+    constructed: list[str] = []
+
+    def allow(_key: str, _sdk: object) -> _FakeSDK:
+        constructed.append("allowed")
+        return _FakeSDK()
+
+    def deny(_key: str, _sdk: object) -> object:
+        constructed.append("denied")
+        raise AssertionError("provider client constructed")
+
+    monkeypatch.setattr(runner, "import_anthropic_sdk", lambda: object())
+    monkeypatch.setattr(runner, "write_wire_report", lambda payload: payload)
+    matched = runner.run_wire_probes(
+        {runner.WIRE_OPT_IN_ENV: "1", runner.API_KEY_ENV: "local-key"},
+        version_lookup=lambda: "1.8.0",
+        sdk_client_factory=allow,
+    )
+    assert constructed == ["allowed"]
+    assert matched["stopped_on"] is None
+    assert matched["expected_sdk_version"] == "1.8.0"
+    assert matched["actual_sdk_version"] == "1.8.0"
+    assert matched["live_call_attempts"] == 3
+    assert [item["classification"] for item in matched["probes"]] == [
+        "ACCEPTED",
+        "ACCEPTED",
+        "ACCEPTED",
+    ]
+    assert "local-key" not in json.dumps(matched)
+
+    mismatched = runner.run_wire_probes(
+        {runner.WIRE_OPT_IN_ENV: "1", runner.API_KEY_ENV: "local-key"},
+        version_lookup=lambda: "9.9.9",
+        sdk_client_factory=deny,
+    )
+    assert constructed == ["allowed"]
+    assert mismatched["stopped_on"] == "LOCAL_HARNESS_FAILURE"
+    assert mismatched["expected_sdk_version"] == "1.8.0"
+    assert mismatched["actual_sdk_version"] == "9.9.9"
+    assert mismatched["live_call_attempts"] == 0
+    assert mismatched["probes"] == []
+    assert "local-key" not in json.dumps(mismatched)
+
+    def unavailable() -> str:
+        raise RuntimeError(r"C:\packages\anthropic")
+
+    failed = runner.run_wire_probes(
+        {runner.WIRE_OPT_IN_ENV: "1", runner.API_KEY_ENV: "local-key"},
+        version_lookup=unavailable,
+        sdk_client_factory=deny,
+    )
+    assert constructed == ["allowed"]
+    assert failed["stopped_on"] == "LOCAL_HARNESS_FAILURE"
+    assert failed["actual_sdk_version"] is None
+    assert failed["live_call_attempts"] == 0
+    assert r"C:\packages" not in json.dumps(failed)
+    assert "local-key" not in json.dumps(failed)
+
+
+def test_wire_probes_are_production_copies_with_exact_fingerprints(runner: ModuleType) -> None:
+    request = runner.DecisionModelTurnRequest(
+        user_text=runner.PROMPT_HIGH,
+        instruction_ref=runner.DECISION_SPECIALIST_INSTRUCTION_REF,
+        tools=runner.decision_tool_schemas(),
+    )
+    base = runner.production_decision_base_kwargs()
+    assert base == runner.build_decision_messages_kwargs(request, runner.DEFAULT_MODEL_ID)
+    control = copy.deepcopy(base)
+    built = runner.wire_probe_kwargs(base)
+    checked = runner.validate_wire_static_configuration(base)
+    assert base == control
+    probe_a = built["A"]
+    probe_b = built["B"]
+    probe_c = built["C"]
+    assert set(probe_a) == set(base) - {"output_config"}
+    assert probe_a["tools"] == base["tools"]
+    assert all(tool["strict"] is True for tool in probe_a["tools"])
+    assert set(probe_b) == set(base) - {"tools", "tool_choice"}
+    assert probe_b["output_config"] == base["output_config"]
+    for original, copied in zip(base["tools"], probe_c["tools"], strict=True):
+        assert copied["name"] == original["name"]
+        assert copied["description"] == original["description"]
+        assert copied["input_schema"] == original["input_schema"]
+        assert "strict" not in copied
+    assert probe_c["output_config"] == probe_b["output_config"]
+    assert probe_c["tool_choice"] == base["tool_choice"]
+    fingerprints = checked["fingerprints"]
+    assert fingerprints["A"] == {
+        "has_tools": True,
+        "tool_count": 4,
+        "strict_tool_count": 4,
+        "has_tool_choice": True,
+        "has_output_config": False,
+        "terminal_schema_anyof_count": None,
+        "claim_schema_branch_count": None,
+    }
+    assert fingerprints["B"]["has_tools"] is False
+    assert fingerprints["B"]["tool_count"] == 0
+    assert fingerprints["B"]["strict_tool_count"] == 0
+    assert fingerprints["B"]["has_tool_choice"] is False
+    assert fingerprints["B"]["has_output_config"] is True
+    assert fingerprints["C"]["has_tools"] is True
+    assert fingerprints["C"]["tool_count"] == 4
+    assert fingerprints["C"]["strict_tool_count"] == 0
+    assert fingerprints["C"]["has_tool_choice"] is True
+    assert fingerprints["C"]["has_output_config"] is True
+    assert fingerprints["B"]["terminal_schema_anyof_count"] == fingerprints["C"][
+        "terminal_schema_anyof_count"
+    ]
+    assert fingerprints["B"]["claim_schema_branch_count"] == fingerprints["C"][
+        "claim_schema_branch_count"
+    ]
+    assert isinstance(fingerprints["B"]["terminal_schema_anyof_count"], int)
+    assert isinstance(fingerprints["B"]["claim_schema_branch_count"], int)
+    rendered = json.dumps(fingerprints)
+    assert runner.PROMPT_HIGH not in rendered
+    assert "input_schema" not in rendered
+    assert "description" not in rendered
+    assert "additionalProperties" not in rendered
+
+
+def test_wire_classifies_acceptance_and_invalid_requests_without_stopping(
+    runner: ModuleType,
+) -> None:
+    checked = runner.validate_wire_static_configuration()
+    accepted_client = _wire_client(runner, [_accepted_message(), _accepted_message(), _accepted_message()])
+    accepted, accepted_stop = runner.execute_wire_probes(accepted_client, checked)
+    assert accepted_stop is None
+    assert [item["classification"] for item in accepted] == ["ACCEPTED", "ACCEPTED", "ACCEPTED"]
+    rendered = json.dumps(accepted)
+    assert "DO_NOT_PERSIST_PROSE" not in rendered
+    assert "DO_NOT_PERSIST_ARG" not in rendered
+    assert "toolu_secret_id" not in rendered
+    assert accepted[0]["selected_tool_names"] == ["get_current_risk_evidence"]
+    assert accepted[0]["provider_tool_id_present"] is True
+    assert accepted[0]["message_id"] == "msg_ok"
+    assert accepted[0]["input_tokens"] == 12
+    assert accepted[0]["output_tokens"] == 4
+    assert isinstance(accepted[0]["latency_ms"], (int, float))
+    assert accepted[0]["latency_ms"] >= 0
+    assert accepted_client._transient_provider_ids == []
+
+    def provider_error(
+        name: str,
+        message: str,
+        status_code: int | None = None,
+        error_type: str = "invalid_request_error",
+    ) -> _WireError:
+        return type(name, (_WireError,), {})(
+            message,
+            status_code=status_code,
+            error_type=error_type,
+        )
+
+    rejected = provider_error(
+        "BadRequestError",
+        "The compiled grammar is too large",
+        400,
+    )
+    invalid_client = _wire_client(
+        runner,
+        [
+            provider_error("BadRequestError", "The compiled grammar is too large", 400),
+            provider_error("BadRequestError", "The compiled grammar is too large", 400),
+            rejected,
+        ],
+    )
+    invalid, invalid_stop = runner.execute_wire_probes(invalid_client, checked)
+    assert invalid_stop is None
+    assert [item["classification"] for item in invalid] == [
+        "REJECTED_INVALID_REQUEST",
+        "REJECTED_INVALID_REQUEST",
+        "REJECTED_INVALID_REQUEST",
+    ]
+    assert invalid[0]["provider_http_status"] == 400
+    assert invalid[0]["provider_error_type"] == "invalid_request_error"
+    assert "compiled grammar" in invalid[0]["provider_error_message"]
+    assert "traceback" not in json.dumps(invalid)
+    assert runner.wire_diagnostic_exit_code(
+        {"stopped_on": invalid_stop, "probes": invalid}
+    ) == 0
+
+    unprocessable = provider_error(
+        "UnprocessableEntityError",
+        "unprocessable schema",
+        422,
+    )
+    continued_client = _wire_client(
+        runner,
+        [unprocessable, _accepted_message(), rejected],
+    )
+    continued, continued_stop = runner.execute_wire_probes(continued_client, checked)
+    assert continued_stop is None
+    assert [item["classification"] for item in continued] == [
+        "REJECTED_INVALID_REQUEST",
+        "ACCEPTED",
+        "REJECTED_INVALID_REQUEST",
+    ]
+
+
+def test_wire_stops_on_auth_rate_transient_and_budget(runner: ModuleType) -> None:
+    checked = runner.validate_wire_static_configuration()
+
+    def stop_after(error: Exception) -> None:
+        client = _wire_client(runner, [_accepted_message(), error, _accepted_message()])
+        probes, stopped = runner.execute_wire_probes(client, checked)
+        assert len(probes) == 2
+        assert stopped == probes[1]["classification"]
+        assert stopped in runner.WIRE_STOP_CLASSIFICATIONS
+        assert client._inner.calls == 2
+
+    def provider_error(
+        name: str,
+        message: str,
+        status_code: int | None = None,
+        error_type: str = "invalid_request_error",
+    ) -> _WireError:
+        return type(name, (_WireError,), {})(
+            message,
+            status_code=status_code,
+            error_type=error_type,
+        )
+
+    stop_after(provider_error("AuthenticationError", "unauthorized", 401, "authentication_error"))
+    stop_after(provider_error("RateLimitError", "slow down", 429, "rate_limit_error"))
+    stop_after(provider_error("APITimeoutError", "timed out"))
+    stop_after(provider_error("APIConnectionError", "connection reset"))
+    stop_after(provider_error("InternalServerError", "unavailable", 503, "api_error"))
+    stop_after(provider_error("APIStatusError", "overloaded", 529, "overloaded_error"))
+
+
+def test_wire_report_is_sanitized_and_cannot_authorize_matrix(
+    runner: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    checked = runner.validate_wire_static_configuration()
+    client = _wire_client(runner, [_accepted_message(), _accepted_message(), _accepted_message()])
+    probes, stopped = runner.execute_wire_probes(client, checked)
+    payload = runner.wire_report_payload(
+        actual_sdk_version="1.8.0",
+        live_call_attempts=3,
+        stopped_on=stopped,
+        probes=probes,
+    )
+    runner.reject_unsafe_report(payload)
+    assert payload["schema_version"] == "wilvor.decision.live_wire_probe.v1"
+    assert payload["action"] == "run-wire-probes"
+    assert "safety_gate" not in payload
+    assert "quality_gate" not in payload
+    rendered = json.dumps(payload)
+    assert "toolu_secret_id" not in rendered
+    assert "DO_NOT_PERSIST_PROSE" not in rendered
+    path = tmp_path / "wire.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def explode(*_args: object, **_kwargs: object) -> str:
+        raise AssertionError("api key read")
+
+    monkeypatch.setattr(runner, "read_live_api_key", explode)
+    with pytest.raises(runner.LiveHarnessError, match="schema mismatch"):
+        runner.run_live("run-matrix", tier1_report_path=str(path))
+
+
+def test_existing_tier1_and_matrix_cli_paths_ignore_wire(
+    runner: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: list[tuple[str, str | None]] = []
+
+    def fake_live(action: str, tier1_report_path: str | None = None) -> dict[str, object]:
+        seen.append((action, tier1_report_path))
+        return {
+            "action": action,
+            "safety_gate": True,
+            "quality_gate": True,
+            "stopped_on": None,
+            "live_call_attempts": 0,
+        }
+
+    def explode(*_args: object, **_kwargs: object) -> dict[str, object]:
+        raise AssertionError("wire path used")
+
+    monkeypatch.setattr(runner, "run_live", fake_live)
+    monkeypatch.setattr(runner, "run_wire_probes", explode)
+    assert runner.main(["prog", "run-tier1"]) == 0
+    assert seen == [("run-tier1", None)]
+    with pytest.raises(runner.LiveHarnessError, match="tier1 report"):
+        runner.resolve_cli(["prog", "run-matrix"])
+    assert runner.resolve_cli(["prog", "run-wire-probes"]) == ("run-wire-probes", None)
+    with pytest.raises(SystemExit):
+        runner.resolve_cli(["prog", "run-wire-probes", "--tier1-report", "x"])
+
+
+def test_wire_diagnostic_exit_codes(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    completed = {
+        "action": "run-wire-probes",
+        "stopped_on": None,
+        "live_call_attempts": 3,
+        "expected_sdk_version": "1.8.0",
+        "actual_sdk_version": "1.8.0",
+        "probes": [
+            {"classification": "REJECTED_INVALID_REQUEST"},
+            {"classification": "REJECTED_INVALID_REQUEST"},
+            {"classification": "ACCEPTED"},
+        ],
+    }
+    monkeypatch.setattr(runner, "run_wire_probes", lambda: completed)
+    assert runner.wire_diagnostic_exit_code(completed) == 0
+    assert runner.main(["prog", "run-wire-probes"]) == 0
+    for stopped in (
+        "AUTH_BLOCKED",
+        "RATE_LIMITED",
+        "TRANSIENT_FAILURE",
+        "LOCAL_HARNESS_FAILURE",
+        "CALL_BUDGET_EXCEEDED",
+    ):
+        partial = {
+            **completed,
+            "stopped_on": stopped,
+            "probes": [{"classification": stopped}],
+        }
+        assert runner.wire_diagnostic_exit_code(partial) == 1
+        monkeypatch.setattr(runner, "run_wire_probes", lambda payload=partial: payload)
+        assert runner.main(["prog", "run-wire-probes"]) == 1

@@ -13,10 +13,11 @@ FilterExpression.
 
 from __future__ import annotations
 
+import copy
 import json
 import os
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +30,7 @@ if str(SHARED_DIR) not in sys.path:
     sys.path.insert(0, str(SHARED_DIR))
 
 from wilvor_ai.contracts import TemporalScope, ToolResultStatus  # noqa: E402
+from wilvor_ai.decision_model_contracts import DecisionModelTurnRequest  # noqa: E402
 from wilvor_ai.decision_specialist import (  # noqa: E402
     DECISION_SPECIALIST_INSTRUCTION_REF,
     MAX_MODEL_TURNS,
@@ -42,23 +44,29 @@ from wilvor_ai.decision_tools import (  # noqa: E402
     DECISION_TOOLS,
     DecisionToolsAdapter,
     DecisionToolsRuntime,
+    decision_tool_schemas,
 )
 from wilvor_ai.persisted_airport_evidence import EMPTY_ASSESSMENTS  # noqa: E402
 from wilvor_ai.providers.anthropic_decision_messages import (  # noqa: E402
     DEFAULT_MODEL_ID,
     AnthropicDecisionMessagesProvider,
+    build_decision_messages_kwargs,
     decision_terminal_json_schema,
 )
 from wilvor_operational import readers  # noqa: E402
 
 
 LIVE_OPT_IN_ENV = "WILVOR_RUN_LIVE_DECISION_ANTHROPIC"
+WIRE_OPT_IN_ENV = "WILVOR_RUN_LIVE_DECISION_ANTHROPIC_WIRE"
 API_KEY_ENV = "ANTHROPIC_API_KEY"
 LIVE_REPORT_SCHEMA_VERSION = "wilvor.decision.live_validation.v1"
+WIRE_REPORT_SCHEMA_VERSION = "wilvor.decision.live_wire_probe.v1"
 LIVE_MAX_RETRIES = 0
 LIVE_TIMEOUT_SECONDS = 240.0
 TIER1_MAX_LIVE_CALLS = 16
 MATRIX_MAX_LIVE_CALLS = 80
+WIRE_MAX_LIVE_CALLS = 3
+EXPECTED_SDK_VERSION = "1.8.0"
 QUALITY_THRESHOLD = 21
 MATRIX_EXECUTION_COUNT = 26
 TIER1_EXECUTION_COUNT = 6
@@ -138,7 +146,33 @@ REFUSAL_PROFILES = frozenset(
     {"route", "selected", "historical", "live_ops", "route_or_selection"}
 )
 LIVE_ACTIONS = frozenset({"run-tier1", "run-matrix"})
-ACTIONS = ("dry-run", "run-tier1", "run-matrix")
+WIRE_ACTION = "run-wire-probes"
+WIRE_ACTIONS = frozenset({WIRE_ACTION})
+ACTIONS = ("dry-run", "run-tier1", "run-matrix", WIRE_ACTION)
+WIRE_CLASSIFICATIONS = (
+    "ACCEPTED",
+    "REJECTED_INVALID_REQUEST",
+    "AUTH_BLOCKED",
+    "RATE_LIMITED",
+    "TRANSIENT_FAILURE",
+    "LOCAL_HARNESS_FAILURE",
+    "CALL_BUDGET_EXCEEDED",
+)
+WIRE_CONTINUING_CLASSIFICATIONS = frozenset({"ACCEPTED", "REJECTED_INVALID_REQUEST"})
+WIRE_STOP_CLASSIFICATIONS = frozenset(
+    {
+        "AUTH_BLOCKED",
+        "RATE_LIMITED",
+        "TRANSIENT_FAILURE",
+        "LOCAL_HARNESS_FAILURE",
+        "CALL_BUDGET_EXCEEDED",
+    }
+)
+WIRE_PROBE_SPECS = (
+    ("A", "strict_tools_only"),
+    ("B", "terminal_schema_only"),
+    ("C", "terminal_plus_non_strict_tools"),
+)
 TRUSTED_ARGUMENT_NAMES = frozenset(
     {
         "now_epoch",
@@ -1989,8 +2023,12 @@ class BudgetedRecordingMessagesClient:
     def __init__(self, inner: Any, *, max_calls: int) -> None:
         if inner is None or not callable(getattr(inner, "messages_create", None)):
             raise TypeError("inner must implement messages_create")
-        if max_calls not in {TIER1_MAX_LIVE_CALLS, MATRIX_MAX_LIVE_CALLS}:
-            raise ValueError("max_calls must be the tier-1 or matrix budget")
+        if max_calls not in {
+            WIRE_MAX_LIVE_CALLS,
+            TIER1_MAX_LIVE_CALLS,
+            MATRIX_MAX_LIVE_CALLS,
+        }:
+            raise ValueError("max_calls must be an approved live budget")
         self._inner = inner
         self.current_call_count = 0
         self.max_call_count = max_calls
@@ -2558,9 +2596,489 @@ def run_live(
     return payload
 
 
+def production_decision_base_kwargs() -> dict[str, Any]:
+    """Build the canonical first-turn request from production builders."""
+
+    request = DecisionModelTurnRequest(
+        user_text=PROMPT_HIGH,
+        instruction_ref=DECISION_SPECIALIST_INSTRUCTION_REF,
+        tools=decision_tool_schemas(),
+    )
+    built = build_decision_messages_kwargs(request, DEFAULT_MODEL_ID)
+    if not isinstance(built, dict):
+        raise LiveHarnessError("wire base kwargs invalid")
+    return built
+
+
+def probe_a_kwargs(base: Mapping[str, Any]) -> dict[str, Any]:
+    copied = copy.deepcopy(dict(base))
+    if "output_config" not in copied:
+        raise LiveHarnessError("wire output_config missing")
+    del copied["output_config"]
+    return copied
+
+
+def probe_b_kwargs(base: Mapping[str, Any]) -> dict[str, Any]:
+    copied = copy.deepcopy(dict(base))
+    if "tools" not in copied or "tool_choice" not in copied:
+        raise LiveHarnessError("wire tools missing")
+    del copied["tools"]
+    del copied["tool_choice"]
+    return copied
+
+
+def probe_c_kwargs(base: Mapping[str, Any]) -> dict[str, Any]:
+    copied = copy.deepcopy(dict(base))
+    tools = copied.get("tools")
+    if not isinstance(tools, list) or not tools:
+        raise LiveHarnessError("wire tools missing")
+    for tool in tools:
+        if not isinstance(tool, dict) or tool.get("strict") is not True:
+            raise LiveHarnessError("wire strict tool missing")
+        del tool["strict"]
+    return copied
+
+
+def _terminal_schema(output_config: Any) -> Mapping[str, Any] | None:
+    if not isinstance(output_config, Mapping):
+        return None
+    formatted = output_config.get("format")
+    if not isinstance(formatted, Mapping):
+        return None
+    schema = formatted.get("schema")
+    if not isinstance(schema, Mapping):
+        return None
+    return schema
+
+
+def _claim_schema_branch_count(schema: Mapping[str, Any]) -> int | None:
+    branches = schema.get("anyOf")
+    if not isinstance(branches, list):
+        return None
+    for branch in branches:
+        if not isinstance(branch, Mapping):
+            continue
+        properties = branch.get("properties")
+        if not isinstance(properties, Mapping) or "claims" not in properties:
+            continue
+        claims = properties.get("claims")
+        if not isinstance(claims, Mapping):
+            return None
+        items = claims.get("items")
+        if not isinstance(items, Mapping):
+            return None
+        claim_branches = items.get("anyOf")
+        if not isinstance(claim_branches, list):
+            return None
+        return len(claim_branches)
+    return None
+
+
+def wire_request_fingerprint(kwargs: Mapping[str, Any]) -> dict[str, Any]:
+    """Structural request facts only. No prompt, tool, or schema text."""
+
+    tools = kwargs.get("tools") if "tools" in kwargs else None
+    tool_list = tools if isinstance(tools, list) else []
+    strict_tool_count = sum(
+        1
+        for tool in tool_list
+        if isinstance(tool, Mapping) and tool.get("strict") is True
+    )
+    has_output_config = "output_config" in kwargs
+    terminal_schema_anyof_count = None
+    claim_schema_branch_count = None
+    if has_output_config:
+        schema = _terminal_schema(kwargs.get("output_config"))
+        if schema is None:
+            raise LiveHarnessError("wire terminal schema missing")
+        terminal_schema_anyof_count = _count_anyof(schema)
+        claim_schema_branch_count = _claim_schema_branch_count(schema)
+    return {
+        "has_tools": "tools" in kwargs and bool(tool_list),
+        "tool_count": len(tool_list) if "tools" in kwargs else 0,
+        "strict_tool_count": strict_tool_count if "tools" in kwargs else 0,
+        "has_tool_choice": "tool_choice" in kwargs,
+        "has_output_config": has_output_config,
+        "terminal_schema_anyof_count": terminal_schema_anyof_count,
+        "claim_schema_branch_count": claim_schema_branch_count,
+    }
+
+
+def wire_probe_kwargs(base: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    return {
+        "A": probe_a_kwargs(base),
+        "B": probe_b_kwargs(base),
+        "C": probe_c_kwargs(base),
+    }
+
+
+def validate_wire_static_configuration(
+    base: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Check probe shapes offline. Does not read opt-in, key, or the SDK."""
+
+    canonical = production_decision_base_kwargs() if base is None else dict(base)
+    control = copy.deepcopy(canonical)
+    built = wire_probe_kwargs(canonical)
+    if canonical != control:
+        raise LiveHarnessError("wire base kwargs mutated")
+    schema_counts = wire_request_fingerprint(canonical)
+    anyof_count = schema_counts["terminal_schema_anyof_count"]
+    claim_count = schema_counts["claim_schema_branch_count"]
+    if not isinstance(anyof_count, int) or not isinstance(claim_count, int):
+        raise LiveHarnessError("wire terminal schema counts missing")
+    expected = {
+        "A": {
+            "has_tools": True,
+            "tool_count": 4,
+            "strict_tool_count": 4,
+            "has_tool_choice": True,
+            "has_output_config": False,
+            "terminal_schema_anyof_count": None,
+            "claim_schema_branch_count": None,
+        },
+        "B": {
+            "has_tools": False,
+            "tool_count": 0,
+            "strict_tool_count": 0,
+            "has_tool_choice": False,
+            "has_output_config": True,
+            "terminal_schema_anyof_count": anyof_count,
+            "claim_schema_branch_count": claim_count,
+        },
+        "C": {
+            "has_tools": True,
+            "tool_count": 4,
+            "strict_tool_count": 0,
+            "has_tool_choice": True,
+            "has_output_config": True,
+            "terminal_schema_anyof_count": anyof_count,
+            "claim_schema_branch_count": claim_count,
+        },
+    }
+    for probe_id, fingerprint in expected.items():
+        if wire_request_fingerprint(built[probe_id]) != fingerprint:
+            raise LiveHarnessError("wire probe fingerprint mismatch")
+    probe_a = built["A"]
+    probe_b = built["B"]
+    probe_c = built["C"]
+    if set(probe_a) != set(canonical) - {"output_config"}:
+        raise LiveHarnessError("wire probe A changed request fields")
+    if any(probe_a[key] != canonical[key] for key in probe_a):
+        raise LiveHarnessError("wire probe A changed request fields")
+    if set(probe_b) != set(canonical) - {"tools", "tool_choice"}:
+        raise LiveHarnessError("wire probe B changed request fields")
+    if any(probe_b[key] != canonical[key] for key in probe_b):
+        raise LiveHarnessError("wire probe B changed request fields")
+    if set(probe_c) != set(canonical):
+        raise LiveHarnessError("wire probe C changed request fields")
+    if probe_b["output_config"] != canonical["output_config"]:
+        raise LiveHarnessError("wire probe B changed terminal schema")
+    if probe_c["output_config"] != probe_b["output_config"]:
+        raise LiveHarnessError("wire probe C changed terminal schema")
+    base_tools = canonical["tools"]
+    copied_tools = probe_c["tools"]
+    if not isinstance(base_tools, list) or len(copied_tools) != len(base_tools):
+        raise LiveHarnessError("wire probe C changed tools")
+    for original, copied in zip(base_tools, copied_tools, strict=True):
+        without_strict = dict(original)
+        without_strict.pop("strict", None)
+        if copied != without_strict or "strict" in copied:
+            raise LiveHarnessError("wire probe C changed tool schema")
+    return {
+        "base": canonical,
+        "probes": built,
+        "fingerprints": {
+            probe_id: wire_request_fingerprint(kwargs)
+            for probe_id, kwargs in built.items()
+        },
+    }
+
+
+def require_wire_opt_in(environ: Mapping[str, str] | None = None) -> None:
+    env = os.environ if environ is None else environ
+    if env.get(WIRE_OPT_IN_ENV) != "1":
+        raise LiveHarnessError(
+            "wire opt-in WILVOR_RUN_LIVE_DECISION_ANTHROPIC_WIRE=1 is required"
+        )
+
+
+def prepare_wire_live(environ: Mapping[str, str] | None = None) -> str:
+    """Authorize wire probes without the ordinary Decision live opt-in."""
+
+    validate_wire_static_configuration()
+    require_wire_opt_in(environ)
+    return read_live_api_key(environ)
+
+
+def installed_anthropic_sdk_version() -> str:
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        found = version("anthropic")
+    except PackageNotFoundError as exc:
+        raise LiveHarnessError("anthropic sdk version unavailable") from exc
+    if not isinstance(found, str) or not found.strip():
+        raise LiveHarnessError("anthropic sdk version unavailable")
+    return found.strip()
+
+
+def classify_wire_exception(exc: BaseException) -> str:
+    """Map a direct Messages failure to the wire diagnostic vocabulary."""
+
+    if isinstance(exc, CallBudgetExceeded):
+        return "CALL_BUDGET_EXCEEDED"
+    if isinstance(exc, LiveHarnessError):
+        return "LOCAL_HARNESS_FAILURE"
+    name = type(exc).__name__
+    status = getattr(exc, "status_code", None)
+    if isinstance(status, bool):
+        status = None
+    if name in {"AuthenticationError", "PermissionDeniedError"} or status in {401, 403}:
+        return "AUTH_BLOCKED"
+    if name in {"BadRequestError", "UnprocessableEntityError"} or status in {400, 422}:
+        return "REJECTED_INVALID_REQUEST"
+    if name == "RateLimitError" or status == 429:
+        return "RATE_LIMITED"
+    if name in {
+        "APIConnectionError",
+        "APITimeoutError",
+        "InternalServerError",
+        "TimeoutError",
+    }:
+        return "TRANSIENT_FAILURE"
+    if isinstance(status, int) and (status >= 500 or status in {408, 409, 529}):
+        return "TRANSIENT_FAILURE"
+    if "timeout" in name.lower():
+        return "TRANSIENT_FAILURE"
+    return "LOCAL_HARNESS_FAILURE"
+
+
+def _empty_wire_metadata() -> dict[str, Any]:
+    return {
+        "stop_reason": None,
+        "selected_tool_names": [],
+        "provider_tool_id_present": False,
+        "message_id": None,
+        "request_id": None,
+        "input_tokens": None,
+        "output_tokens": None,
+        "latency_ms": None,
+    }
+
+
+def _wire_probe_result(
+    probe_id: str,
+    name: str,
+    classification: str,
+    fingerprint: dict[str, Any],
+    record: RecordedProviderCall | None,
+    diagnostics: Mapping[str, Any],
+) -> dict[str, Any]:
+    metadata = _empty_wire_metadata()
+    if record is not None and classification == "ACCEPTED":
+        metadata = {
+            "stop_reason": record.stop_reason,
+            "selected_tool_names": list(record.selected_tool_names),
+            "provider_tool_id_present": record.provider_tool_id_present,
+            "message_id": record.message_id,
+            "request_id": record.request_id,
+            "input_tokens": record.input_tokens,
+            "output_tokens": record.output_tokens,
+            "latency_ms": record.latency_ms,
+        }
+    return {
+        "probe_id": probe_id,
+        "name": name,
+        "classification": classification,
+        "request_fingerprint": fingerprint,
+        **metadata,
+        "provider_error_class": diagnostics.get("provider_error_class"),
+        "provider_http_status": diagnostics.get("provider_http_status"),
+        "provider_error_type": diagnostics.get("provider_error_type"),
+        "provider_error_code": diagnostics.get("provider_error_code"),
+        "provider_error_message": diagnostics.get("provider_error_message"),
+        "provider_error_request_id": diagnostics.get("provider_error_request_id"),
+    }
+
+
+def execute_wire_probes(
+    client: BudgetedRecordingMessagesClient,
+    checked: Mapping[str, Any],
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Send A, B, and C. Continue on acceptance or invalid-request rejection."""
+
+    base = checked["base"]
+    control = copy.deepcopy(base)
+    probes: list[dict[str, Any]] = []
+    stopped_on = None
+    mutators = {
+        "A": probe_a_kwargs,
+        "B": probe_b_kwargs,
+        "C": probe_c_kwargs,
+    }
+    for probe_id, name in WIRE_PROBE_SPECS:
+        try:
+            kwargs = mutators[probe_id](base)
+            fingerprint = wire_request_fingerprint(kwargs)
+        except Exception:
+            probes.append(
+                _wire_probe_result(
+                    probe_id,
+                    name,
+                    "LOCAL_HARNESS_FAILURE",
+                    {},
+                    None,
+                    empty_provider_error_diagnostics(),
+                )
+            )
+            stopped_on = "LOCAL_HARNESS_FAILURE"
+            break
+        record_count = len(client.records)
+        record = None
+        diagnostics = empty_provider_error_diagnostics()
+        try:
+            response = client.messages_create(**kwargs)
+        except Exception as exc:
+            classification = classify_wire_exception(exc)
+            if not isinstance(exc, (CallBudgetExceeded, LiveHarnessError)):
+                diagnostics = extract_provider_error_diagnostics(exc)
+        else:
+            del response
+            classification = "ACCEPTED"
+            if len(client.records) == record_count + 1:
+                record = client.records[-1]
+            else:
+                classification = "LOCAL_HARNESS_FAILURE"
+        client.consume_transient_provider_ids()
+        probes.append(
+            _wire_probe_result(
+                probe_id,
+                name,
+                classification,
+                fingerprint,
+                record,
+                diagnostics,
+            )
+        )
+        if classification not in WIRE_CONTINUING_CLASSIFICATIONS:
+            stopped_on = classification
+            break
+    if base != control:
+        stopped_on = "LOCAL_HARNESS_FAILURE"
+    return probes, stopped_on
+
+
+def wire_report_directory() -> Path:
+    return REPO_ROOT / "test-results" / "live-anthropic" / "decision-wire"
+
+
+def wire_report_payload(
+    *,
+    actual_sdk_version: str | None,
+    live_call_attempts: int,
+    stopped_on: str | None,
+    probes: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "schema_version": WIRE_REPORT_SCHEMA_VERSION,
+        "action": WIRE_ACTION,
+        "model": DEFAULT_MODEL_ID,
+        "expected_sdk_version": EXPECTED_SDK_VERSION,
+        "actual_sdk_version": actual_sdk_version,
+        "live_call_attempts": live_call_attempts,
+        "max_approved_live_calls": WIRE_MAX_LIVE_CALLS,
+        "max_retries": LIVE_MAX_RETRIES,
+        "timeout_seconds": LIVE_TIMEOUT_SECONDS,
+        "stopped_on": stopped_on,
+        "probes": list(probes),
+    }
+
+
+def write_wire_report(payload: Mapping[str, Any]) -> Path:
+    if not artifacts_dir_is_gitignored():
+        raise LiveHarnessError("test-results is not gitignored")
+    reject_unsafe_report(payload)
+    directory = wire_report_directory()
+    directory.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    path = directory / f"{stamp}.json"
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
+def wire_diagnostic_exit_code(payload: Mapping[str, Any]) -> int:
+    """Completed A/B/C diagnostics exit 0, including expected HTTP 400 results."""
+
+    if payload.get("stopped_on") is not None:
+        return 1
+    probes = payload.get("probes")
+    if not isinstance(probes, list) or len(probes) != len(WIRE_PROBE_SPECS):
+        return 1
+    for probe in probes:
+        if not isinstance(probe, Mapping):
+            return 1
+        if probe.get("classification") not in WIRE_CONTINUING_CLASSIFICATIONS:
+            return 1
+    return 0
+
+
+def run_wire_probes(
+    environ: Mapping[str, str] | None = None,
+    *,
+    version_lookup: Callable[[], str] | None = None,
+    sdk_client_factory: Callable[[str, Any], Any] | None = None,
+) -> dict[str, Any]:
+    """Run the three grammar probes. The wire opt-in does not authorize Tier-1."""
+
+    key = prepare_wire_live(environ)
+    lookup = installed_anthropic_sdk_version if version_lookup is None else version_lookup
+    actual: str | None = None
+    try:
+        try:
+            sdk = import_anthropic_sdk()
+            try:
+                actual = lookup()
+            except Exception as exc:
+                raise LiveHarnessError("anthropic sdk version unavailable") from exc
+            if actual != EXPECTED_SDK_VERSION:
+                raise LiveHarnessError("anthropic sdk version mismatch")
+            if sdk_client_factory is None:
+                sdk_client = construct_live_sdk_client(key, sdk)
+            else:
+                sdk_client = sdk_client_factory(key, sdk)
+        except LiveHarnessError:
+            payload = wire_report_payload(
+                actual_sdk_version=actual,
+                live_call_attempts=0,
+                stopped_on="LOCAL_HARNESS_FAILURE",
+                probes=[],
+            )
+            write_wire_report(payload)
+            return payload
+    finally:
+        key = ""
+        del key
+    client = BudgetedRecordingMessagesClient(
+        AnthropicSDKMessagesClient(sdk_client),
+        max_calls=WIRE_MAX_LIVE_CALLS,
+    )
+    checked = validate_wire_static_configuration()
+    probes, stopped_on = execute_wire_probes(client, checked)
+    payload = wire_report_payload(
+        actual_sdk_version=actual,
+        live_call_attempts=client.current_call_count,
+        stopped_on=stopped_on,
+        probes=probes,
+    )
+    write_wire_report(payload)
+    return payload
+
+
 def dry_run() -> dict[str, Any]:
     validate_static_configuration()
     fixtures = validate_fixtures()
+    wire = validate_wire_static_configuration()
     return {
         "action": "dry-run",
         "live_report_schema": LIVE_REPORT_SCHEMA_VERSION,
@@ -2576,6 +3094,18 @@ def dry_run() -> dict[str, Any]:
         "timeout_seconds": LIVE_TIMEOUT_SECONDS,
         "tier1_max_live_calls": TIER1_MAX_LIVE_CALLS,
         "matrix_max_live_calls": MATRIX_MAX_LIVE_CALLS,
+        "wire_probe_count": len(WIRE_PROBE_SPECS),
+        "wire_max_live_calls": WIRE_MAX_LIVE_CALLS,
+        "wire_expected_sdk_version": EXPECTED_SDK_VERSION,
+        "actual_sdk_version": None,
+        "wire_probes": [
+            {
+                "probe_id": probe_id,
+                "name": name,
+                "request_fingerprint": wire["fingerprints"][probe_id],
+            }
+            for probe_id, name in WIRE_PROBE_SPECS
+        ],
         "tier1_executions": execution_count(TIER1_SPECS),
         "matrix_executions": execution_count(MATRIX_SPECS),
         "quality_threshold": QUALITY_THRESHOLD,
@@ -2603,13 +3133,13 @@ def dry_run() -> dict[str, Any]:
 def resolve_cli(argv: Sequence[str]) -> tuple[str, str | None]:
     usage = (
         "usage: python scripts/validate_decision_specialist_anthropic_live.py "
-        "{dry-run|run-tier1|run-matrix --tier1-report PATH}"
+        "{dry-run|run-tier1|run-matrix --tier1-report PATH|run-wire-probes}"
     )
     args = list(argv)
     if len(args) < 2 or args[1] not in ACTIONS:
         raise SystemExit(usage)
     action = args[1]
-    if action in {"dry-run", "run-tier1"}:
+    if action in {"dry-run", "run-tier1", WIRE_ACTION}:
         if len(args) != 2:
             raise SystemExit(usage)
         return action, None
@@ -2624,6 +3154,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     if action == "dry-run":
         print(json.dumps(dry_run(), indent=2, sort_keys=True))
         return 0
+    if action == WIRE_ACTION:
+        payload = run_wire_probes()
+        print(
+            json.dumps(
+                {
+                    "action": payload["action"],
+                    "stopped_on": payload["stopped_on"],
+                    "live_call_attempts": payload["live_call_attempts"],
+                    "expected_sdk_version": payload["expected_sdk_version"],
+                    "actual_sdk_version": payload["actual_sdk_version"],
+                    "probe_classifications": [
+                        item["classification"] for item in payload["probes"]
+                    ],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return wire_diagnostic_exit_code(payload)
     payload = run_live(action, tier1_report_path=tier1_report_path)
     print(
         json.dumps(
