@@ -14,6 +14,7 @@ FilterExpression.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import sys
@@ -69,16 +70,20 @@ from wilvor_operational import readers  # noqa: E402
 LIVE_OPT_IN_ENV = "WILVOR_RUN_LIVE_DECISION_ANTHROPIC"
 WIRE_OPT_IN_ENV = "WILVOR_RUN_LIVE_DECISION_ANTHROPIC_WIRE"
 TERMINAL_OPT_IN_ENV = "WILVOR_RUN_LIVE_DECISION_ANTHROPIC_TERMINAL"
+TRANSPORT_OPT_IN_ENV = "WILVOR_RUN_LIVE_DECISION_ANTHROPIC_TRANSPORT"
 API_KEY_ENV = "ANTHROPIC_API_KEY"
 LIVE_REPORT_SCHEMA_VERSION = "wilvor.decision.live_validation.v1"
 WIRE_REPORT_SCHEMA_VERSION = "wilvor.decision.live_wire_probe.v1"
 TERMINAL_REPORT_SCHEMA_VERSION = "wilvor.decision.live_terminal_probe.v1"
+TRANSPORT_REPORT_SCHEMA_VERSION = "wilvor.decision.live_transport_probe.v1"
 LIVE_MAX_RETRIES = 0
 LIVE_TIMEOUT_SECONDS = 240.0
 TIER1_MAX_LIVE_CALLS = 16
 MATRIX_MAX_LIVE_CALLS = 80
 WIRE_MAX_LIVE_CALLS = 3
 TERMINAL_MAX_LIVE_CALLS = 2
+TRANSPORT_MAX_LIVE_CALLS = 8
+TRANSPORT_VERSION = "wilvor.ai.decision_terminal_transport.v1"
 EXPECTED_SDK_VERSION = "1.8.0"
 TERMINAL_TOOL_CALL_ID = "decision-terminal-seed"
 TERMINAL_CORRELATION_ID = "corr-dlv2-terminal"
@@ -190,7 +195,56 @@ WIRE_PROBE_SPECS = (
 )
 TERMINAL_ACTION = "run-terminal-probes"
 TERMINAL_ACTIONS = frozenset({TERMINAL_ACTION})
-ACTIONS = ("dry-run", "run-tier1", "run-matrix", WIRE_ACTION, TERMINAL_ACTION)
+TRANSPORT_ACTION = "run-transport-probes"
+TRANSPORT_ACTIONS = frozenset({TRANSPORT_ACTION})
+ACTIONS = (
+    "dry-run",
+    "run-tier1",
+    "run-matrix",
+    WIRE_ACTION,
+    TERMINAL_ACTION,
+    TRANSPORT_ACTION,
+)
+TRANSPORT_KINDS = ("FINAL_CLAIMS", "UNSUPPORTED", "REFUSAL")
+TRANSPORT_ERROR_CODES = frozenset(
+    {
+        "invalid_transport_response",
+        "invalid_transport_content",
+        "invalid_transport_json",
+        "invalid_transport_fields",
+        "invalid_transport_version",
+        "invalid_transport_kind",
+        "invalid_transport_decision_json",
+        "transport_kind_mismatch",
+        "inner_decision_invalid",
+        "unclassified_parser_error",
+    }
+)
+TRANSPORT_CONTINUING_CLASSIFICATIONS = frozenset(
+    {
+        "PASS",
+        "SAFE_VARIATION",
+        "MODEL_CLAIM_FAILURE",
+        "MODEL_ROUTING_FAILURE",
+        "MODEL_REFUSAL_VARIATION",
+    }
+)
+TRANSPORT_SYSTEM_SUFFIX_LEAD = (
+    "Terminal transport rules:\n"
+    "- Native Decision Tool calls remain native tool_use blocks.\n"
+    "- Do not place tool calls inside decision_json.\n"
+    "- When terminalizing, return only the outer transport envelope.\n"
+    "- The outer kind must equal the kind inside decision_json.\n"
+    "- decision_json must contain exactly one complete terminal "
+    "DecisionModelDecision object.\n"
+    "- decision_json must be bare JSON encoded as a string, with no markdown "
+    "fences and no surrounding prose.\n"
+    "- Cite only evidence_ref values present in the supplied "
+    "DecisionEvidenceSnapshot list.\n"
+    "- Never invent a de-N reference.\n"
+    "- Current, persisted, absence, winner, and route semantics are unchanged.\n"
+    "Terminal DecisionModelDecision schema:\n"
+)
 TERMINAL_PROBE_SPECS = (
     ("T-A", "unsupported_route_terminal", "UNSUPPORTED"),
     ("T-B", "high_risk_final_claims_terminal", "FINAL_CLAIMS"),
@@ -2097,6 +2151,7 @@ class BudgetedRecordingMessagesClient:
         if max_calls not in {
             TERMINAL_MAX_LIVE_CALLS,
             WIRE_MAX_LIVE_CALLS,
+            TRANSPORT_MAX_LIVE_CALLS,
             TIER1_MAX_LIVE_CALLS,
             MATRIX_MAX_LIVE_CALLS,
         }:
@@ -2478,10 +2533,24 @@ def write_report(payload: Mapping[str, Any]) -> Path:
     return path
 
 
+def _attach_transport_instrument(
+    report: dict[str, Any],
+    provider: Any,
+    *,
+    provider_id_leak: bool = False,
+) -> dict[str, Any]:
+    if provider is None or not hasattr(provider, "transport_instrument"):
+        return report
+    report.update(provider.transport_instrument())
+    report["provider_id_leak"] = bool(provider_id_leak)
+    return report
+
+
 def execute_scenario(
     spec: ScenarioSpec,
     repeat_index: int,
     client: BudgetedRecordingMessagesClient,
+    provider_factory: Callable[[BudgetedRecordingMessagesClient], Any] | None = None,
 ) -> dict[str, Any]:
     started = datetime.now(timezone.utc)
     record_start = len(client.records)
@@ -2490,6 +2559,7 @@ def execute_scenario(
     client.last_provider_diagnostics = empty_provider_error_diagnostics()
     client.provider_id_leak_in_request = False
     diagnostics = empty_provider_error_diagnostics()
+    provider: Any = None
     try:
         runtime = DecisionToolsRuntime(
             tables=build_fixture(spec.fixture),
@@ -2497,7 +2567,10 @@ def execute_scenario(
             query_timestamp_utc=FIXED_NOW_UTC,
             correlation_id=f"corr-{spec.scenario_id}-{repeat_index}",
         )
-        provider = AnthropicDecisionMessagesProvider(client=client)
+        if provider_factory is None:
+            provider = AnthropicDecisionMessagesProvider(client=client)
+        else:
+            provider = provider_factory(client)
         specialist = DecisionSpecialist(provider=provider)
         result = specialist.run(
             DecisionSpecialistRequest(
@@ -2532,7 +2605,11 @@ def execute_scenario(
             "provider_id_leak": bool(client.provider_id_leak_in_request),
         }
         client.last_transport_classification = transport_before
-        report = scenario_report(observation, repeat_index=repeat_index)
+        report = _attach_transport_instrument(
+            scenario_report(observation, repeat_index=repeat_index),
+            provider,
+            provider_id_leak=bool(client.provider_id_leak_in_request),
+        )
         return enforce_pre_redaction_provider_id_gate(
             report,
             client.consume_transient_provider_ids(),
@@ -2561,7 +2638,12 @@ def execute_scenario(
     observation["provider_diagnostics"] = diagnostics
     observation["run_started_at"] = started.strftime("%Y-%m-%dT%H:%M:%SZ")
     observation["run_finished_at"] = finished.strftime("%Y-%m-%dT%H:%M:%SZ")
-    report = scenario_report(observation, repeat_index=repeat_index)
+    report = _attach_transport_instrument(
+        scenario_report(observation, repeat_index=repeat_index),
+        provider,
+        provider_id_leak=bool(observation.get("provider_id_leak"))
+        or bool(observation.get("provider_id_request_leak")),
+    )
     return enforce_pre_redaction_provider_id_gate(report, provider_ids)
 
 
@@ -3655,11 +3737,460 @@ def run_terminal_probes(
     return payload
 
 
+def transport_terminal_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["transport_version", "kind", "decision_json"],
+        "properties": {
+            "transport_version": {"const": TRANSPORT_VERSION},
+            "kind": {"enum": list(TRANSPORT_KINDS)},
+            "decision_json": {"type": "string"},
+        },
+    }
+
+
+def tiny_transport_output_config() -> dict[str, Any]:
+    return {
+        "format": {
+            "type": "json_schema",
+            "schema": transport_terminal_schema(),
+        }
+    }
+
+
+def terminal_contract_text() -> str:
+    return json.dumps(
+        decision_terminal_json_schema(),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+    )
+
+
+def terminal_contract_sha256() -> str:
+    return hashlib.sha256(terminal_contract_text().encode("utf-8")).hexdigest()
+
+
+def transport_system_suffix() -> str:
+    return TRANSPORT_SYSTEM_SUFFIX_LEAD + terminal_contract_text()
+
+
+def candidate_transport_kwargs(turn: DecisionModelTurnRequest) -> dict[str, Any]:
+    """Production request with only the tiny grammar and harness suffix applied."""
+
+    produced = build_decision_messages_kwargs(turn, DEFAULT_MODEL_ID)
+    if not isinstance(produced, dict):
+        raise LiveHarnessError("transport base kwargs invalid")
+    control = copy.deepcopy(produced)
+    copied = copy.deepcopy(produced)
+    if produced != control:
+        raise LiveHarnessError("transport base kwargs mutated")
+    system = copied.get("system")
+    if not isinstance(system, str) or not system:
+        raise LiveHarnessError("transport system missing")
+    copied["system"] = system + "\n\n" + transport_system_suffix()
+    copied["output_config"] = tiny_transport_output_config()
+    if set(copied) != set(control):
+        raise LiveHarnessError("transport probe changed request fields")
+    for key, value in copied.items():
+        if key in {"system", "output_config"}:
+            continue
+        if value != control[key]:
+            raise LiveHarnessError("transport probe changed request fields")
+    if not str(copied["system"]).startswith(str(control["system"])):
+        raise LiveHarnessError("transport instruction prefix changed")
+    tools = copied.get("tools")
+    if not isinstance(tools, list) or len(tools) != 4:
+        raise LiveHarnessError("transport tools missing")
+    if any(not isinstance(tool, Mapping) or tool.get("strict") is not True for tool in tools):
+        raise LiveHarnessError("transport strict tool missing")
+    schema = copied["output_config"]["format"]["schema"]
+    if schema != transport_terminal_schema():
+        raise LiveHarnessError("transport schema mismatch")
+    if _count_anyof(schema) != 0 or len(schema["properties"]) != 3:
+        raise LiveHarnessError("transport schema shape mismatch")
+    if decision_terminal_json_schema() == schema:
+        raise LiveHarnessError("transport schema replaced the production grammar")
+    rendered_schema = json.dumps(schema)
+    if "anyOf" in rendered_schema or "RISK_PRESENT" in rendered_schema:
+        raise LiveHarnessError("transport schema contains claim grammar")
+    suffix = str(copied["system"])[len(str(control["system"])) :]
+    for marker in (
+        "tool_call_id",
+        "correlation_id",
+        "now_epoch",
+        "query_timestamp_utc",
+        "tables",
+        "sk-ant-",
+        "ANTHROPIC_API_KEY",
+    ):
+        if marker in suffix:
+            raise LiveHarnessError("transport suffix contains a forbidden marker")
+    return copied
+
+
+def validate_transport_static_configuration() -> dict[str, Any]:
+    """Check the candidate request offline. Does not read opt-in, key, or the SDK."""
+
+    turn = terminal_turn_request(PROMPT_HIGH)
+    kwargs = candidate_transport_kwargs(turn)
+    return {
+        "kwargs": kwargs,
+        "terminal_contract_sha256": terminal_contract_sha256(),
+        "terminal_contract_char_count": len(terminal_contract_text()),
+        "transport_schema_property_count": 3,
+        "transport_schema_anyof_count": 0,
+    }
+
+
+class _TransportDecodeError(Exception):
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+def _transport_outer_text(response: Mapping[str, Any]) -> str:
+    if response.get("type") != "message" or response.get("role") != "assistant":
+        raise _TransportDecodeError("invalid_transport_response")
+    if response.get("model") != DEFAULT_MODEL_ID:
+        raise _TransportDecodeError("invalid_transport_response")
+    if "id" in response:
+        message_id = response.get("id")
+        if not isinstance(message_id, str) or not message_id.strip():
+            raise _TransportDecodeError("invalid_transport_response")
+    content = response.get("content")
+    if not isinstance(content, list) or len(content) != 1 or not isinstance(content[0], Mapping):
+        raise _TransportDecodeError("invalid_transport_content")
+    block = content[0]
+    if block.get("type") != "text" or not isinstance(block.get("text"), str):
+        raise _TransportDecodeError("invalid_transport_content")
+    return str(block["text"])
+
+
+def _decode_transport_outer(response: Mapping[str, Any]) -> tuple[dict[str, Any], str]:
+    text = _transport_outer_text(response)
+    try:
+        loaded = json.loads(text)
+    except json.JSONDecodeError:
+        raise _TransportDecodeError("invalid_transport_json") from None
+    if not isinstance(loaded, dict):
+        raise _TransportDecodeError("invalid_transport_json")
+    if set(loaded) != {"transport_version", "kind", "decision_json"}:
+        raise _TransportDecodeError("invalid_transport_fields")
+    if loaded.get("transport_version") != TRANSPORT_VERSION:
+        raise _TransportDecodeError("invalid_transport_version")
+    if loaded.get("kind") not in TRANSPORT_KINDS:
+        raise _TransportDecodeError("invalid_transport_kind")
+    decision_json = loaded.get("decision_json")
+    if not isinstance(decision_json, str) or not decision_json.strip():
+        raise _TransportDecodeError("invalid_transport_decision_json")
+    return loaded, decision_json
+
+
+def _synthetic_terminal_response(decision_json: str) -> dict[str, Any]:
+    return {
+        "type": "message",
+        "role": "assistant",
+        "model": DEFAULT_MODEL_ID,
+        "stop_reason": "end_turn",
+        "content": [{"type": "text", "text": decision_json}],
+    }
+
+
+class CandidateTransportProvider:
+    """Harness-only tiny-envelope provider. It does not execute Decision tools."""
+
+    def __init__(self, client: Any) -> None:
+        if client is None or not callable(getattr(client, "messages_create", None)):
+            raise TypeError("client must implement messages_create")
+        self._client = client
+        self.transport_error_code_history: list[str] = []
+        self.outer_terminal_count = 0
+        self.native_tool_turn_count = 0
+        self.inner_terminal_parse_count = 0
+        self.kind_mismatch_count = 0
+
+    def transport_instrument(self) -> dict[str, Any]:
+        return {
+            "transport_error_code_history": list(self.transport_error_code_history),
+            "outer_terminal_count": self.outer_terminal_count,
+            "native_tool_turn_count": self.native_tool_turn_count,
+            "inner_terminal_parse_count": self.inner_terminal_parse_count,
+            "kind_mismatch_count": self.kind_mismatch_count,
+        }
+
+    def _record(self, code: str) -> None:
+        if code not in self.transport_error_code_history:
+            self.transport_error_code_history.append(code)
+
+    def _fail(self, code: str) -> None:
+        self._record(code)
+        raise LiveHarnessError(code) from None
+
+    def complete(self, turn: DecisionModelTurnRequest) -> Any:
+        response = self._client.messages_create(**candidate_transport_kwargs(turn))
+        try:
+            if not isinstance(response, Mapping):
+                self._fail("invalid_transport_response")
+            stop_reason = response.get("stop_reason")
+            if stop_reason != "end_turn":
+                return self._decode_native(response)
+            return self._decode_terminal(response)
+        finally:
+            del response
+
+    def _decode_native(self, response: Mapping[str, Any]) -> Any:
+        try:
+            decision = parse_decision_messages_response(response, DEFAULT_MODEL_ID)
+        except (ModelProviderMalformedDecisionError, ModelProviderContextLengthError) as exc:
+            self._record("inner_decision_invalid")
+            parser_code = terminal_parser_error_code(exc)
+            if parser_code != "inner_decision_invalid":
+                self._record(parser_code)
+            raise LiveHarnessError("inner_decision_invalid") from None
+        if decision.kind is ModelDecisionKind.TOOL_CALLS:
+            self.native_tool_turn_count += 1
+        return decision
+
+    def _decode_terminal(self, response: Mapping[str, Any]) -> Any:
+        decision_json = ""
+        try:
+            outer, decision_json = _decode_transport_outer(response)
+            synthetic = _synthetic_terminal_response(decision_json)
+            try:
+                decision = parse_decision_messages_response(synthetic, DEFAULT_MODEL_ID)
+            except (
+                ModelProviderMalformedDecisionError,
+                ModelProviderContextLengthError,
+            ) as exc:
+                self._record("inner_decision_invalid")
+                parser_code = terminal_parser_error_code(exc)
+                if parser_code != "inner_decision_invalid":
+                    self._record(parser_code)
+                raise LiveHarnessError("inner_decision_invalid") from None
+            self.outer_terminal_count += 1
+            self.inner_terminal_parse_count += 1
+            if outer["kind"] != decision.kind.value:
+                self.kind_mismatch_count += 1
+                self._fail("transport_kind_mismatch")
+            return decision
+        except _TransportDecodeError as exc:
+            self._fail(exc.code)
+        finally:
+            decision_json = ""
+            del decision_json
+
+
+def transport_stop_reason(report: Mapping[str, Any]) -> str | None:
+    """Stop after safety or transport failure. Contained model results may continue."""
+
+    history = report.get("transport_error_code_history") or []
+    if history:
+        return str(history[0])
+    if report.get("kind_mismatch_count"):
+        return "transport_kind_mismatch"
+    if report.get("provider_id_leak") is True:
+        return "SAFETY_BOUNDARY_FAILURE"
+    classification = report.get("classification")
+    if (
+        classification == "SAFETY_BOUNDARY_FAILURE"
+        or report.get("safety_boundary_passed") is False
+    ):
+        return "SAFETY_BOUNDARY_FAILURE"
+    if classification in STOP_CLASSIFICATIONS:
+        return str(classification)
+    if classification not in TRANSPORT_CONTINUING_CLASSIFICATIONS:
+        return str(classification or "LOCAL_HARNESS_FAILURE")
+    return None
+
+
+def evaluate_transport_gate(scenarios: Sequence[Mapping[str, Any]], stopped_on: str | None) -> bool:
+    environment = {
+        "PROVIDER_AUTH_BLOCKED",
+        "PROVIDER_RATE_LIMITED",
+        "PROVIDER_TRANSIENT_FAILURE",
+        "PROVIDER_WIRE_BLOCKED",
+        "CALL_BUDGET_EXCEEDED",
+        "DETERMINISTIC_RUNTIME_FAILURE",
+        "LOCAL_HARNESS_FAILURE",
+    }
+    if stopped_on in environment or stopped_on in TRANSPORT_ERROR_CODES:
+        return False
+    if not scenarios:
+        return False
+    for item in scenarios:
+        history = item.get("transport_error_code_history") or []
+        if history or item.get("kind_mismatch_count"):
+            return False
+        if item.get("provider_id_leak") is True:
+            return False
+        if item.get("classification") in environment:
+            return False
+    return True
+
+
+def evaluate_transport_quality(scenarios: Sequence[Mapping[str, Any]]) -> bool:
+    if len(scenarios) != 2:
+        return False
+    return (
+        scenarios[0].get("scenario_id") == "TR-A"
+        and scenarios[0].get("classification") == "PASS"
+        and scenarios[1].get("scenario_id") == "TR-B"
+        and scenarios[1].get("classification") == "PASS"
+    )
+
+
+TRANSPORT_SPECS = (
+    _spec("TR-A", "STORED_HIGH", 1, PROMPT_HIGH, "CURRENT_HIGH", "stored_high"),
+    _spec("TR-B", "ROUTE_UNSUPPORTED", 1, PROMPT_ROUTE, "CURRENT_HIGH", "route"),
+)
+
+
+def execute_transport_scenarios(
+    client: BudgetedRecordingMessagesClient,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Run TR-A and TR-B on one budget client and a fresh provider each."""
+
+    scenarios: list[dict[str, Any]] = []
+    stopped_on = None
+    for spec in TRANSPORT_SPECS:
+        holder: dict[str, CandidateTransportProvider] = {}
+
+        def factory(
+            bound_client: BudgetedRecordingMessagesClient,
+            box: dict[str, CandidateTransportProvider] = holder,
+        ) -> CandidateTransportProvider:
+            provider = CandidateTransportProvider(bound_client)
+            box["provider"] = provider
+            return provider
+
+        report = execute_scenario(spec, 0, client, provider_factory=factory)
+        scenarios.append(report)
+        stopped_on = transport_stop_reason(report)
+        if stopped_on is not None:
+            break
+    return scenarios, stopped_on
+
+
+def require_transport_opt_in(environ: Mapping[str, str] | None = None) -> None:
+    env = os.environ if environ is None else environ
+    if env.get(TRANSPORT_OPT_IN_ENV) != "1":
+        raise LiveHarnessError(
+            "transport opt-in WILVOR_RUN_LIVE_DECISION_ANTHROPIC_TRANSPORT=1 is required"
+        )
+
+
+def prepare_transport_live(environ: Mapping[str, str] | None = None) -> str:
+    validate_transport_static_configuration()
+    require_transport_opt_in(environ)
+    return read_live_api_key(environ)
+
+
+def transport_report_directory() -> Path:
+    return REPO_ROOT / "test-results" / "live-anthropic" / "decision-transport"
+
+
+def transport_report_payload(
+    *,
+    actual_sdk_version: str | None,
+    live_call_attempts: int,
+    stopped_on: str | None,
+    scenarios: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "schema_version": TRANSPORT_REPORT_SCHEMA_VERSION,
+        "action": TRANSPORT_ACTION,
+        "model": DEFAULT_MODEL_ID,
+        "expected_sdk_version": EXPECTED_SDK_VERSION,
+        "actual_sdk_version": actual_sdk_version,
+        "instruction_ref": DECISION_SPECIALIST_INSTRUCTION_REF,
+        "transport_version": TRANSPORT_VERSION,
+        "live_call_attempts": live_call_attempts,
+        "max_approved_live_calls": TRANSPORT_MAX_LIVE_CALLS,
+        "max_retries": LIVE_MAX_RETRIES,
+        "timeout_seconds": LIVE_TIMEOUT_SECONDS,
+        "transport_gate": evaluate_transport_gate(scenarios, stopped_on),
+        "safety_gate": evaluate_safety_gate(scenarios) if scenarios else False,
+        "quality_gate": evaluate_transport_quality(scenarios),
+        "stopped_on": stopped_on,
+        "terminal_contract_sha256": terminal_contract_sha256(),
+        "terminal_contract_char_count": len(terminal_contract_text()),
+        "transport_schema_property_count": 3,
+        "transport_schema_anyof_count": 0,
+        "scenarios": list(scenarios),
+    }
+
+
+def write_transport_report(payload: Mapping[str, Any]) -> Path:
+    if not artifacts_dir_is_gitignored():
+        raise LiveHarnessError("test-results is not gitignored")
+    reject_unsafe_report(payload)
+    directory = transport_report_directory()
+    directory.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    path = directory / f"{stamp}.json"
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
+def run_transport_probes(
+    environ: Mapping[str, str] | None = None,
+    *,
+    version_lookup: Callable[[], str] | None = None,
+    sdk_client_factory: Callable[[str, Any], Any] | None = None,
+) -> dict[str, Any]:
+    """Run the two full-specialist candidate scenarios."""
+
+    key = prepare_transport_live(environ)
+    lookup = installed_anthropic_sdk_version if version_lookup is None else version_lookup
+    actual: str | None = None
+    try:
+        try:
+            sdk = import_anthropic_sdk()
+            try:
+                actual = lookup()
+            except Exception as exc:
+                raise LiveHarnessError("anthropic sdk version unavailable") from exc
+            if actual != EXPECTED_SDK_VERSION:
+                raise LiveHarnessError("anthropic sdk version mismatch")
+            if sdk_client_factory is None:
+                sdk_client = construct_live_sdk_client(key, sdk)
+            else:
+                sdk_client = sdk_client_factory(key, sdk)
+        except LiveHarnessError:
+            payload = transport_report_payload(
+                actual_sdk_version=actual,
+                live_call_attempts=0,
+                stopped_on="LOCAL_HARNESS_FAILURE",
+                scenarios=[],
+            )
+            write_transport_report(payload)
+            return payload
+    finally:
+        key = ""
+        del key
+    client = BudgetedRecordingMessagesClient(
+        AnthropicSDKMessagesClient(sdk_client),
+        max_calls=TRANSPORT_MAX_LIVE_CALLS,
+    )
+    scenarios, stopped_on = execute_transport_scenarios(client)
+    payload = transport_report_payload(
+        actual_sdk_version=actual,
+        live_call_attempts=client.current_call_count,
+        stopped_on=stopped_on,
+        scenarios=scenarios,
+    )
+    write_transport_report(payload)
+    return payload
+
+
 def dry_run() -> dict[str, Any]:
     validate_static_configuration()
     fixtures = validate_fixtures()
     wire = validate_wire_static_configuration()
     terminal = validate_terminal_static_configuration()
+    transport = validate_transport_static_configuration()
     return {
         "action": "dry-run",
         "live_report_schema": LIVE_REPORT_SCHEMA_VERSION,
@@ -3700,6 +4231,19 @@ def dry_run() -> dict[str, Any]:
             }
             for probe_id, name, expected_kind in TERMINAL_PROBE_SPECS
         ],
+        "transport_probe_count": len(TRANSPORT_SPECS),
+        "transport_max_live_calls": TRANSPORT_MAX_LIVE_CALLS,
+        "transport_expected_sdk_version": EXPECTED_SDK_VERSION,
+        "transport_actual_sdk_version": None,
+        "transport_version": TRANSPORT_VERSION,
+        "transport_schema_property_count": transport["transport_schema_property_count"],
+        "transport_schema_anyof_count": transport["transport_schema_anyof_count"],
+        "terminal_contract_sha256": transport["terminal_contract_sha256"],
+        "terminal_contract_char_count": transport["terminal_contract_char_count"],
+        "transport_scenarios": [
+            {"scenario_id": item.scenario_id, "family": item.family, "profile": item.profile}
+            for item in TRANSPORT_SPECS
+        ],
         "tier1_executions": execution_count(TIER1_SPECS),
         "matrix_executions": execution_count(MATRIX_SPECS),
         "quality_threshold": QUALITY_THRESHOLD,
@@ -3727,13 +4271,13 @@ def dry_run() -> dict[str, Any]:
 def resolve_cli(argv: Sequence[str]) -> tuple[str, str | None]:
     usage = (
         "usage: python scripts/validate_decision_specialist_anthropic_live.py "
-        "{dry-run|run-tier1|run-matrix --tier1-report PATH|run-wire-probes|run-terminal-probes}"
+        "{dry-run|run-tier1|run-matrix --tier1-report PATH|run-wire-probes|run-terminal-probes|run-transport-probes}"
     )
     args = list(argv)
     if len(args) < 2 or args[1] not in ACTIONS:
         raise SystemExit(usage)
     action = args[1]
-    if action in {"dry-run", "run-tier1", WIRE_ACTION, TERMINAL_ACTION}:
+    if action in {"dry-run", "run-tier1", WIRE_ACTION, TERMINAL_ACTION, TRANSPORT_ACTION}:
         if len(args) != 2:
             raise SystemExit(usage)
         return action, None
@@ -3786,6 +4330,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         )
         return terminal_diagnostic_exit_code(payload)
+    if action == TRANSPORT_ACTION:
+        payload = run_transport_probes()
+        print(
+            json.dumps(
+                {
+                    "action": payload["action"],
+                    "stopped_on": payload["stopped_on"],
+                    "live_call_attempts": payload["live_call_attempts"],
+                    "transport_gate": payload["transport_gate"],
+                    "safety_gate": payload["safety_gate"],
+                    "quality_gate": payload["quality_gate"],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return (
+            0
+            if payload["transport_gate"] and payload["safety_gate"] and payload["quality_gate"]
+            else 1
+        )
     payload = run_live(action, tier1_report_path=tier1_report_path)
     print(
         json.dumps(
