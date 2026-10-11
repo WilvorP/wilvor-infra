@@ -71,11 +71,13 @@ LIVE_OPT_IN_ENV = "WILVOR_RUN_LIVE_DECISION_ANTHROPIC"
 WIRE_OPT_IN_ENV = "WILVOR_RUN_LIVE_DECISION_ANTHROPIC_WIRE"
 TERMINAL_OPT_IN_ENV = "WILVOR_RUN_LIVE_DECISION_ANTHROPIC_TERMINAL"
 TRANSPORT_OPT_IN_ENV = "WILVOR_RUN_LIVE_DECISION_ANTHROPIC_TRANSPORT"
+ROUTING_OPT_IN_ENV = "WILVOR_RUN_LIVE_DECISION_ANTHROPIC_ROUTING"
 API_KEY_ENV = "ANTHROPIC_API_KEY"
 LIVE_REPORT_SCHEMA_VERSION = "wilvor.decision.live_validation.v1"
 WIRE_REPORT_SCHEMA_VERSION = "wilvor.decision.live_wire_probe.v1"
 TERMINAL_REPORT_SCHEMA_VERSION = "wilvor.decision.live_terminal_probe.v1"
 TRANSPORT_REPORT_SCHEMA_VERSION = "wilvor.decision.live_transport_probe.v1"
+ROUTING_REPORT_SCHEMA_VERSION = "wilvor.decision.live_routing_probe.v1"
 LIVE_MAX_RETRIES = 0
 LIVE_TIMEOUT_SECONDS = 240.0
 TIER1_MAX_LIVE_CALLS = 16
@@ -83,7 +85,9 @@ MATRIX_MAX_LIVE_CALLS = 80
 WIRE_MAX_LIVE_CALLS = 3
 TERMINAL_MAX_LIVE_CALLS = 2
 TRANSPORT_MAX_LIVE_CALLS = 8
+ROUTING_MAX_LIVE_CALLS = 12
 TRANSPORT_VERSION = "wilvor.ai.decision_terminal_transport.v1"
+ROUTING_POLICY_VERSION = "wilvor.ai.decision_routing_hint.v1"
 EXPECTED_SDK_VERSION = "1.8.0"
 TERMINAL_TOOL_CALL_ID = "decision-terminal-seed"
 TERMINAL_CORRELATION_ID = "corr-dlv2-terminal"
@@ -197,6 +201,8 @@ TERMINAL_ACTION = "run-terminal-probes"
 TERMINAL_ACTIONS = frozenset({TERMINAL_ACTION})
 TRANSPORT_ACTION = "run-transport-probes"
 TRANSPORT_ACTIONS = frozenset({TRANSPORT_ACTION})
+ROUTING_ACTION = "run-routing-probes"
+ROUTING_ACTIONS = frozenset({ROUTING_ACTION})
 ACTIONS = (
     "dry-run",
     "run-tier1",
@@ -204,6 +210,7 @@ ACTIONS = (
     WIRE_ACTION,
     TERMINAL_ACTION,
     TRANSPORT_ACTION,
+    ROUTING_ACTION,
 )
 TRANSPORT_KINDS = ("FINAL_CLAIMS", "UNSUPPORTED", "REFUSAL")
 TRANSPORT_ERROR_CODES = frozenset(
@@ -244,6 +251,37 @@ TRANSPORT_SYSTEM_SUFFIX_LEAD = (
     "- Never invent a de-N reference.\n"
     "- Current, persisted, absence, winner, and route semantics are unchanged.\n"
     "Terminal DecisionModelDecision schema:\n"
+)
+ROUTING_SYSTEM_SUFFIX = (
+    "Routing policy " + ROUTING_POLICY_VERSION + ":\n"
+    "- Decision Tools retrieve operational evidence.\n"
+    "- Do not call Decision Tools merely to decide whether Decision Expert V1 "
+    "implements a capability already declared unsupported.\n"
+    "- Route generation or route validation is a static capability boundary. "
+    "Return UNSUPPORTED with ROUTE_GENERATION_NOT_IMPLEMENTED without calling "
+    "a Decision Tool merely to establish that boundary.\n"
+    "- Selecting, choosing, or identifying a best or preferred diversion "
+    "airport is a static capability boundary. Return UNSUPPORTED with "
+    "SELECTED_DIVERSION_NOT_SUPPORTED without calling a Decision Tool merely "
+    "to establish that boundary.\n"
+    "- This shortcut applies only to capability classification.\n"
+    "- Operational factual questions still require operational evidence from "
+    "the appropriate Decision Tools.\n"
+    "- A stored current risk question therefore still requires Decision Tool "
+    "evidence.\n"
+    "- Prompt guidance is not the safety boundary.\n"
+)
+ROUTING_SUFFIX_MARKERS = (
+    "tool_call_id",
+    "correlation_id",
+    "now_epoch",
+    "query_timestamp_utc",
+    "tables",
+    "sk-ant-",
+    "ANTHROPIC_API_KEY",
+    "abc123",
+    "de-1",
+    "corr-",
 )
 TERMINAL_PROBE_SPECS = (
     ("T-A", "unsupported_route_terminal", "UNSUPPORTED"),
@@ -2152,6 +2190,7 @@ class BudgetedRecordingMessagesClient:
             TERMINAL_MAX_LIVE_CALLS,
             WIRE_MAX_LIVE_CALLS,
             TRANSPORT_MAX_LIVE_CALLS,
+            ROUTING_MAX_LIVE_CALLS,
             TIER1_MAX_LIVE_CALLS,
             MATRIX_MAX_LIVE_CALLS,
         }:
@@ -3928,8 +3967,11 @@ class CandidateTransportProvider:
         self._record(code)
         raise LiveHarnessError(code) from None
 
+    def _request_kwargs(self, turn: DecisionModelTurnRequest) -> dict[str, Any]:
+        return candidate_transport_kwargs(turn)
+
     def complete(self, turn: DecisionModelTurnRequest) -> Any:
-        response = self._client.messages_create(**candidate_transport_kwargs(turn))
+        response = self._client.messages_create(**self._request_kwargs(turn))
         try:
             if not isinstance(response, Mapping):
                 self._fail("invalid_transport_response")
@@ -4185,12 +4227,301 @@ def run_transport_probes(
     return payload
 
 
+def routing_system_suffix() -> str:
+    return ROUTING_SYSTEM_SUFFIX
+
+
+def routing_policy_sha256() -> str:
+    return hashlib.sha256(routing_system_suffix().encode("utf-8")).hexdigest()
+
+
+def candidate_routing_kwargs(turn: DecisionModelTurnRequest) -> dict[str, Any]:
+    """Validated transport request plus the harness routing suffix only."""
+
+    produced = candidate_transport_kwargs(turn)
+    if not isinstance(produced, dict):
+        raise LiveHarnessError("routing base kwargs invalid")
+    control = copy.deepcopy(produced)
+    copied = copy.deepcopy(produced)
+    if produced != control:
+        raise LiveHarnessError("routing base kwargs mutated")
+    system = copied.get("system")
+    if not isinstance(system, str) or not system:
+        raise LiveHarnessError("routing system missing")
+    suffix = routing_system_suffix()
+    copied["system"] = system + "\n\n" + suffix
+    if set(copied) != set(control):
+        raise LiveHarnessError("routing probe changed request fields")
+    for key, value in copied.items():
+        if key == "system":
+            continue
+        if value != control[key]:
+            raise LiveHarnessError("routing probe changed request fields")
+    if copied["system"] != str(control["system"]) + "\n\n" + suffix:
+        raise LiveHarnessError("routing suffix mismatch")
+    for marker in ROUTING_SUFFIX_MARKERS:
+        if marker in suffix:
+            raise LiveHarnessError("routing suffix contains a forbidden marker")
+    if ROUTING_POLICY_VERSION not in suffix:
+        raise LiveHarnessError("routing policy version missing")
+    return copied
+
+
+def validate_routing_static_configuration() -> dict[str, Any]:
+    """Check the routing request offline. Does not read opt-in, key, or the SDK."""
+
+    turn = terminal_turn_request(PROMPT_HIGH)
+    transport_kwargs = candidate_transport_kwargs(turn)
+    routing_kwargs = candidate_routing_kwargs(turn)
+    if set(routing_kwargs) != set(transport_kwargs):
+        raise LiveHarnessError("routing probe changed request fields")
+    for key, value in routing_kwargs.items():
+        if key == "system":
+            continue
+        if value != transport_kwargs[key]:
+            raise LiveHarnessError("routing probe changed request fields")
+    suffix = routing_system_suffix()
+    if routing_kwargs["system"] != str(transport_kwargs["system"]) + "\n\n" + suffix:
+        raise LiveHarnessError("routing suffix mismatch")
+    for prompt in (PROMPT_HIGH, PROMPT_ROUTE, PROMPT_SELECT, PROMPT_ROUTE_OR_SELECT):
+        if prompt in suffix:
+            raise LiveHarnessError("routing suffix quotes a scenario prompt")
+    if routing_system_suffix() != suffix:
+        raise LiveHarnessError("routing suffix is not deterministic")
+    if routing_policy_sha256() != routing_policy_sha256():
+        raise LiveHarnessError("routing digest is not deterministic")
+    tools = routing_kwargs.get("tools")
+    if not isinstance(tools, list) or len(tools) != 4:
+        raise LiveHarnessError("routing tools missing")
+    if any(not isinstance(tool, Mapping) or tool.get("strict") is not True for tool in tools):
+        raise LiveHarnessError("routing strict tool missing")
+    if routing_kwargs["output_config"] != transport_kwargs["output_config"]:
+        raise LiveHarnessError("routing output_config changed")
+    return {
+        "routing_policy_sha256": routing_policy_sha256(),
+        "routing_policy_char_count": len(suffix),
+    }
+
+
+class CandidateRoutingProvider(CandidateTransportProvider):
+    """Transport provider plus the harness routing suffix. Decoding stays inherited."""
+
+    def _request_kwargs(self, turn: DecisionModelTurnRequest) -> dict[str, Any]:
+        return candidate_routing_kwargs(turn)
+
+
+def _stored_high_execution(report: Mapping[str, Any]) -> bool:
+    names = tuple(report.get("executed_tool_names") or ())
+    return names in {(RISK_TOOL,), (CONTEXT_TOOL,)} and bool(report.get("evidence_refs"))
+
+
+def _direct_capability(report: Mapping[str, Any], reason: str) -> bool:
+    return (
+        report.get("classification") == "PASS"
+        and report.get("specialist_run_status") == "UNSUPPORTED"
+        and report.get("terminal_decision_kind") == "UNSUPPORTED"
+        and report.get("unsupported_reason") == reason
+        and report.get("provider_turn_count") == 1
+        and report.get("provider_call_count") == 1
+        and list(report.get("selected_tool_names") or []) == []
+        and list(report.get("executed_tool_names") or []) == []
+        and list(report.get("evidence_refs") or []) == []
+        and list(report.get("validation_feedback_codes") or []) == []
+        and report.get("native_tool_turn_count") == 0
+    )
+
+
+def evaluate_routing_gate(scenarios: Sequence[Mapping[str, Any]]) -> bool:
+    if len(scenarios) != 3:
+        return False
+    high, route, selected = scenarios
+    if high.get("scenario_id") != "R-A" or route.get("scenario_id") != "R-B":
+        return False
+    if selected.get("scenario_id") != "R-C":
+        return False
+    high_ok = (
+        high.get("classification") == "PASS"
+        and high.get("specialist_run_status") == "COMPLETED"
+        and high.get("terminal_decision_kind") == "FINAL_CLAIMS"
+        and high.get("verifier_outcome") == "PASSED"
+        and high.get("render_outcome") == "FACTUAL"
+        and _stored_high_execution(high)
+    )
+    return (
+        high_ok
+        and _direct_capability(route, "ROUTE_GENERATION_NOT_IMPLEMENTED")
+        and _direct_capability(selected, "SELECTED_DIVERSION_NOT_SUPPORTED")
+    )
+
+
+def evaluate_routing_quality(scenarios: Sequence[Mapping[str, Any]]) -> bool:
+    if len(scenarios) != 3:
+        return False
+    return (
+        scenarios[0].get("scenario_id") == "R-A"
+        and scenarios[0].get("classification") == "PASS"
+        and scenarios[1].get("scenario_id") == "R-B"
+        and scenarios[1].get("classification") == "PASS"
+        and scenarios[2].get("scenario_id") == "R-C"
+        and scenarios[2].get("classification") == "PASS"
+    )
+
+
+ROUTING_SPECS = (
+    _spec("R-A", "OPERATIONAL_HIGH_CONTROL", 1, PROMPT_HIGH, "CURRENT_HIGH", "stored_high"),
+    _spec("R-B", "ROUTE_CAPABILITY", 1, PROMPT_ROUTE, "CURRENT_HIGH", "route"),
+    _spec("R-C", "SELECTED_DIVERSION_CAPABILITY", 1, PROMPT_SELECT, "CURRENT_HIGH", "selected"),
+)
+
+
+def execute_routing_scenarios(
+    client: BudgetedRecordingMessagesClient,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """Run R-A, R-B, and R-C on one budget client and a fresh provider each."""
+
+    scenarios: list[dict[str, Any]] = []
+    stopped_on = None
+    for spec in ROUTING_SPECS:
+        holder: dict[str, CandidateRoutingProvider] = {}
+
+        def factory(
+            bound_client: BudgetedRecordingMessagesClient,
+            box: dict[str, CandidateRoutingProvider] = holder,
+        ) -> CandidateRoutingProvider:
+            provider = CandidateRoutingProvider(bound_client)
+            box["provider"] = provider
+            return provider
+
+        report = execute_scenario(spec, 0, client, provider_factory=factory)
+        report["profile"] = spec.profile
+        scenarios.append(report)
+        stopped_on = transport_stop_reason(report)
+        if stopped_on is not None:
+            break
+    return scenarios, stopped_on
+
+
+def require_routing_opt_in(environ: Mapping[str, str] | None = None) -> None:
+    env = os.environ if environ is None else environ
+    if env.get(ROUTING_OPT_IN_ENV) != "1":
+        raise LiveHarnessError(
+            "routing opt-in WILVOR_RUN_LIVE_DECISION_ANTHROPIC_ROUTING=1 is required"
+        )
+
+
+def prepare_routing_live(environ: Mapping[str, str] | None = None) -> str:
+    validate_routing_static_configuration()
+    require_routing_opt_in(environ)
+    return read_live_api_key(environ)
+
+
+def routing_report_directory() -> Path:
+    return REPO_ROOT / "test-results" / "live-anthropic" / "decision-routing"
+
+
+def routing_report_payload(
+    *,
+    actual_sdk_version: str | None,
+    live_call_attempts: int,
+    stopped_on: str | None,
+    scenarios: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "schema_version": ROUTING_REPORT_SCHEMA_VERSION,
+        "action": ROUTING_ACTION,
+        "model": DEFAULT_MODEL_ID,
+        "expected_sdk_version": EXPECTED_SDK_VERSION,
+        "actual_sdk_version": actual_sdk_version,
+        "instruction_ref": DECISION_SPECIALIST_INSTRUCTION_REF,
+        "transport_version": TRANSPORT_VERSION,
+        "terminal_contract_sha256": terminal_contract_sha256(),
+        "terminal_contract_char_count": len(terminal_contract_text()),
+        "routing_policy_version": ROUTING_POLICY_VERSION,
+        "routing_policy_sha256": routing_policy_sha256(),
+        "routing_policy_char_count": len(routing_system_suffix()),
+        "live_call_attempts": live_call_attempts,
+        "max_approved_live_calls": ROUTING_MAX_LIVE_CALLS,
+        "max_retries": LIVE_MAX_RETRIES,
+        "timeout_seconds": LIVE_TIMEOUT_SECONDS,
+        "transport_gate": evaluate_transport_gate(scenarios, stopped_on),
+        "safety_gate": evaluate_safety_gate(scenarios) if scenarios else False,
+        "routing_gate": evaluate_routing_gate(scenarios),
+        "quality_gate": evaluate_routing_quality(scenarios),
+        "stopped_on": stopped_on,
+        "scenarios": list(scenarios),
+    }
+
+
+def write_routing_report(payload: Mapping[str, Any]) -> Path:
+    if not artifacts_dir_is_gitignored():
+        raise LiveHarnessError("test-results is not gitignored")
+    reject_unsafe_report(payload)
+    directory = routing_report_directory()
+    directory.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    path = directory / f"{stamp}.json"
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    return path
+
+
+def run_routing_probes(
+    environ: Mapping[str, str] | None = None,
+    *,
+    version_lookup: Callable[[], str] | None = None,
+    sdk_client_factory: Callable[[str, Any], Any] | None = None,
+) -> dict[str, Any]:
+    """Run the three full-specialist routing scenarios."""
+
+    key = prepare_routing_live(environ)
+    lookup = installed_anthropic_sdk_version if version_lookup is None else version_lookup
+    actual: str | None = None
+    try:
+        try:
+            sdk = import_anthropic_sdk()
+            try:
+                actual = lookup()
+            except Exception as exc:
+                raise LiveHarnessError("anthropic sdk version unavailable") from exc
+            if actual != EXPECTED_SDK_VERSION:
+                raise LiveHarnessError("anthropic sdk version mismatch")
+            if sdk_client_factory is None:
+                sdk_client = construct_live_sdk_client(key, sdk)
+            else:
+                sdk_client = sdk_client_factory(key, sdk)
+        except LiveHarnessError:
+            payload = routing_report_payload(
+                actual_sdk_version=actual,
+                live_call_attempts=0,
+                stopped_on="LOCAL_HARNESS_FAILURE",
+                scenarios=[],
+            )
+            write_routing_report(payload)
+            return payload
+    finally:
+        key = ""
+        del key
+    client = BudgetedRecordingMessagesClient(
+        AnthropicSDKMessagesClient(sdk_client),
+        max_calls=ROUTING_MAX_LIVE_CALLS,
+    )
+    scenarios, stopped_on = execute_routing_scenarios(client)
+    payload = routing_report_payload(
+        actual_sdk_version=actual,
+        live_call_attempts=client.current_call_count,
+        stopped_on=stopped_on,
+        scenarios=scenarios,
+    )
+    write_routing_report(payload)
+    return payload
+
+
 def dry_run() -> dict[str, Any]:
     validate_static_configuration()
     fixtures = validate_fixtures()
     wire = validate_wire_static_configuration()
     terminal = validate_terminal_static_configuration()
     transport = validate_transport_static_configuration()
+    routing = validate_routing_static_configuration()
     return {
         "action": "dry-run",
         "live_report_schema": LIVE_REPORT_SCHEMA_VERSION,
@@ -4244,6 +4575,17 @@ def dry_run() -> dict[str, Any]:
             {"scenario_id": item.scenario_id, "family": item.family, "profile": item.profile}
             for item in TRANSPORT_SPECS
         ],
+        "routing_probe_count": len(ROUTING_SPECS),
+        "routing_max_live_calls": ROUTING_MAX_LIVE_CALLS,
+        "routing_expected_sdk_version": EXPECTED_SDK_VERSION,
+        "routing_actual_sdk_version": None,
+        "routing_policy_version": ROUTING_POLICY_VERSION,
+        "routing_policy_sha256": routing["routing_policy_sha256"],
+        "routing_policy_char_count": routing["routing_policy_char_count"],
+        "routing_scenarios": [
+            {"scenario_id": item.scenario_id, "family": item.family, "profile": item.profile}
+            for item in ROUTING_SPECS
+        ],
         "tier1_executions": execution_count(TIER1_SPECS),
         "matrix_executions": execution_count(MATRIX_SPECS),
         "quality_threshold": QUALITY_THRESHOLD,
@@ -4271,13 +4613,13 @@ def dry_run() -> dict[str, Any]:
 def resolve_cli(argv: Sequence[str]) -> tuple[str, str | None]:
     usage = (
         "usage: python scripts/validate_decision_specialist_anthropic_live.py "
-        "{dry-run|run-tier1|run-matrix --tier1-report PATH|run-wire-probes|run-terminal-probes|run-transport-probes}"
+        "{dry-run|run-tier1|run-matrix --tier1-report PATH|run-wire-probes|run-terminal-probes|run-transport-probes|run-routing-probes}"
     )
     args = list(argv)
     if len(args) < 2 or args[1] not in ACTIONS:
         raise SystemExit(usage)
     action = args[1]
-    if action in {"dry-run", "run-tier1", WIRE_ACTION, TERMINAL_ACTION, TRANSPORT_ACTION}:
+    if action in {"dry-run", "run-tier1", WIRE_ACTION, TERMINAL_ACTION, TRANSPORT_ACTION, ROUTING_ACTION}:
         if len(args) != 2:
             raise SystemExit(usage)
         return action, None
@@ -4349,6 +4691,31 @@ def main(argv: Sequence[str] | None = None) -> int:
         return (
             0
             if payload["transport_gate"] and payload["safety_gate"] and payload["quality_gate"]
+            else 1
+        )
+    if action == ROUTING_ACTION:
+        payload = run_routing_probes()
+        print(
+            json.dumps(
+                {
+                    "action": payload["action"],
+                    "stopped_on": payload["stopped_on"],
+                    "live_call_attempts": payload["live_call_attempts"],
+                    "transport_gate": payload["transport_gate"],
+                    "safety_gate": payload["safety_gate"],
+                    "routing_gate": payload["routing_gate"],
+                    "quality_gate": payload["quality_gate"],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return (
+            0
+            if payload["transport_gate"]
+            and payload["safety_gate"]
+            and payload["routing_gate"]
+            and payload["quality_gate"]
             else 1
         )
     payload = run_live(action, tier1_report_path=tier1_report_path)

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import inspect
 import json
 import os
 import sys
@@ -102,12 +103,14 @@ def test_dry_run_without_opt_in_or_key(runner: ModuleType, monkeypatch: pytest.M
     monkeypatch.setattr(runner, "require_wire_opt_in", explode)
     monkeypatch.setattr(runner, "require_terminal_opt_in", explode)
     monkeypatch.setattr(runner, "require_transport_opt_in", explode)
+    monkeypatch.setattr(runner, "require_routing_opt_in", explode)
     monkeypatch.setattr(runner, "installed_anthropic_sdk_version", explode)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("WILVOR_RUN_LIVE_DECISION_ANTHROPIC", raising=False)
     monkeypatch.delenv("WILVOR_RUN_LIVE_DECISION_ANTHROPIC_WIRE", raising=False)
     monkeypatch.delenv("WILVOR_RUN_LIVE_DECISION_ANTHROPIC_TERMINAL", raising=False)
     monkeypatch.delenv("WILVOR_RUN_LIVE_DECISION_ANTHROPIC_TRANSPORT", raising=False)
+    monkeypatch.delenv("WILVOR_RUN_LIVE_DECISION_ANTHROPIC_ROUTING", raising=False)
     payload = runner.dry_run()
     assert payload["api_key_read"] is False
     assert payload["live_opt_in_used"] is False
@@ -134,7 +137,18 @@ def test_dry_run_without_opt_in_or_key(runner: ModuleType, monkeypatch: pytest.M
     assert [item["scenario_id"] for item in payload["transport_scenarios"]] == ["TR-A", "TR-B"]
     assert payload["terminal_contract_sha256"] == runner.terminal_contract_sha256()
     assert payload["terminal_contract_char_count"] == len(runner.terminal_contract_text())
-    assert "decision_json" not in json.dumps(payload)
+    assert payload["routing_probe_count"] == 3
+    assert payload["routing_max_live_calls"] == 12
+    assert payload["routing_expected_sdk_version"] == "1.8.0"
+    assert payload["routing_actual_sdk_version"] is None
+    assert payload["routing_policy_version"] == "wilvor.ai.decision_routing_hint.v1"
+    assert payload["routing_policy_sha256"] == runner.routing_policy_sha256()
+    assert payload["routing_policy_char_count"] == len(runner.routing_system_suffix())
+    assert [item["scenario_id"] for item in payload["routing_scenarios"]] == ["R-A", "R-B", "R-C"]
+    encoded = json.dumps(payload)
+    assert "decision_json" not in encoded
+    assert runner.routing_system_suffix() not in encoded
+    assert "static capability boundary" not in encoded
     assert payload["matrix_executions"] == 26
     assert payload["quality_threshold"] == 21
     assert payload["tier1_executions"] == 6
@@ -2808,3 +2822,466 @@ def test_transport_opt_in_sdk_and_cli(
     assert runner.main(["prog", "run-transport-probes"]) == 1
     assert runner.resolve_cli(["prog", "run-transport-probes"]) == ("run-transport-probes", None)
     assert runner.TRANSPORT_ACTION not in runner.LIVE_ACTIONS
+
+
+def _routing_client(runner: ModuleType, outcomes: list[object]) -> object:
+    return runner.BudgetedRecordingMessagesClient(
+        _ScriptedMessages(outcomes),
+        max_calls=runner.ROUTING_MAX_LIVE_CALLS,
+    )
+
+
+def _routing_run(runner: ModuleType, outcomes: list[object]) -> tuple[list[dict[str, object]], str | None, object]:
+    client = _routing_client(runner, outcomes)
+    scenarios, stopped = runner.execute_routing_scenarios(client)
+    return scenarios, stopped, client
+
+
+def test_routing_request_diff_and_suffix(runner: ModuleType) -> None:
+    turn = runner.terminal_turn_request(runner.PROMPT_HIGH)
+    transport = runner.candidate_transport_kwargs(turn)
+    routing = runner.candidate_routing_kwargs(turn)
+    assert set(routing) == set(transport)
+    for key, value in routing.items():
+        if key == "system":
+            continue
+        assert value == transport[key]
+    suffix = runner.routing_system_suffix()
+    assert routing["system"] == transport["system"] + "\n\n" + suffix
+    assert routing["output_config"] == transport["output_config"]
+    assert routing["tools"] == transport["tools"]
+    assert routing["messages"] == transport["messages"]
+    assert routing["model"] == transport["model"]
+    assert routing["max_tokens"] == transport["max_tokens"]
+    assert routing["temperature"] == transport["temperature"]
+    assert routing["tool_choice"] == transport["tool_choice"]
+    assert len(routing["tools"]) == 4
+    assert all(tool["strict"] is True for tool in routing["tools"])
+    assert runner.routing_system_suffix() == suffix
+    assert runner.routing_policy_sha256() == runner.routing_policy_sha256()
+    assert len(runner.routing_policy_sha256()) == 64
+    checked = runner.validate_routing_static_configuration()
+    assert checked["routing_policy_char_count"] == len(suffix)
+    for marker in (
+        runner.PROMPT_HIGH,
+        runner.PROMPT_ROUTE,
+        runner.PROMPT_SELECT,
+        "abc123",
+        "de-1",
+        "tool_call_id",
+        "correlation_id",
+        "now_epoch",
+        "query_timestamp_utc",
+        "tables",
+        "sk-ant-",
+        "ANTHROPIC_API_KEY",
+    ):
+        assert marker not in suffix
+    systems = [
+        runner.candidate_routing_kwargs(runner.terminal_turn_request(prompt))["system"]
+        for prompt in (runner.PROMPT_HIGH, runner.PROMPT_ROUTE, runner.PROMPT_SELECT)
+    ]
+    assert systems[0] == systems[1] == systems[2]
+
+
+def test_routing_has_no_local_decision_and_calls_the_model(runner: ModuleType) -> None:
+    source = inspect.getsource(runner.candidate_routing_kwargs)
+    assert "user_text" not in source
+    assert "PROMPT_ROUTE" not in source
+    assert "PROMPT_SELECT" not in source
+    assert "PROMPT_HIGH" not in source
+    calls = {"n": 0}
+
+    class _Counting:
+        def messages_create(self, **_kwargs: object) -> object:
+            calls["n"] += 1
+            return _transport_text("UNSUPPORTED", _unsupported())
+
+    provider = runner.CandidateRoutingProvider(_Counting())
+    for prompt in (runner.PROMPT_HIGH, runner.PROMPT_ROUTE, runner.PROMPT_SELECT):
+        decision = provider.complete(runner.terminal_turn_request(prompt))
+        assert decision.kind.value == "UNSUPPORTED"
+    assert calls["n"] == 3
+
+
+def test_transport_baseline_excludes_routing_suffix(runner: ModuleType) -> None:
+    turn = runner.terminal_turn_request(runner.PROMPT_ROUTE)
+    transport = runner.candidate_transport_kwargs(turn)
+    assert runner.ROUTING_POLICY_VERSION not in transport["system"]
+    captured = _CaptureMessages(_transport_text("UNSUPPORTED", _unsupported()))
+    provider = runner.CandidateTransportProvider(captured)
+    provider.complete(turn)
+    assert captured.kwargs is not None
+    assert captured.kwargs["system"] == transport["system"]
+    assert runner.ROUTING_POLICY_VERSION not in str(captured.kwargs["system"])
+    assert "candidate_transport_kwargs" in inspect.getsource(
+        runner.CandidateTransportProvider._request_kwargs
+    )
+    assert "candidate_routing_kwargs" not in inspect.getsource(
+        runner.CandidateTransportProvider._request_kwargs
+    )
+    assert "CandidateRoutingProvider" not in inspect.getsource(runner.execute_transport_scenarios)
+    transport_report = runner.execute_scenario(
+        runner.TRANSPORT_SPECS[1],
+        0,
+        runner.BudgetedRecordingMessagesClient(
+            _ScriptedMessages([_transport_text("UNSUPPORTED", _unsupported())]),
+            max_calls=runner.TRANSPORT_MAX_LIVE_CALLS,
+        ),
+    )
+    assert "profile" not in transport_report
+    assert runner.TRANSPORT_MAX_LIVE_CALLS == 8
+    assert runner.TRANSPORT_REPORT_SCHEMA_VERSION == "wilvor.decision.live_transport_probe.v1"
+    assert runner.transport_report_directory().name == "decision-transport"
+    assert runner.ROUTING_ACTION not in runner.LIVE_ACTIONS
+    assert runner.TRANSPORT_ACTION not in runner.LIVE_ACTIONS
+
+
+def test_routing_high_normal_and_duplicate_paths(runner: ModuleType) -> None:
+    calls, original = _guard_adapter(runner)
+    try:
+        normal = _routing_client(
+            runner,
+            [_risk_tool_use("toolu_route_high"), _transport_text("FINAL_CLAIMS", _high_decision())],
+        )
+        report = runner.execute_scenario(
+            runner.ROUTING_SPECS[0],
+            0,
+            normal,
+            provider_factory=runner.CandidateRoutingProvider,
+        )
+        assert calls["n"] == 1
+        assert report["evidence_refs"] == ["de-1"]
+        assert report["specialist_run_status"] == "COMPLETED"
+        assert report["terminal_decision_kind"] == "FINAL_CLAIMS"
+        assert report["verifier_outcome"] == "PASSED"
+        assert report["render_outcome"] == "FACTUAL"
+        assert report["classification"] == "PASS"
+        assert runner._stored_high_execution(report) is True
+
+        calls["n"] = 0
+        duplicate = _routing_client(
+            runner,
+            [
+                _risk_tool_use("toolu_route_dup_1"),
+                _risk_tool_use("toolu_route_dup_2"),
+                _transport_text("FINAL_CLAIMS", _high_decision()),
+            ],
+        )
+        corrected = runner.execute_scenario(
+            runner.ROUTING_SPECS[0],
+            0,
+            duplicate,
+            provider_factory=runner.CandidateRoutingProvider,
+        )
+        assert calls["n"] == 1
+        assert corrected["validation_feedback_codes"] == ["DUPLICATE_TOOL_CALL"]
+        assert corrected["classification"] == "PASS"
+        assert runner._stored_high_execution(corrected) is True
+        assert "toolu_route_dup_" not in json.dumps(corrected)
+    finally:
+        runner.DecisionToolsAdapter.invoke = original  # type: ignore[method-assign]
+
+
+def test_routing_direct_route_and_selected_paths(runner: ModuleType) -> None:
+    calls, original = _guard_adapter(runner)
+    try:
+        route = _routing_client(runner, [_transport_text("UNSUPPORTED", _unsupported())])
+        route_report = runner.execute_scenario(
+            runner.ROUTING_SPECS[1],
+            0,
+            route,
+            provider_factory=runner.CandidateRoutingProvider,
+        )
+        assert calls["n"] == 0
+        assert runner._direct_capability(route_report, "ROUTE_GENERATION_NOT_IMPLEMENTED") is True
+
+        selected = _routing_client(
+            runner,
+            [
+                _transport_text(
+                    "UNSUPPORTED",
+                    _unsupported("SELECTED_DIVERSION_NOT_SUPPORTED"),
+                )
+            ],
+        )
+        selected_report = runner.execute_scenario(
+            runner.ROUTING_SPECS[2],
+            0,
+            selected,
+            provider_factory=runner.CandidateRoutingProvider,
+        )
+        assert calls["n"] == 0
+        assert runner._direct_capability(
+            selected_report,
+            "SELECTED_DIVERSION_NOT_SUPPORTED",
+        ) is True
+    finally:
+        runner.DecisionToolsAdapter.invoke = original  # type: ignore[method-assign]
+
+
+def test_routing_gates_and_unnecessary_tool_continues(runner: ModuleType) -> None:
+    scenarios, stopped, client = _routing_run(
+        runner,
+        [
+            _risk_tool_use("toolu_gate_a"),
+            _transport_text("FINAL_CLAIMS", _high_decision()),
+            _transport_text("UNSUPPORTED", _unsupported()),
+            _transport_text("UNSUPPORTED", _unsupported("SELECTED_DIVERSION_NOT_SUPPORTED")),
+        ],
+    )
+    assert stopped is None
+    assert client.current_call_count == 4
+    assert [item["scenario_id"] for item in scenarios] == ["R-A", "R-B", "R-C"]
+    assert [item["profile"] for item in scenarios] == ["stored_high", "route", "selected"]
+    assert scenarios[1]["native_tool_turn_count"] == 0
+    assert scenarios[1]["validation_feedback_codes"] == []
+    assert runner.evaluate_routing_gate(scenarios) is True
+    assert runner.evaluate_routing_quality(scenarios) is True
+    assert runner.evaluate_transport_gate(scenarios, stopped) is True
+    assert runner.evaluate_safety_gate(scenarios) is True
+    hidden = dict(scenarios[1])
+    hidden["native_tool_turn_count"] = 1
+    hidden["validation_feedback_codes"] = ["DUPLICATE_TOOL_CALL"]
+    assert runner.evaluate_routing_gate([scenarios[0], hidden, scenarios[2]]) is False
+
+    varied, varied_stop, varied_client = _routing_run(
+        runner,
+        [
+            _risk_tool_use("toolu_vary_a"),
+            _transport_text("FINAL_CLAIMS", _high_decision()),
+            _named_tool_use("get_current_decision_context", "toolu_vary_ctx"),
+            _transport_text("UNSUPPORTED", _unsupported()),
+            _transport_text("UNSUPPORTED", _unsupported("SELECTED_DIVERSION_NOT_SUPPORTED")),
+        ],
+    )
+    assert len(varied) == 3
+    assert varied_stop is None
+    assert varied[1]["classification"] == "SAFE_VARIATION"
+    assert varied[1]["unsupported_reason"] == "ROUTE_GENERATION_NOT_IMPLEMENTED"
+    assert varied[2]["classification"] == "PASS"
+    assert varied_client.current_call_count == 5
+    assert runner.evaluate_transport_gate(varied, varied_stop) is True
+    assert runner.evaluate_safety_gate(varied) is True
+    assert runner.evaluate_routing_gate(varied) is False
+    assert runner.evaluate_routing_quality(varied) is False
+    assert "toolu_vary_" not in json.dumps(varied)
+
+
+def test_routing_wrong_reason_and_refusal(runner: ModuleType) -> None:
+    swapped_route = runner.execute_scenario(
+        runner.ROUTING_SPECS[1],
+        0,
+        _routing_client(
+            runner,
+            [_transport_text("UNSUPPORTED", _unsupported("SELECTED_DIVERSION_NOT_SUPPORTED"))],
+        ),
+        provider_factory=runner.CandidateRoutingProvider,
+    )
+    assert swapped_route["classification"] != "PASS"
+    assert runner._direct_capability(swapped_route, "ROUTE_GENERATION_NOT_IMPLEMENTED") is False
+
+    swapped_selected = runner.execute_scenario(
+        runner.ROUTING_SPECS[2],
+        0,
+        _routing_client(runner, [_transport_text("UNSUPPORTED", _unsupported())]),
+        provider_factory=runner.CandidateRoutingProvider,
+    )
+    assert swapped_selected["classification"] != "PASS"
+    assert runner._direct_capability(
+        swapped_selected,
+        "SELECTED_DIVERSION_NOT_SUPPORTED",
+    ) is False
+
+    refused = runner.execute_scenario(
+        runner.ROUTING_SPECS[1],
+        0,
+        _routing_client(runner, [_terminal_message(None, stop_reason="refusal")]),
+        provider_factory=runner.CandidateRoutingProvider,
+    )
+    assert refused["classification"] == "MODEL_REFUSAL_VARIATION"
+    assert refused["specialist_run_status"] != "UNSUPPORTED"
+    assert runner._direct_capability(refused, "ROUTE_GENERATION_NOT_IMPLEMENTED") is False
+
+
+def test_routing_safety_stop_and_budget(runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    original_safety = runner._safety_boundary
+    monkeypatch.setattr(runner, "_safety_boundary", lambda _observation: True)
+    blocked, stopped, blocked_client = _routing_run(
+        runner,
+        [
+            _risk_tool_use("toolu_stop_a"),
+            _transport_text("FINAL_CLAIMS", _high_decision()),
+            _transport_text("UNSUPPORTED", _unsupported()),
+            _transport_text("UNSUPPORTED", _unsupported("SELECTED_DIVERSION_NOT_SUPPORTED")),
+        ],
+    )
+    assert len(blocked) == 1
+    assert blocked[0]["classification"] == "SAFETY_BOUNDARY_FAILURE"
+    assert blocked[0]["provider_id_leak"] is False
+    assert stopped == "SAFETY_BOUNDARY_FAILURE"
+    assert blocked_client.current_call_count == 2
+
+    monkeypatch.setattr(runner, "_safety_boundary", original_safety)
+    assert runner.ROUTING_MAX_LIVE_CALLS == 12
+    assert runner.TERMINAL_MAX_LIVE_CALLS == 2
+    assert runner.WIRE_MAX_LIVE_CALLS == 3
+    assert runner.TRANSPORT_MAX_LIVE_CALLS == 8
+    assert runner.TIER1_MAX_LIVE_CALLS == 16
+    assert runner.MATRIX_MAX_LIVE_CALLS == 80
+    with pytest.raises(ValueError, match="approved live budget"):
+        runner.BudgetedRecordingMessagesClient(_ScriptedMessages([{}] * 6), max_calls=5)
+    budget_client = _routing_client(runner, [{"id": "msg", "content": [], "usage": {}}] * 13)
+    for _ in range(12):
+        budget_client.messages_create(messages=[{"role": "user", "content": "probe"}])
+    with pytest.raises(runner.CallBudgetExceeded):
+        budget_client.messages_create(messages=[{"role": "user", "content": "probe"}])
+    assert budget_client.current_call_count == 12
+
+    long_run, long_stop, long_client = _routing_run(
+        runner,
+        [
+            _named_tool_use("get_current_risk_evidence", "toolu_long_1"),
+            _named_tool_use("get_current_decision_context", "toolu_long_2"),
+            _named_tool_use("get_current_recommendation", "toolu_long_3"),
+            _transport_text("FINAL_CLAIMS", _high_decision()),
+            _named_tool_use("get_current_decision_context", "toolu_long_4"),
+            _named_tool_use("get_current_risk_evidence", "toolu_long_5"),
+            _named_tool_use("get_current_recommendation", "toolu_long_6"),
+            _transport_text("UNSUPPORTED", _unsupported()),
+            _named_tool_use("get_current_decision_context", "toolu_long_7"),
+            _transport_text("UNSUPPORTED", _unsupported("SELECTED_DIVERSION_NOT_SUPPORTED")),
+        ],
+    )
+    assert len(long_run) == 3
+    assert long_stop is None
+    assert long_client.current_call_count == 10
+    assert all(item["classification"] != "CALL_BUDGET_EXCEEDED" for item in long_run)
+
+
+def test_routing_provider_isolation(runner: ModuleType) -> None:
+    scenarios, stopped, client = _routing_run(
+        runner,
+        [
+            _risk_tool_use("toolu_iso_r"),
+            _transport_text("FINAL_CLAIMS", _high_decision()),
+            _transport_text("UNSUPPORTED", _unsupported()),
+            _transport_text("UNSUPPORTED", _unsupported("SELECTED_DIVERSION_NOT_SUPPORTED")),
+        ],
+    )
+    assert stopped is None
+    assert client.current_call_count == 4
+    assert scenarios[0]["native_tool_turn_count"] == 1
+    assert scenarios[0]["outer_terminal_count"] == 1
+    assert scenarios[1]["native_tool_turn_count"] == 0
+    assert scenarios[1]["outer_terminal_count"] == 1
+    assert scenarios[1]["transport_error_code_history"] == []
+    assert scenarios[2]["native_tool_turn_count"] == 0
+    assert scenarios[2]["transport_error_code_history"] == []
+    assert "toolu_iso_r" not in json.dumps(scenarios)
+
+
+def test_routing_report_security_opt_in_and_sdk(
+    runner: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    scenarios, stopped, client = _routing_run(
+        runner,
+        [
+            _risk_tool_use("toolu_secret_routing"),
+            _transport_text("FINAL_CLAIMS", _high_decision()),
+            _transport_text("UNSUPPORTED", _unsupported()),
+            _transport_text("UNSUPPORTED", _unsupported("SELECTED_DIVERSION_NOT_SUPPORTED")),
+        ],
+    )
+    payload = runner.routing_report_payload(
+        actual_sdk_version="1.8.0",
+        live_call_attempts=client.current_call_count,
+        stopped_on=stopped,
+        scenarios=scenarios,
+    )
+    runner.reject_unsafe_report(payload)
+    rendered = json.dumps(payload)
+    assert payload["schema_version"] == "wilvor.decision.live_routing_probe.v1"
+    assert payload["max_approved_live_calls"] == 12
+    assert payload["routing_gate"] is True
+    assert payload["quality_gate"] is True
+    assert runner.routing_system_suffix() not in rendered
+    assert "static capability boundary" not in rendered
+    assert "toolu_secret_routing" not in rendered
+    assert "sk-ant-" not in rendered
+    assert "ANTHROPIC_API_KEY" not in rendered
+    assert "decision_json" not in rendered
+    path = tmp_path / "routing.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+
+    def explode(*_args: object, **_kwargs: object) -> str:
+        raise AssertionError("api key read")
+
+    monkeypatch.setattr(runner, "read_live_api_key", explode)
+    with pytest.raises(runner.LiveHarnessError, match="schema mismatch"):
+        runner.run_live("run-matrix", tier1_report_path=str(path))
+    with pytest.raises(runner.LiveHarnessError, match="ANTHROPIC_ROUTING"):
+        runner.prepare_routing_live({runner.LIVE_OPT_IN_ENV: "1"})
+    with pytest.raises(runner.LiveHarnessError, match="ANTHROPIC_ROUTING"):
+        runner.prepare_routing_live({runner.WIRE_OPT_IN_ENV: "1"})
+    with pytest.raises(runner.LiveHarnessError, match="ANTHROPIC_ROUTING"):
+        runner.prepare_routing_live({runner.TERMINAL_OPT_IN_ENV: "1"})
+    with pytest.raises(runner.LiveHarnessError, match="ANTHROPIC_ROUTING"):
+        runner.prepare_routing_live({runner.TRANSPORT_OPT_IN_ENV: "1"})
+    monkeypatch.setattr(runner, "read_live_api_key", lambda environ=None: "local-key")
+    assert runner.prepare_routing_live({runner.ROUTING_OPT_IN_ENV: "1"}) == "local-key"
+    with pytest.raises(runner.LiveHarnessError, match="WILVOR_RUN_LIVE_DECISION_ANTHROPIC=1"):
+        runner.prepare_live("run-tier1", {runner.ROUTING_OPT_IN_ENV: "1"})
+    with pytest.raises(runner.LiveHarnessError, match="ANTHROPIC_WIRE"):
+        runner.prepare_wire_live({runner.ROUTING_OPT_IN_ENV: "1"})
+    with pytest.raises(runner.LiveHarnessError, match="ANTHROPIC_TERMINAL"):
+        runner.prepare_terminal_live({runner.ROUTING_OPT_IN_ENV: "1"})
+    with pytest.raises(runner.LiveHarnessError, match="ANTHROPIC_TRANSPORT"):
+        runner.prepare_transport_live({runner.ROUTING_OPT_IN_ENV: "1"})
+
+    monkeypatch.setattr(runner, "import_anthropic_sdk", lambda: object())
+    monkeypatch.setattr(runner, "write_routing_report", lambda report: report)
+
+    def deny(_key: str, _sdk: object) -> object:
+        raise AssertionError("provider client constructed")
+
+    mismatched = runner.run_routing_probes(
+        {runner.ROUTING_OPT_IN_ENV: "1", runner.API_KEY_ENV: "local-key"},
+        version_lookup=lambda: "9.9.9",
+        sdk_client_factory=deny,
+    )
+    assert mismatched["stopped_on"] == "LOCAL_HARNESS_FAILURE"
+    assert mismatched["actual_sdk_version"] == "9.9.9"
+    assert mismatched["live_call_attempts"] == 0
+    assert mismatched["scenarios"] == []
+    assert "local-key" not in json.dumps(mismatched)
+
+    def unavailable() -> str:
+        raise RuntimeError(r"C:\packages\anthropic")
+
+    failed = runner.run_routing_probes(
+        {runner.ROUTING_OPT_IN_ENV: "1", runner.API_KEY_ENV: "local-key"},
+        version_lookup=unavailable,
+        sdk_client_factory=deny,
+    )
+    assert failed["actual_sdk_version"] is None
+    assert failed["live_call_attempts"] == 0
+    assert r"C:\packages" not in json.dumps(failed)
+
+    success = {
+        "action": "run-routing-probes",
+        "stopped_on": None,
+        "live_call_attempts": 4,
+        "transport_gate": True,
+        "safety_gate": True,
+        "routing_gate": True,
+        "quality_gate": True,
+    }
+    monkeypatch.setattr(runner, "run_routing_probes", lambda: success)
+    assert runner.main(["prog", "run-routing-probes"]) == 0
+    assert runner.resolve_cli(["prog", "run-routing-probes"]) == ("run-routing-probes", None)
+    incomplete = {**success, "routing_gate": False}
+    monkeypatch.setattr(runner, "run_routing_probes", lambda: incomplete)
+    assert runner.main(["prog", "run-routing-probes"]) == 1
