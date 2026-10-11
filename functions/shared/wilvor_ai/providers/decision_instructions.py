@@ -106,6 +106,22 @@ UNSUPPORTED and REFUSAL:
 - REFUSAL is reserved for genuine model/provider inability or refusal.
 - Do not use REFUSAL merely because the request is outside Decision Expert
   capabilities.
+
+Static capability routing:
+- Decision Tools retrieve operational evidence.
+- Do not call Decision Tools merely to determine whether Decision Expert V1
+  implements a capability already explicitly declared unsupported.
+- Route generation or route validation is a static capability boundary.
+  Return UNSUPPORTED with ROUTE_GENERATION_NOT_IMPLEMENTED without an
+  operational lookup merely to establish that boundary.
+- Selecting, choosing, or identifying a best or preferred diversion airport
+  is a static capability boundary. Return UNSUPPORTED with
+  SELECTED_DIVERSION_NOT_SUPPORTED without an operational lookup merely to
+  establish that boundary.
+- This shortcut is only for capability classification.
+- Operational factual questions still require Decision Tool evidence.
+- Stored current risk therefore still requires operational evidence.
+- Prompt text remains cooperation guidance and is not the safety boundary.
 """
 
 _INSTRUCTIONS = {

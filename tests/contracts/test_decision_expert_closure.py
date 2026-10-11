@@ -86,6 +86,7 @@ from wilvor_ai.persisted_airport_contracts import (
     PersistedAirportEvidence,
 )
 from wilvor_ai.providers.anthropic_decision_messages import (
+    DECISION_TERMINAL_TRANSPORT_VERSION,
     AnthropicDecisionMessagesProvider,
 )
 from wilvor_ai.specialist_contracts import VerifierOutcome
@@ -334,6 +335,21 @@ def _final(claims: list[dict]) -> dict:
     }
 
 
+def _transport_terminal(inner: dict) -> dict:
+    return end_turn_response(
+        {
+            "transport_version": DECISION_TERMINAL_TRANSPORT_VERSION,
+            "kind": inner["kind"],
+            "decision_json": json.dumps(
+                inner,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            ),
+        }
+    )
+
+
 def _risk_present(level: str, score: int) -> dict:
     return {
         "kind": "RISK_PRESENT",
@@ -463,7 +479,7 @@ def test_scenario_a_current_high_risk_is_verified_and_rendered(monkeypatch):
                 ("get_current_risk_evidence", {"aircraft_id": "ac-1"}),
                 extra_text="MODEL_PROSE_SENTINEL",
             ),
-            end_turn_response(_final([_risk_present("HIGH", 80)])),
+            _transport_terminal(_final([_risk_present("HIGH", 80)])),
         ),
         _risk_handler(RiskPresence.PRESENT),
     )
@@ -488,7 +504,7 @@ def test_scenario_b_risk_absence_stays_distinct_from_low(monkeypatch):
             tool_use_response(
                 ("get_current_risk_evidence", {"aircraft_id": "ac-1"})
             ),
-            end_turn_response(_final([_risk_absent()])),
+            _transport_terminal(_final([_risk_absent()])),
         ),
         _risk_handler(RiskPresence.ABSENT),
     )
@@ -503,7 +519,7 @@ def test_scenario_b_risk_absence_stays_distinct_from_low(monkeypatch):
             tool_use_response(
                 ("get_current_risk_evidence", {"aircraft_id": "ac-1"})
             ),
-            end_turn_response(_final([_risk_present("LOW", 10)])),
+            _transport_terminal(_final([_risk_present("LOW", 10)])),
         ),
         _risk_handler(RiskPresence.ABSENT),
     )
@@ -521,7 +537,7 @@ def test_scenario_c_missing_recommendation_does_not_become_monitor(monkeypatch):
             tool_use_response(
                 ("get_current_recommendation", {"aircraft_id": "ac-1"})
             ),
-            end_turn_response(
+            _transport_terminal(
                 _final(
                     [
                         _recommendation_claim(
@@ -550,7 +566,7 @@ def test_scenario_c_missing_recommendation_does_not_become_monitor(monkeypatch):
             tool_use_response(
                 ("get_current_recommendation", {"aircraft_id": "ac-1"})
             ),
-            end_turn_response(
+            _transport_terminal(
                 _final(
                     [
                         {
@@ -587,7 +603,7 @@ def test_scenario_d_multiple_recommendations_fan_out_without_a_winner(monkeypatc
                     {"recommendation_id": "rec-2"},
                 )
             ),
-            end_turn_response(
+            _transport_terminal(
                 _final([_recommendation_claim(["rec-1", "rec-2"], "PRESENT")])
             ),
         ),
@@ -631,7 +647,7 @@ def test_scenario_e_persisted_complete_does_not_select_an_airport(monkeypatch):
                     {"recommendation_id": "rec-1"},
                 )
             ),
-            end_turn_response(
+            _transport_terminal(
                 _final(
                     [
                         _recommendation_claim(["rec-1"], "PRESENT"),
@@ -759,7 +775,7 @@ def test_scenario_g_completed_run_can_still_fail_verification(monkeypatch):
             tool_use_response(
                 ("get_current_risk_evidence", {"aircraft_id": "ac-1"})
             ),
-            end_turn_response(_final([_risk_present("LOW", 10)])),
+            _transport_terminal(_final([_risk_present("LOW", 10)])),
         ),
         _risk_handler(RiskPresence.PRESENT),
     )
@@ -773,7 +789,7 @@ def test_scenario_h_unsupported_stays_distinct_from_refusal(monkeypatch):
     unsupported, _client = _run(
         monkeypatch,
         (
-            end_turn_response(
+            _transport_terminal(
                 {
                     "schema_version": DECISION_MODEL_DECISION_SCHEMA_VERSION,
                     "kind": "UNSUPPORTED",
@@ -807,7 +823,7 @@ def test_scenario_i_final_artifacts_reject_valid_but_wrong_replacements(monkeypa
                 ("get_current_risk_evidence", {"aircraft_id": "ac-1"}),
                 extra_text="MODEL_PROSE_SENTINEL",
             ),
-            end_turn_response(_final([_risk_present("HIGH", 80)])),
+            _transport_terminal(_final([_risk_present("HIGH", 80)])),
         ),
         _risk_handler(RiskPresence.PRESENT),
     )

@@ -334,6 +334,12 @@ TERMINAL_PARSER_ERROR_CODES = frozenset(
         "invalid_proposed_tool_call",
         "end_turn_contains_tool_use",
         "model_context_window_exceeded",
+        "invalid_transport_json",
+        "invalid_transport_fields",
+        "invalid_transport_version",
+        "invalid_transport_kind",
+        "invalid_transport_decision_json",
+        "transport_kind_mismatch",
     }
 )
 TRUSTED_ARGUMENT_NAMES = frozenset(
@@ -2867,6 +2873,13 @@ def _claim_schema_branch_count(schema: Mapping[str, Any]) -> int | None:
     return None
 
 
+def _terminal_schema_property_count(schema: Mapping[str, Any]) -> int | None:
+    properties = schema.get("properties")
+    if not isinstance(properties, Mapping):
+        return None
+    return len(properties)
+
+
 def wire_request_fingerprint(kwargs: Mapping[str, Any]) -> dict[str, Any]:
     """Structural request facts only. No prompt, tool, or schema text."""
 
@@ -2880,12 +2893,14 @@ def wire_request_fingerprint(kwargs: Mapping[str, Any]) -> dict[str, Any]:
     has_output_config = "output_config" in kwargs
     terminal_schema_anyof_count = None
     claim_schema_branch_count = None
+    terminal_schema_property_count = None
     if has_output_config:
         schema = _terminal_schema(kwargs.get("output_config"))
         if schema is None:
             raise LiveHarnessError("wire terminal schema missing")
         terminal_schema_anyof_count = _count_anyof(schema)
         claim_schema_branch_count = _claim_schema_branch_count(schema)
+        terminal_schema_property_count = _terminal_schema_property_count(schema)
     return {
         "has_tools": "tools" in kwargs and bool(tool_list),
         "tool_count": len(tool_list) if "tools" in kwargs else 0,
@@ -2894,6 +2909,7 @@ def wire_request_fingerprint(kwargs: Mapping[str, Any]) -> dict[str, Any]:
         "has_output_config": has_output_config,
         "terminal_schema_anyof_count": terminal_schema_anyof_count,
         "claim_schema_branch_count": claim_schema_branch_count,
+        "terminal_schema_property_count": terminal_schema_property_count,
     }
 
 
@@ -2918,8 +2934,9 @@ def validate_wire_static_configuration(
     schema_counts = wire_request_fingerprint(canonical)
     anyof_count = schema_counts["terminal_schema_anyof_count"]
     claim_count = schema_counts["claim_schema_branch_count"]
-    if not isinstance(anyof_count, int) or not isinstance(claim_count, int):
-        raise LiveHarnessError("wire terminal schema counts missing")
+    property_count = schema_counts["terminal_schema_property_count"]
+    if anyof_count != 0 or claim_count is not None or property_count != 3:
+        raise LiveHarnessError("wire terminal schema is not the production transport")
     expected = {
         "A": {
             "has_tools": True,
@@ -2929,6 +2946,7 @@ def validate_wire_static_configuration(
             "has_output_config": False,
             "terminal_schema_anyof_count": None,
             "claim_schema_branch_count": None,
+            "terminal_schema_property_count": None,
         },
         "B": {
             "has_tools": False,
@@ -2936,8 +2954,9 @@ def validate_wire_static_configuration(
             "strict_tool_count": 0,
             "has_tool_choice": False,
             "has_output_config": True,
-            "terminal_schema_anyof_count": anyof_count,
-            "claim_schema_branch_count": claim_count,
+            "terminal_schema_anyof_count": 0,
+            "claim_schema_branch_count": None,
+            "terminal_schema_property_count": 3,
         },
         "C": {
             "has_tools": True,
@@ -2945,8 +2964,9 @@ def validate_wire_static_configuration(
             "strict_tool_count": 0,
             "has_tool_choice": True,
             "has_output_config": True,
-            "terminal_schema_anyof_count": anyof_count,
-            "claim_schema_branch_count": claim_count,
+            "terminal_schema_anyof_count": 0,
+            "claim_schema_branch_count": None,
+            "terminal_schema_property_count": 3,
         },
     }
     for probe_id, fingerprint in expected.items():
@@ -3927,16 +3947,6 @@ def _decode_transport_outer(response: Mapping[str, Any]) -> tuple[dict[str, Any]
     return loaded, decision_json
 
 
-def _synthetic_terminal_response(decision_json: str) -> dict[str, Any]:
-    return {
-        "type": "message",
-        "role": "assistant",
-        "model": DEFAULT_MODEL_ID,
-        "stop_reason": "end_turn",
-        "content": [{"type": "text", "text": decision_json}],
-    }
-
-
 class CandidateTransportProvider:
     """Harness-only tiny-envelope provider. It does not execute Decision tools."""
 
@@ -3999,15 +4009,19 @@ class CandidateTransportProvider:
         decision_json = ""
         try:
             outer, decision_json = _decode_transport_outer(response)
-            synthetic = _synthetic_terminal_response(decision_json)
             try:
-                decision = parse_decision_messages_response(synthetic, DEFAULT_MODEL_ID)
+                decision = parse_decision_messages_response(response, DEFAULT_MODEL_ID)
             except (
                 ModelProviderMalformedDecisionError,
                 ModelProviderContextLengthError,
             ) as exc:
-                self._record("inner_decision_invalid")
                 parser_code = terminal_parser_error_code(exc)
+                if parser_code == "transport_kind_mismatch":
+                    self.outer_terminal_count += 1
+                    self.inner_terminal_parse_count += 1
+                    self.kind_mismatch_count += 1
+                    self._fail("transport_kind_mismatch")
+                self._record("inner_decision_invalid")
                 if parser_code != "inner_decision_invalid":
                     self._record(parser_code)
                 raise LiveHarnessError("inner_decision_invalid") from None

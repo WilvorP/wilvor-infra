@@ -1398,6 +1398,7 @@ def test_wire_probes_are_production_copies_with_exact_fingerprints(runner: Modul
         "has_output_config": False,
         "terminal_schema_anyof_count": None,
         "claim_schema_branch_count": None,
+        "terminal_schema_property_count": None,
     }
     assert fingerprints["B"]["has_tools"] is False
     assert fingerprints["B"]["tool_count"] == 0
@@ -1409,14 +1410,12 @@ def test_wire_probes_are_production_copies_with_exact_fingerprints(runner: Modul
     assert fingerprints["C"]["strict_tool_count"] == 0
     assert fingerprints["C"]["has_tool_choice"] is True
     assert fingerprints["C"]["has_output_config"] is True
-    assert fingerprints["B"]["terminal_schema_anyof_count"] == fingerprints["C"][
-        "terminal_schema_anyof_count"
-    ]
-    assert fingerprints["B"]["claim_schema_branch_count"] == fingerprints["C"][
-        "claim_schema_branch_count"
-    ]
-    assert isinstance(fingerprints["B"]["terminal_schema_anyof_count"], int)
-    assert isinstance(fingerprints["B"]["claim_schema_branch_count"], int)
+    assert fingerprints["B"]["terminal_schema_anyof_count"] == 0
+    assert fingerprints["C"]["terminal_schema_anyof_count"] == 0
+    assert fingerprints["B"]["claim_schema_branch_count"] is None
+    assert fingerprints["C"]["claim_schema_branch_count"] is None
+    assert fingerprints["B"]["terminal_schema_property_count"] == 3
+    assert fingerprints["C"]["terminal_schema_property_count"] == 3
     rendered = json.dumps(fingerprints)
     assert runner.PROMPT_HIGH not in rendered
     assert "input_schema" not in rendered
@@ -1675,6 +1674,16 @@ def _unsupported(reason: str = "ROUTE_GENERATION_NOT_IMPLEMENTED") -> dict[str, 
     }
 
 
+def _production_terminal(decision: dict[str, object]) -> dict[str, object]:
+    return _terminal_text(
+        {
+            "transport_version": "wilvor.ai.decision_terminal_transport.v1",
+            "kind": decision["kind"],
+            "decision_json": json.dumps(decision, sort_keys=True, separators=(",", ":")),
+        }
+    )
+
+
 def _final_claims() -> dict[str, object]:
     return {
         "schema_version": _DECISION_SCHEMA,
@@ -1929,18 +1938,18 @@ def test_terminal_parser_classifies_without_persisting_model_text(runner: Module
         )
         outcomes = [
             (
-                _terminal_text(_unsupported()),
-                _terminal_text(_final_claims()),
+                _production_terminal(_unsupported()),
+                _production_terminal(_final_claims()),
                 ["PARSED_EXPECTED_TERMINAL", "PARSED_EXPECTED_TERMINAL"],
             ),
             (
-                _terminal_text(_unsupported("LIVE_OPS")),
+                _production_terminal(_unsupported("LIVE_OPS")),
                 _terminal_message(None, stop_reason="refusal"),
                 ["PARSED_UNEXPECTED_TERMINAL", "PARSED_UNEXPECTED_TERMINAL"],
             ),
             (
                 tool_use,
-                _terminal_text(_final_claims()),
+                _production_terminal(_final_claims()),
                 ["NON_TERMINAL_TOOL_USE", "PARSED_EXPECTED_TERMINAL"],
             ),
             (
@@ -1966,7 +1975,7 @@ def test_terminal_parser_classifies_without_persisting_model_text(runner: Module
             ),
             (
                 mixed,
-                _terminal_text(_final_claims()),
+                _production_terminal(_final_claims()),
                 ["MALFORMED_TERMINAL", "PARSED_EXPECTED_TERMINAL"],
             ),
         ]
@@ -2308,9 +2317,7 @@ def test_candidate_provider_decodes_native_and_terminal_envelopes(
             parsed = terminal.complete(runner.terminal_turn_request(runner.PROMPT_ROUTE))
             assert parsed.kind.value == kind
             assert calls["n"] == 0
-            synthetic = seen[-1]
-            assert synthetic["content"] == [{"type": "text", "text": inner}]
-            assert synthetic is not envelope
+            assert seen[-1] is envelope
             assert "decision_json" not in terminal.__dict__
             assert inner not in json.dumps(terminal.transport_instrument())
     finally:
@@ -2651,7 +2658,7 @@ def test_transport_fail_closed_has_no_factual_answer(runner: ModuleType) -> None
     inner, inner_stop, _inner_client = run_first(_transport_text("FINAL_CLAIMS", "{"))
     assert inner_stop == "inner_decision_invalid"
     assert "inner_decision_invalid" in inner["transport_error_code_history"]
-    assert "malformed_terminal_json" in inner["transport_error_code_history"]
+    assert "invalid_transport_decision_json" in inner["transport_error_code_history"]
 
     mismatch, mismatch_stop, _mismatch_client = run_first(_transport_text("FINAL_CLAIMS", _unsupported()))
     assert mismatch_stop == "transport_kind_mismatch"

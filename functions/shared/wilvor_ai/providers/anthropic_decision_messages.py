@@ -56,6 +56,7 @@ APPROVED_MODEL_IDS = frozenset({DEFAULT_MODEL_ID})
 MAX_TOKENS = 2048
 TEMPERATURE = 0
 REFUSAL_PROVIDER = "refusal"
+DECISION_TERMINAL_TRANSPORT_VERSION = "wilvor.ai.decision_terminal_transport.v1"
 
 _TERMINAL_KINDS = frozenset(
     {
@@ -315,6 +316,56 @@ def decision_terminal_json_schema() -> dict[str, object]:
     }
 
 
+def decision_terminal_transport_schema() -> dict[str, object]:
+    """Tiny outer grammar. The full Decision contract stays inside decision_json."""
+
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["transport_version", "kind", "decision_json"],
+        "properties": {
+            "transport_version": {"const": DECISION_TERMINAL_TRANSPORT_VERSION},
+            "kind": {
+                "enum": [
+                    ModelDecisionKind.FINAL_CLAIMS.value,
+                    ModelDecisionKind.UNSUPPORTED.value,
+                    ModelDecisionKind.REFUSAL.value,
+                ]
+            },
+            "decision_json": {"type": "string"},
+        },
+    }
+
+
+def _terminal_contract_text() -> str:
+    return _stable_json(decision_terminal_json_schema())
+
+
+_TRANSPORT_GUIDANCE_LEAD = (
+    "Terminal transport rules:\n"
+    "- Native Decision Tool calls remain native tool_use blocks.\n"
+    "- Do not place tool calls inside decision_json.\n"
+    "- When terminalizing, return only the outer transport envelope.\n"
+    "- The outer kind must equal the kind inside decision_json.\n"
+    "- decision_json contains exactly one complete terminal "
+    "DecisionModelDecision object.\n"
+    "- decision_json is bare JSON encoded as a string with no markdown fences "
+    "and no surrounding prose.\n"
+    "- Cite only evidence_ref values present in supplied "
+    "DecisionEvidenceSnapshot values.\n"
+    "- Never invent an evidence ref.\n"
+    "- CURRENT, PERSISTED, absence, and selection semantics remain unchanged.\n"
+    "Terminal DecisionModelDecision schema:\n"
+)
+_TRANSPORT_OUTER_KEYS = frozenset({"transport_version", "kind", "decision_json"})
+
+
+def decision_terminal_transport_guidance() -> str:
+    """Provider system suffix. The inner schema text is generated, not copied."""
+
+    return _TRANSPORT_GUIDANCE_LEAD + _terminal_contract_text()
+
+
 def _json_type(value_type: ToolInputValueType) -> str:
     try:
         return _JSON_TYPES[value_type]
@@ -361,7 +412,11 @@ def build_decision_messages_kwargs(
 
     if not isinstance(request, DecisionModelTurnRequest):
         raise TypeError("request must be a DecisionModelTurnRequest")
-    system = resolve_decision_instruction(request.instruction_ref)
+    system = (
+        resolve_decision_instruction(request.instruction_ref)
+        + "\n\n"
+        + decision_terminal_transport_guidance()
+    )
     messages: list[dict[str, object]] = [
         {
             "role": "user",
@@ -418,7 +473,7 @@ def build_decision_messages_kwargs(
         "output_config": {
             "format": {
                 "type": "json_schema",
-                "schema": decision_terminal_json_schema(),
+                "schema": decision_terminal_transport_schema(),
             }
         },
     }
@@ -523,14 +578,39 @@ def _text_json_objects(blocks: list[Mapping[str, Any]]) -> list[Mapping[str, Any
     return objects
 
 
+def _load_json_value(text: str, code: str) -> object:
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        raise _malformed(code) from None
+
+
 def _end_turn_decision(blocks: list[Mapping[str, Any]]) -> DecisionModelDecision:
     text_blocks = [block for block in blocks if block.get("type") == "text"]
     if len(text_blocks) != 1:
         raise _malformed("malformed_terminal_json")
-    parsed = _parse_json_object(text_blocks[0].get("text"))
-    if parsed is None:
-        raise _malformed("malformed_terminal_json")
-    return _decision_from_mapping(parsed)
+    text = text_blocks[0].get("text")
+    if not isinstance(text, str):
+        raise _malformed("invalid_transport_json")
+    loaded = _load_json_value(text, "invalid_transport_json")
+    if not isinstance(loaded, dict):
+        raise _malformed("invalid_transport_json")
+    if set(loaded) != _TRANSPORT_OUTER_KEYS:
+        raise _malformed("invalid_transport_fields")
+    if loaded.get("transport_version") != DECISION_TERMINAL_TRANSPORT_VERSION:
+        raise _malformed("invalid_transport_version")
+    if loaded.get("kind") not in _TERMINAL_KINDS:
+        raise _malformed("invalid_transport_kind")
+    decision_json = loaded.get("decision_json")
+    if not isinstance(decision_json, str) or not decision_json.strip():
+        raise _malformed("invalid_transport_decision_json")
+    inner = _load_json_value(decision_json, "invalid_transport_decision_json")
+    if not isinstance(inner, dict):
+        raise _malformed("invalid_transport_decision_json")
+    decision = _decision_from_mapping(inner)
+    if loaded["kind"] != decision.kind.value:
+        raise _malformed("transport_kind_mismatch")
+    return decision
 
 
 def parse_decision_messages_response(

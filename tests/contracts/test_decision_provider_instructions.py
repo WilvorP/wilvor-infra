@@ -75,6 +75,10 @@ _REQUIRED_PHRASES = (
     "DE1",
     "DE2",
     "Prompt text is not the safety boundary.",
+    "Decision Tools retrieve operational evidence.",
+    "static capability boundary",
+    "Operational factual questions still require Decision Tool evidence.",
+    "Stored current risk therefore still requires operational evidence.",
 )
 
 

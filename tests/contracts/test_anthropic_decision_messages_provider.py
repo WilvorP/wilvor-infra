@@ -89,9 +89,12 @@ from wilvor_ai.providers.anthropic_decision_messages import (
     MAX_TOKENS,
     REFUSAL_PROVIDER,
     TEMPERATURE,
+    DECISION_TERMINAL_TRANSPORT_VERSION,
     AnthropicDecisionMessagesProvider,
     build_decision_messages_kwargs,
     decision_terminal_json_schema,
+    decision_terminal_transport_guidance,
+    decision_terminal_transport_schema,
     parse_decision_messages_response,
 )
 from wilvor_ai.providers.decision_instructions import (
@@ -306,6 +309,21 @@ def _raw(tool_call_id: str) -> ToolResult:
 
 def _snapshot(ref: str = "de-1") -> DecisionEvidenceSnapshot:
     return DecisionEvidenceSnapshot(ref, project_decision_tool_result(_raw(AUDIT_CALL_ID)))
+
+
+def _transport_terminal(inner: dict) -> dict:
+    return end_turn_response(
+        {
+            "transport_version": DECISION_TERMINAL_TRANSPORT_VERSION,
+            "kind": inner["kind"],
+            "decision_json": json.dumps(
+                inner,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=True,
+            ),
+        }
+    )
 
 
 def _final(claim: dict) -> dict:
@@ -534,7 +552,12 @@ def test_request_uses_four_strict_decision_tools_and_terminal_schema():
     assert kwargs["model"] == DEFAULT_MODEL_ID
     assert kwargs["max_tokens"] == MAX_TOKENS
     assert kwargs["temperature"] == TEMPERATURE
-    assert kwargs["system"] == DECISION_SPECIALIST_V1_INSTRUCTION
+    assert kwargs["system"].startswith(DECISION_SPECIALIST_V1_INSTRUCTION + "\n\n")
+    assert kwargs["system"] == (
+        DECISION_SPECIALIST_V1_INSTRUCTION
+        + "\n\n"
+        + decision_terminal_transport_guidance()
+    )
     assert kwargs["tool_choice"] == {"type": "auto"}
     assert "top_p" not in kwargs
     assert "stop_sequences" not in kwargs
@@ -560,9 +583,32 @@ def test_request_uses_four_strict_decision_tools_and_terminal_schema():
     assert kwargs["output_config"] == {
         "format": {
             "type": "json_schema",
-            "schema": decision_terminal_json_schema(),
+            "schema": decision_terminal_transport_schema(),
         }
     }
+
+
+def test_output_config_is_the_tiny_transport_schema():
+    schema = decision_terminal_transport_schema()
+    assert schema["type"] == "object"
+    assert schema["additionalProperties"] is False
+    assert set(schema["required"]) == {"transport_version", "kind", "decision_json"}
+    assert len(schema["properties"]) == 3
+    rendered = json.dumps(schema)
+    assert "anyOf" not in rendered
+    assert "RISK_PRESENT" not in rendered
+    assert "PERSISTED_CANDIDATE" not in rendered
+    assert "TOOL_CALLS" not in rendered
+    assert schema != decision_terminal_json_schema()
+    assert schema["properties"]["transport_version"] == {
+        "const": DECISION_TERMINAL_TRANSPORT_VERSION
+    }
+    assert schema["properties"]["kind"]["enum"] == [
+        "FINAL_CLAIMS",
+        "UNSUPPORTED",
+        "REFUSAL",
+    ]
+    assert schema["properties"]["decision_json"] == {"type": "string"}
 
 
 def test_snapshots_keep_evidence_ref_and_drop_audit_fields():
@@ -653,7 +699,7 @@ def test_terminal_schema_is_the_three_decision_kinds_and_fifteen_claims():
 def test_each_claim_kind_parses_to_its_typed_claim(kind: DecisionClaimKind):
     claim_type, payload = _claim_examples()[kind]
     decision = parse_decision_messages_response(
-        end_turn_response(_final(payload)),
+        _transport_terminal(_final(payload)),
         DEFAULT_MODEL_ID,
     )
     assert decision.kind is ModelDecisionKind.FINAL_CLAIMS
@@ -736,7 +782,7 @@ def test_terminal_json_mixed_with_tool_use_is_contradictory():
             ),
             "end_turn_contains_tool_use",
         ),
-        (_envelope(content=[{"type": "text", "text": ""}]), "malformed_terminal_json"),
+        (_envelope(content=[{"type": "text", "text": ""}]), "invalid_transport_json"),
         (
             _envelope(
                 content=[
@@ -748,14 +794,14 @@ def test_terminal_json_mixed_with_tool_use_is_contradictory():
         ),
         (
             _envelope(content=[{"type": "text", "text": "```json\n{}\n```"}]),
-            "malformed_terminal_json",
+            "invalid_transport_json",
         ),
         (
             _envelope(content=[{"type": "text", "text": "not json"}]),
-            "malformed_terminal_json",
+            "invalid_transport_json",
         ),
         (
-            end_turn_response(
+            _transport_terminal(
                 {
                     "schema_version": "wilvor.ai.model_decision.v1",
                     "kind": "FINAL_CLAIMS",
@@ -772,7 +818,7 @@ def test_terminal_json_mixed_with_tool_use_is_contradictory():
             "invalid_model_decision",
         ),
         (
-            end_turn_response(
+            _transport_terminal(
                 _final(
                     {
                         "kind": "AIRCRAFT_IDENTITY",
@@ -786,7 +832,7 @@ def test_terminal_json_mixed_with_tool_use_is_contradictory():
             "invalid_model_decision",
         ),
         (
-            end_turn_response(
+            _transport_terminal(
                 {
                     "schema_version": "wilvor.ai.decision_model_decision.v0",
                     "kind": "UNSUPPORTED",
@@ -796,7 +842,7 @@ def test_terminal_json_mixed_with_tool_use_is_contradictory():
             "invalid_model_decision",
         ),
         (
-            end_turn_response(
+            _transport_terminal(
                 _final(
                     {
                         "kind": "EVALUATION_STATE",
@@ -811,14 +857,20 @@ def test_terminal_json_mixed_with_tool_use_is_contradictory():
         (
             end_turn_response(
                 {
-                    "schema_version": DECISION_MODEL_DECISION_SCHEMA_VERSION,
-                    "kind": "TOOL_CALLS",
-                    "tool_calls": [
+                    "transport_version": DECISION_TERMINAL_TRANSPORT_VERSION,
+                    "kind": "FINAL_CLAIMS",
+                    "decision_json": json.dumps(
                         {
-                            "name": "get_current_risk_evidence",
-                            "arguments": {"aircraft_id": "ac-1"},
+                            "schema_version": DECISION_MODEL_DECISION_SCHEMA_VERSION,
+                            "kind": "TOOL_CALLS",
+                            "tool_calls": [
+                                {
+                                    "name": "get_current_risk_evidence",
+                                    "arguments": {"aircraft_id": "ac-1"},
+                                }
+                            ],
                         }
-                    ],
+                    ),
                 }
             ),
             "invalid_model_decision",
@@ -864,7 +916,7 @@ def test_provider_refusal_is_not_an_unsupported_capability():
     assert refusal.kind is ModelDecisionKind.REFUSAL
     assert refusal.refusal_code == "refusal"
     unsupported = parse_decision_messages_response(
-        end_turn_response(
+        _transport_terminal(
             {
                 "schema_version": DECISION_MODEL_DECISION_SCHEMA_VERSION,
                 "kind": "UNSUPPORTED",
@@ -876,6 +928,194 @@ def test_provider_refusal_is_not_an_unsupported_capability():
     assert unsupported.kind is ModelDecisionKind.UNSUPPORTED
     assert unsupported.unsupported_reason is DecisionUnsupportedReason.OUT_OF_CATALOG
     assert refusal.kind is not unsupported.kind
+    terminal_refusal = parse_decision_messages_response(
+        _transport_terminal(
+            {
+                "schema_version": DECISION_MODEL_DECISION_SCHEMA_VERSION,
+                "kind": "REFUSAL",
+            }
+        ),
+        DEFAULT_MODEL_ID,
+    )
+    assert terminal_refusal.kind is ModelDecisionKind.REFUSAL
+    assert terminal_refusal.refusal_code is None
+
+
+def _outer_text(body: object) -> dict:
+    text = body if isinstance(body, str) else json.dumps(body)
+    return _envelope(content=[{"type": "text", "text": text}])
+
+
+def _outer_envelope(kind: str, decision_json: object, **extra: object) -> dict:
+    payload = {
+        "transport_version": DECISION_TERMINAL_TRANSPORT_VERSION,
+        "kind": kind,
+        "decision_json": decision_json,
+    }
+    payload.update(extra)
+    return _outer_text(payload)
+
+
+@pytest.mark.parametrize(
+    ("payload", "code"),
+    [
+        (_outer_text("not json SECRET_OUTER"), "invalid_transport_json"),
+        (_outer_text("Decide:\n```json\n{}```"), "invalid_transport_json"),
+        (_outer_text([{"kind": "FINAL_CLAIMS"}]), "invalid_transport_json"),
+        (
+            _outer_text(
+                {
+                    "kind": "FINAL_CLAIMS",
+                    "decision_json": "{}",
+                }
+            ),
+            "invalid_transport_fields",
+        ),
+        (
+            _outer_text(
+                {
+                    "transport_version": DECISION_TERMINAL_TRANSPORT_VERSION,
+                    "decision_json": "{}",
+                }
+            ),
+            "invalid_transport_fields",
+        ),
+        (
+            _outer_text(
+                {
+                    "transport_version": DECISION_TERMINAL_TRANSPORT_VERSION,
+                    "kind": "UNSUPPORTED",
+                }
+            ),
+            "invalid_transport_fields",
+        ),
+        (
+            _outer_envelope("UNSUPPORTED", "{}", extra="nope"),
+            "invalid_transport_fields",
+        ),
+        (
+            _outer_envelope("UNSUPPORTED", "{}", transport_version="other"),
+            "invalid_transport_version",
+        ),
+        (_outer_envelope("TOOL_CALLS", "{}"), "invalid_transport_kind"),
+        (_outer_envelope("UNSUPPORTED", 1), "invalid_transport_decision_json"),
+        (_outer_envelope("UNSUPPORTED", ""), "invalid_transport_decision_json"),
+        (_outer_envelope("UNSUPPORTED", "   "), "invalid_transport_decision_json"),
+        (_outer_envelope("UNSUPPORTED", "{"), "invalid_transport_decision_json"),
+        (_outer_envelope("UNSUPPORTED", "[]"), "invalid_transport_decision_json"),
+        (_outer_envelope("UNSUPPORTED", "1"), "invalid_transport_decision_json"),
+        (
+            _transport_terminal(
+                {
+                    "schema_version": "wilvor.ai.decision_model_decision.v0",
+                    "kind": "UNSUPPORTED",
+                    "unsupported_reason": "OUT_OF_CATALOG",
+                }
+            ),
+            "invalid_model_decision",
+        ),
+        (
+            _outer_envelope(
+                "FINAL_CLAIMS",
+                json.dumps(
+                    {
+                        "schema_version": DECISION_MODEL_DECISION_SCHEMA_VERSION,
+                        "kind": "TOOL_CALLS",
+                        "tool_calls": [
+                            {
+                                "name": "get_current_risk_evidence",
+                                "arguments": {"aircraft_id": "ac-1"},
+                            }
+                        ],
+                    }
+                ),
+            ),
+            "invalid_model_decision",
+        ),
+        (
+            _transport_terminal(
+                _final(
+                    {
+                        "kind": "AIRCRAFT_IDENTITY",
+                        "evidence_ref": "de-1",
+                        "evidence_scope": "CURRENT",
+                    }
+                )
+            ),
+            "invalid_model_decision",
+        ),
+        (
+            _outer_envelope(
+                "FINAL_CLAIMS",
+                json.dumps(
+                    {
+                        "schema_version": DECISION_MODEL_DECISION_SCHEMA_VERSION,
+                        "kind": "UNSUPPORTED",
+                        "unsupported_reason": "OUT_OF_CATALOG",
+                    }
+                ),
+            ),
+            "transport_kind_mismatch",
+        ),
+        (
+            _outer_envelope(
+                "UNSUPPORTED",
+                json.dumps(
+                    {
+                        "schema_version": DECISION_MODEL_DECISION_SCHEMA_VERSION,
+                        "kind": "FINAL_CLAIMS",
+                        "claims": [
+                            {
+                                "kind": "AIRCRAFT_IDENTITY",
+                                "evidence_ref": "de-1",
+                                "evidence_scope": "CURRENT",
+                                "aircraft_id": "ac-1",
+                            }
+                        ],
+                    }
+                ),
+            ),
+            "transport_kind_mismatch",
+        ),
+        (
+            end_turn_response(
+                {
+                    "schema_version": DECISION_MODEL_DECISION_SCHEMA_VERSION,
+                    "kind": "FINAL_CLAIMS",
+                    "claims": [],
+                }
+            ),
+            "invalid_transport_fields",
+        ),
+        (
+            _envelope(
+                content=[
+                    {"type": "text", "text": "{}"},
+                    {"type": "text", "text": "{}"},
+                ]
+            ),
+            "malformed_terminal_json",
+        ),
+        (
+            _envelope(
+                content=[
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_1",
+                        "name": "get_current_risk_evidence",
+                        "input": {"aircraft_id": "ac-1"},
+                    }
+                ]
+            ),
+            "end_turn_contains_tool_use",
+        ),
+    ],
+)
+def test_transport_envelope_fails_closed(payload, code):
+    with pytest.raises(ModelProviderMalformedDecisionError, match=f"^{code}$") as caught:
+        parse_decision_messages_response(payload, DEFAULT_MODEL_ID)
+    assert caught.value.args == (code,)
+    assert "SECRET_OUTER" not in str(caught.value)
 
 
 def test_client_exceptions_propagate():
@@ -906,7 +1146,7 @@ def test_offline_specialist_reaches_verified_factual_claims(monkeypatch):
             tool_use_response(
                 ("get_current_risk_evidence", {"aircraft_id": "ac-1"})
             ),
-            end_turn_response(
+            _transport_terminal(
                 _final(_claim_examples()[DecisionClaimKind.AIRCRAFT_IDENTITY][1])
             ),
         )
