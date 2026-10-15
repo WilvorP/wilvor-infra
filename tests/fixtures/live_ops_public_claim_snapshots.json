@@ -1,0 +1,177 @@
+{
+  "schema_version": "wilvor.ai.live_ops_public.v1",
+  "description": "Synthetic public claim shapes. These snapshots are not verified operational evidence.",
+  "claims": {
+    "CONFIRMED_IMPACT": {
+      "kind": "CONFIRMED_IMPACT",
+      "tool_call_id": "call-impacts-1",
+      "tool_name": "search_current_impacts",
+      "aircraft_id": "AC-1",
+      "hazard_id": "HZ-1",
+      "source_version": "SV-1",
+      "encounter_id": "EN-1"
+    },
+    "CONFIRMED_ENCOUNTER": {
+      "kind": "CONFIRMED_ENCOUNTER",
+      "tool_call_id": "call-encounters-1",
+      "tool_name": "search_current_encounters",
+      "encounter_id": "EN-1",
+      "aircraft_id": "AC-1",
+      "hazard_id": "HZ-1",
+      "hazard_source_version": "SV-1",
+      "recorded_flags": [
+        {
+          "name": "centerline_intersects",
+          "value": false
+        },
+        {
+          "name": "corridor_intersects",
+          "value": true
+        }
+      ],
+      "overlap_statuses": [
+        {
+          "name": "altitude_overlap_status",
+          "value": "RECORDED"
+        },
+        {
+          "name": "geometry_overlap_status",
+          "value": "RECORDED"
+        }
+      ],
+      "projection_id": "PROJ-1"
+    },
+    "SCOPED_COUNT": {
+      "kind": "SCOPED_COUNT",
+      "tool_call_id": "call-impacts-1",
+      "tool_name": "search_current_impacts",
+      "metric": "IMPACT_RECORD_COUNT",
+      "mode": "EXACT_RETURNED_SET",
+      "value": 1,
+      "scope": {
+        "region": "California",
+        "hazard_ids": [
+          "HZ-1",
+          "HZ-2"
+        ]
+      }
+    },
+    "QUERY_RESULT_ZERO": {
+      "kind": "QUERY_RESULT_ZERO",
+      "tool_call_id": "call-find-zero",
+      "tool_name": "find_aircraft_by_callsign",
+      "metric": "CALLSIGN_MATCH_COUNT",
+      "scope": {
+        "callsign": "NONE0"
+      }
+    },
+    "CONTEXT_ROOT_ABSENT": {
+      "kind": "CONTEXT_ROOT_ABSENT",
+      "tool_call_id": "call-aircraft-1",
+      "tool_name": "get_aircraft_operational_context",
+      "entity_id": "AC-9"
+    },
+    "HAZARD_REGION_INTERSECTION": {
+      "kind": "HAZARD_REGION_INTERSECTION",
+      "tool_call_id": "call-hazards-1",
+      "tool_name": "search_current_hazards",
+      "hazard_id": "HZ-1",
+      "source_version": "SV-1",
+      "region_code": "US-CA",
+      "region_name": "California",
+      "region_query": "California"
+    },
+    "AIRCRAFT_OBSERVED_STATE": {
+      "kind": "AIRCRAFT_OBSERVED_STATE",
+      "tool_call_id": "call-aircraft-1",
+      "tool_name": "get_aircraft_operational_context",
+      "aircraft_id": "AC-1",
+      "field": "latitude",
+      "value": 37.6,
+      "retained_not_current": false
+    },
+    "AIRCRAFT_PROJECTION_STATE": {
+      "kind": "AIRCRAFT_PROJECTION_STATE",
+      "tool_call_id": "call-aircraft-1",
+      "tool_name": "get_aircraft_operational_context",
+      "aircraft_id": "AC-1",
+      "projection_id": "PROJ-1",
+      "field": "generated_at_utc",
+      "value": "2025-10-15T00:00:00Z"
+    },
+    "CURRENTNESS": {
+      "kind": "CURRENTNESS",
+      "tool_call_id": "call-hazards-1",
+      "tool_name": "search_current_hazards",
+      "predicate": "HAZARD_IS_CURRENT",
+      "value": true,
+      "hazard_id": "HZ-1",
+      "source_version": "SV-1"
+    },
+    "RISK_STATE": {
+      "kind": "RISK_STATE",
+      "tool_call_id": "call-impacts-1",
+      "tool_name": "search_current_impacts",
+      "mode": "PRESENT",
+      "encounter_id": "EN-1",
+      "aircraft_id": "AC-1",
+      "hazard_id": "HZ-1",
+      "risk_id": "RISK-1",
+      "risk_level": "HIGH",
+      "risk_score": 2
+    },
+    "RECOMMENDATION_SET": {
+      "kind": "RECOMMENDATION_SET",
+      "tool_call_id": "call-impacts-1",
+      "tool_name": "search_current_impacts",
+      "mode": "PRESENT_SET",
+      "encounter_id": "EN-1",
+      "aircraft_id": "AC-1",
+      "hazard_id": "HZ-1",
+      "recommendation_ids": [
+        "REC-1"
+      ]
+    },
+    "ALERT_RECORD": {
+      "kind": "ALERT_RECORD",
+      "tool_call_id": "call-impacts-1",
+      "tool_name": "search_current_impacts",
+      "mode": "PRESENT_SET",
+      "encounter_id": "EN-1",
+      "aircraft_id": "AC-1",
+      "hazard_id": "HZ-1",
+      "alert_id": "AL-1",
+      "alert_state": "ACTIVE",
+      "alert_type": "IMPACT"
+    },
+    "CALLSIGN_MATCH_SET": {
+      "kind": "CALLSIGN_MATCH_SET",
+      "tool_call_id": "call-find-1",
+      "tool_name": "find_aircraft_by_callsign",
+      "callsign": "UAL123",
+      "aircraft_ids": [
+        "AC-1"
+      ]
+    },
+    "COVERAGE_LIMITATION": {
+      "kind": "COVERAGE_LIMITATION",
+      "tool_call_id": "call-impacts-1",
+      "tool_name": "search_current_impacts",
+      "code": "FRESHNESS_NOT_ESTABLISHED"
+    },
+    "MODEL_VISIBLE_TRUNCATION": {
+      "kind": "MODEL_VISIBLE_TRUNCATION",
+      "tool_call_id": "call-impacts-1",
+      "tool_name": "search_current_impacts",
+      "list_name": "impacts",
+      "total_count": 30
+    },
+    "CROSS_TOOL_CONTRADICTION": {
+      "kind": "CROSS_TOOL_CONTRADICTION",
+      "tool_call_id_a": "call-hazards-a",
+      "tool_call_id_b": "call-hazards-b",
+      "subject": "HAZARD_SOURCE_VERSION",
+      "hazard_id": "HZ-1"
+    }
+  }
+}
