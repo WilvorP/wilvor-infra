@@ -16,6 +16,8 @@ NEW_MODULES = (
     SHARED_DIR / "wilvor_ai" / "live_ops_specialist_runtime_contracts.py",
     SHARED_DIR / "wilvor_ai" / "live_ops_adapter.py",
     SHARED_DIR / "wilvor_ai" / "live_ops_tool_projection.py",
+    SHARED_DIR / "wilvor_ai" / "live_ops_claims.py",
+    SHARED_DIR / "wilvor_ai" / "live_ops_evidence_verifier.py",
 )
 
 
@@ -51,6 +53,8 @@ absent = [
     'wilvor_ai.live_ops_model_contracts',
     'wilvor_ai.live_ops_specialist_runtime_contracts',
     'wilvor_ai.live_ops_tool_projection',
+    'wilvor_ai.live_ops_claims',
+    'wilvor_ai.live_ops_evidence_verifier',
     'wilvor_ai.historical_specialist',
     'wilvor_ai.decision_specialist',
     'boto3',

@@ -20,6 +20,12 @@ from wilvor_ai.contracts import (
     _sequence,
     _validate_bounded_text,
 )
+from wilvor_ai.live_ops_claims import (
+    LIVE_OPS_MAX_CLAIMS_PER_RESPONSE,
+    LiveOpsClaim,
+    is_live_ops_claim,
+    live_ops_claim_from_dict,
+)
 from wilvor_ai.model_contracts import (
     INSTRUCTION_REF_PATTERN,
     ProposedToolCall,
@@ -231,18 +237,34 @@ class LiveOpsModelTurnRequest:
         )
 
 
+_DECISION_KEYS = frozenset(
+    {
+        "schema_version",
+        "kind",
+        "tool_calls",
+        "unsupported_reason",
+        "refusal_code",
+        "claims",
+    }
+)
+
+
 @dataclass(frozen=True)
 class LiveOpsModelDecision:
     """Exactly one provider-neutral Live Ops decision kind.
 
     REFUSAL is a model refusal. It is not a provider transport failure.
-    FINAL_CLAIMS is reserved; LO1 does not attach operational claims.
+    FINAL_CLAIMS requires 1 to 32 Live Ops claims. A FINAL_CLAIMS value
+    with no claims was valid in LO1 and is rejected. TOOL_CALLS,
+    UNSUPPORTED, and REFUSAL still omit claims from ``to_dict``.
+    Schema version remains ``wilvor.ai.live_ops_model_decision.v1``.
     """
 
     kind: LiveOpsModelDecisionKind
     tool_calls: tuple[ProposedToolCall, ...] = ()
     unsupported_reason: LiveOpsUnsupportedReason | None = None
     refusal_code: str | None = None
+    claims: tuple[LiveOpsClaim, ...] = ()
     schema_version: str = LIVE_OPS_MODEL_DECISION_SCHEMA_VERSION
 
     def __post_init__(self) -> None:
@@ -255,6 +277,12 @@ class LiveOpsModelDecision:
             not isinstance(item, ProposedToolCall) for item in self.tool_calls
         ):
             errors.append("invalid_tool_calls")
+        if not isinstance(self.claims, tuple) or any(
+            not is_live_ops_claim(item) for item in self.claims
+        ):
+            errors.append("invalid_claims")
+        elif len(self.claims) > LIVE_OPS_MAX_CLAIMS_PER_RESPONSE:
+            errors.append("too_many_claims")
         if (
             self.unsupported_reason is not None
             and not isinstance(self.unsupported_reason, LiveOpsUnsupportedReason)
@@ -282,6 +310,8 @@ class LiveOpsModelDecision:
                 errors.append("tool_calls_forbids_unsupported_reason")
             if self.refusal_code is not None:
                 errors.append("tool_calls_forbids_refusal_code")
+            if self.claims:
+                errors.append("tool_calls_forbid_claims")
             return errors
         if self.kind is LiveOpsModelDecisionKind.FINAL_CLAIMS:
             errors = []
@@ -291,6 +321,8 @@ class LiveOpsModelDecision:
                 errors.append("final_claims_forbids_unsupported_reason")
             if self.refusal_code is not None:
                 errors.append("final_claims_forbids_refusal_code")
+            if not self.claims:
+                errors.append("final_claims_require_claims")
             return errors
         if self.kind is LiveOpsModelDecisionKind.UNSUPPORTED:
             errors = []
@@ -300,6 +332,8 @@ class LiveOpsModelDecision:
                 errors.append("unsupported_forbids_tool_calls")
             if self.refusal_code is not None:
                 errors.append("unsupported_forbids_refusal_code")
+            if self.claims:
+                errors.append("unsupported_forbids_claims")
             return errors
         errors = []
         if not self.refusal_code:
@@ -308,10 +342,12 @@ class LiveOpsModelDecision:
             errors.append("refusal_forbids_tool_calls")
         if self.unsupported_reason is not None:
             errors.append("refusal_forbids_unsupported_reason")
+        if self.claims:
+            errors.append("refusal_forbids_claims")
         return errors
 
     def to_dict(self) -> dict[str, JsonValue]:
-        return {
+        payload: dict[str, JsonValue] = {
             "schema_version": self.schema_version,
             "kind": self.kind.value,
             "tool_calls": [item.to_dict() for item in self.tool_calls],
@@ -322,18 +358,32 @@ class LiveOpsModelDecision:
             ),
             "refusal_code": self.refusal_code,
         }
+        if self.kind is LiveOpsModelDecisionKind.FINAL_CLAIMS:
+            payload["claims"] = [item.to_dict() for item in self.claims]
+        return payload
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "LiveOpsModelDecision":
         if not isinstance(data, Mapping):
             raise ContractValidationError("invalid_live_ops_model_decision")
+        if set(data) - _DECISION_KEYS:
+            raise ContractValidationError("unexpected_live_ops_decision_field")
+        kind = _parse_enum(
+            LiveOpsModelDecisionKind,
+            _required(data, "kind"),
+            "kind",
+        )
+        if kind is LiveOpsModelDecisionKind.FINAL_CLAIMS and "claims" not in data:
+            raise ContractValidationError("final_claims_require_claims")
+        claims: tuple[LiveOpsClaim, ...] = ()
+        if "claims" in data:
+            claims = tuple(
+                live_ops_claim_from_dict(item)
+                for item in _sequence(data["claims"], "claims")
+            )
         unsupported = data.get("unsupported_reason")
         return cls(
-            kind=_parse_enum(
-                LiveOpsModelDecisionKind,
-                _required(data, "kind"),
-                "kind",
-            ),
+            kind=kind,
             tool_calls=tuple(
                 ProposedToolCall.from_dict(item)
                 for item in _sequence(data.get("tool_calls", ()), "tool_calls")
@@ -348,6 +398,7 @@ class LiveOpsModelDecision:
                 )
             ),
             refusal_code=data["refusal_code"] if "refusal_code" in data else None,
+            claims=claims,
             schema_version=_required(data, "schema_version"),
         )
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from wilvor_ai.contracts import (
@@ -15,6 +17,10 @@ from wilvor_ai.contracts import (
     ToolResultStatus,
 )
 from wilvor_ai.live_ops import LIVE_OPS_TOOLS, live_ops_tool_schemas
+from wilvor_ai.live_ops_claims import (
+    LIVE_OPS_MAX_CLAIMS_PER_RESPONSE,
+    ConfirmedImpactClaim,
+)
 from wilvor_ai.live_ops_model_contracts import (
     LIVE_OPS_INSTRUCTION_REF,
     LIVE_OPS_MODEL_DECISION_SCHEMA_VERSION,
@@ -255,3 +261,119 @@ def test_dispatch_result_states_are_mutually_exclusive():
     )
     assert failed.validation_failure is None
     assert failed.invocations[0].raw_tool_result is raw
+
+
+def _impact_claim(tool_call_id: str = "tool-1") -> ConfirmedImpactClaim:
+    return ConfirmedImpactClaim(
+        tool_call_id=tool_call_id,
+        tool_name="search_current_impacts",
+        aircraft_id="a",
+        hazard_id="H1",
+        source_version="v1",
+        encounter_id="H1-A",
+    )
+
+
+def test_final_claims_requires_claims_and_breaks_empty_lo1_messages():
+    """LO1 accepted FINAL_CLAIMS with no claims. That shape is now rejected.
+
+    The schema identifier stays wilvor.ai.live_ops_model_decision.v1.
+    """
+    claim = _impact_claim()
+    decision = LiveOpsModelDecision(
+        kind=LiveOpsModelDecisionKind.FINAL_CLAIMS,
+        claims=(claim,),
+    )
+    assert decision.schema_version == "wilvor.ai.live_ops_model_decision.v1"
+    payload = decision.to_dict()
+    assert payload["claims"] == [claim.to_dict()]
+    restored = LiveOpsModelDecision.from_dict(payload)
+    assert restored.claims == (claim,)
+
+    with pytest.raises(ContractValidationError, match="final_claims_require_claims"):
+        LiveOpsModelDecision(kind=LiveOpsModelDecisionKind.FINAL_CLAIMS)
+    legacy = {
+        "schema_version": LIVE_OPS_MODEL_DECISION_SCHEMA_VERSION,
+        "kind": "FINAL_CLAIMS",
+        "tool_calls": [],
+        "unsupported_reason": None,
+        "refusal_code": None,
+    }
+    with pytest.raises(ContractValidationError, match="final_claims_require_claims"):
+        LiveOpsModelDecision.from_dict(legacy)
+
+
+def test_other_decision_kinds_keep_serialization_and_reject_claims():
+    claim = _impact_claim()
+    tool_calls = (
+        ProposedToolCall(
+            name="find_aircraft_by_callsign",
+            arguments={"callsign": "UAL1"},
+        ),
+    )
+    decision = LiveOpsModelDecision(
+        kind=LiveOpsModelDecisionKind.TOOL_CALLS,
+        tool_calls=tool_calls,
+    )
+    assert set(decision.to_dict()) == {
+        "schema_version",
+        "kind",
+        "tool_calls",
+        "unsupported_reason",
+        "refusal_code",
+    }
+    assert "claims" not in decision.to_dict()
+    with pytest.raises(ContractValidationError, match="tool_calls_forbid_claims"):
+        LiveOpsModelDecision(
+            kind=LiveOpsModelDecisionKind.TOOL_CALLS,
+            tool_calls=tool_calls,
+            claims=(claim,),
+        )
+
+    unsupported = LiveOpsModelDecision(
+        kind=LiveOpsModelDecisionKind.UNSUPPORTED,
+        unsupported_reason=LiveOpsUnsupportedReason.ACTION_REQUEST,
+    )
+    refusal = LiveOpsModelDecision(
+        kind=LiveOpsModelDecisionKind.REFUSAL,
+        refusal_code="model_refused",
+    )
+    for item in (unsupported, refusal):
+        assert "claims" not in item.to_dict()
+        assert LiveOpsModelDecision.from_dict(item.to_dict()).claims == ()
+    with pytest.raises(ContractValidationError, match="unsupported_forbids_claims"):
+        LiveOpsModelDecision(
+            kind=LiveOpsModelDecisionKind.UNSUPPORTED,
+            unsupported_reason=LiveOpsUnsupportedReason.ACTION_REQUEST,
+            claims=(claim,),
+        )
+    with pytest.raises(ContractValidationError, match="refusal_forbids_claims"):
+        LiveOpsModelDecision(
+            kind=LiveOpsModelDecisionKind.REFUSAL,
+            refusal_code="model_refused",
+            claims=(claim,),
+        )
+
+
+def test_model_decision_rejects_prose_and_too_many_claims():
+    claim = _impact_claim()
+    payload = LiveOpsModelDecision(
+        kind=LiveOpsModelDecisionKind.FINAL_CLAIMS,
+        claims=(claim,),
+    ).to_dict()
+    payload["answer"] = "The aircraft is clear."
+    with pytest.raises(ContractValidationError, match="unexpected_live_ops_decision_field"):
+        LiveOpsModelDecision.from_dict(payload)
+
+    many = tuple(
+        replace(claim, tool_call_id=f"tool-{index}")
+        for index in range(LIVE_OPS_MAX_CLAIMS_PER_RESPONSE + 1)
+    )
+    with pytest.raises(ContractValidationError, match="too_many_claims"):
+        LiveOpsModelDecision(kind=LiveOpsModelDecisionKind.FINAL_CLAIMS, claims=many)
+    accepted = many[:LIVE_OPS_MAX_CLAIMS_PER_RESPONSE]
+    decision = LiveOpsModelDecision(
+        kind=LiveOpsModelDecisionKind.FINAL_CLAIMS,
+        claims=accepted,
+    )
+    assert len(decision.claims) == LIVE_OPS_MAX_CLAIMS_PER_RESPONSE
