@@ -21,6 +21,9 @@ functions/weather/metar/processor/build/
 # Phase 1D.2 vendored region provenance must remain trackable despite *.json.
 !functions/shared/wilvor_operational/data/us_states.meta.json
 
+# Live Ops public v1 golden claim snapshots must remain trackable despite *.json.
+!tests/fixtures/live_ops_public_claim_snapshots.json
+
 
 envs/dev/tfplan
 
