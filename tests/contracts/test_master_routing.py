@@ -15,6 +15,7 @@ from wilvor_ai.master_routing import (
     MASTER_ROUTE_PROPOSAL_SCHEMA_VERSION,
     REQUEST_UNDERSTANDING_LIMITATION,
     MasterDeferredSynthesis,
+    MasterHintTrust,
     MasterPlanningContext,
     MasterProposedCapability,
     MasterProposedStep,
@@ -149,6 +150,8 @@ def test_historical_only_keeps_the_explicit_window():
     assert step.invocation.specialist is MasterSpecialist.HISTORICAL_ANALYTICS
     assert step.ready_to_execute is True
     assert step.temporal_scopes == (TemporalScope.HISTORICAL,)
+    assert step.historical_start_utc == "2026-01-01T00:00:00Z"
+    assert step.historical_end_utc == "2026-01-02T00:00:00Z"
     assert decision.execution_authority is MasterRouteExecutionAuthority.DENIED
 
 
@@ -204,6 +207,9 @@ def test_discovery_blocks_decision_without_minting_a_target():
     plan = decision.plan
     assert plan is not None
     assert [item.step_id for item in plan.steps] == ["find-1", "dec-1"]
+    assert plan.steps[0].untrusted_hints.callsign == "UAL123"
+    assert plan.steps[0].hint_trust is MasterHintTrust.UNTRUSTED
+    assert plan.steps[0].invocation.expected_aircraft_id is None
     gated = plan.steps[1]
     assert gated.ready_to_execute is False
     assert gated.invocation.expected_aircraft_id is None
@@ -259,6 +265,9 @@ def test_california_hint_stays_unvalidated_and_non_executable():
     decision = authorize_route(_proposal(_work(LIVE), (step,)), _context())
     planned = decision.plan.steps[0]
     assert planned.region_text == "California"
+    assert planned.untrusted_hints.region_text == "California"
+    assert planned.hint_trust is MasterHintTrust.UNTRUSTED
+    assert planned.invocation.expected_aircraft_id is None
     assert planned.ready_to_execute is False
     assert MasterRouteGate.REGION_VALIDATION_PENDING in planned.gates
     rendered = str(decision.plan.to_dict())
@@ -286,6 +295,8 @@ def test_direct_persisted_candidate_does_not_authorize_execution():
     step = decision.plan.steps[0]
     assert step.invocation.expected_recommendation_id == "rec-1"
     assert step.invocation.expected_aircraft_id is None
+    assert step.temporal_scopes == (TemporalScope.PERSISTED,)
+    assert TemporalScope.CURRENT not in step.temporal_scopes
     assert step.ready_to_execute is False
     assert step.target_authorization_granted is False
     assert MasterRouteGate.APPLICATION_TARGET_CANDIDATE_PRESENT in step.gates
@@ -505,7 +516,300 @@ def test_historical_and_decision_remain_independent_when_each_is_supported():
 def test_plan_authorizations_round_trip_through_ma1_contracts():
     decision = authorize_route(_proposal(_work(LIVE), (_live(),)), _context())
     invocation = decision.plan.steps[0].invocation
+    assert invocation.master_request_id == "master-req-1"
+    assert invocation.invocation_id == "master-req-1-1"
+    assert invocation.specialist_request_id == "master-req-1-specialist-1"
+    assert invocation.correlation_id == "corr-1"
+    assert len(
+        {
+            invocation.master_request_id,
+            invocation.invocation_id,
+            invocation.specialist_request_id,
+            invocation.correlation_id,
+        }
+    ) == 4
     assert MasterInvocationAuthorization.from_dict(invocation.to_dict()) == invocation
     restored = type(decision.plan).from_dict(decision.plan.to_dict())
     assert restored == decision.plan
     assert restored.execution_authority is MasterRouteExecutionAuthority.DENIED
+
+
+def test_historical_window_and_untrusted_hints_survive_round_trip():
+    hints = MasterRouteHints(
+        callsign="UAL123",
+        typed_aircraft_id="ac-9",
+        population_aircraft_ids=("ac-9", "ac-8"),
+    )
+    decision = authorize_route(
+        _proposal(_work(HISTORY), (_history(hints=hints),)),
+        _context(),
+    )
+    step = decision.plan.steps[0]
+    assert step.historical_start_utc == "2026-01-01T00:00:00Z"
+    assert step.historical_end_utc == "2026-01-02T00:00:00Z"
+    assert step.untrusted_hints == hints
+    assert step.hint_trust is MasterHintTrust.UNTRUSTED
+    assert step.invocation.expected_aircraft_id is None
+    assert step.target_authorization_granted is False
+    restored = type(decision.plan).from_dict(decision.plan.to_dict())
+    assert restored == decision.plan
+    assert restored.steps[0].historical_end_utc == "2026-01-02T00:00:00Z"
+    assert restored.steps[0].untrusted_hints.callsign == "UAL123"
+    assert restored.steps[0].untrusted_hints.typed_aircraft_id == "ac-9"
+    assert restored.execution_authority is MasterRouteExecutionAuthority.DENIED
+    trusted = decision.plan.to_dict()
+    trusted["steps"][0]["hint_trust"] = "TRUSTED"
+    with pytest.raises(ContractValidationError, match="selection_hints_not_trusted"):
+        type(decision.plan).from_dict(trusted)
+    dropped = decision.plan.to_dict()
+    del dropped["steps"][0]["historical_end_utc"]
+    with pytest.raises(ContractValidationError, match="missing_historical_interval"):
+        type(decision.plan).from_dict(dropped)
+    widened = decision.plan.to_dict()
+    widened["steps"][0]["historical_end_utc"] = "2026-01-09T00:00:00Z"
+    with pytest.raises(ContractValidationError, match="historical_window_exceeds_seven_days"):
+        type(decision.plan).from_dict(widened)
+    smuggled = decision.plan.to_dict()
+    smuggled["steps"][0]["tool_arguments"] = {"polygon": []}
+    with pytest.raises(ContractValidationError, match="unexpected_route_step_plan_field"):
+        type(decision.plan).from_dict(smuggled)
+
+
+def test_dependencies_block_every_specialist_and_keep_stable_order():
+    live_on_historical = _proposal(
+        _work(LIVE, HISTORY),
+        (_history("hist-1"), _live("live-1", depends_on=("hist-1",))),
+    )
+    swapped = _proposal(
+        _work(LIVE, HISTORY),
+        (_live("live-1", depends_on=("hist-1",)), _history("hist-1")),
+    )
+    first = authorize_route(live_on_historical, _context())
+    assert first.plan.to_dict() == authorize_route(swapped, _context()).plan.to_dict()
+    assert [item.step_id for item in first.plan.steps] == ["hist-1", "live-1"]
+    assert first.plan.steps[0].ready_to_execute is True
+    assert first.plan.steps[0].depends_on == ()
+    assert first.plan.steps[1].ready_to_execute is False
+    assert first.plan.steps[1].depends_on == ("hist-1",)
+    assert MasterRouteGate.DEPENDENCY_BLOCKED in first.plan.steps[1].gates
+    historical_on_live = authorize_route(
+        _proposal(
+            _work(LIVE, HISTORY),
+            (_live("live-1"), _history("hist-1", depends_on=("live-1",))),
+        ),
+        _context(),
+    )
+    assert [item.step_id for item in historical_on_live.plan.steps] == ["live-1", "hist-1"]
+    assert historical_on_live.plan.steps[0].ready_to_execute is True
+    assert historical_on_live.plan.steps[1].ready_to_execute is False
+    assert historical_on_live.plan.steps[1].depends_on == ("live-1",)
+    assert MasterRouteGate.DEPENDENCY_BLOCKED in historical_on_live.plan.steps[1].gates
+    assert historical_on_live.plan.steps[1].historical_start_utc == "2026-01-01T00:00:00Z"
+    assert historical_on_live.execution_authority is MasterRouteExecutionAuthority.DENIED
+
+
+def test_omitted_optional_dependencies_do_not_leave_a_dangling_plan():
+    optional_history = _step(
+        "hist-x",
+        MasterSpecialist.HISTORICAL_ANALYTICS,
+        MasterPurpose.DISCOVERY,
+        HISTORY,
+        requirement=MasterRequirement.OPTIONAL,
+    )
+    optional_live = _live(
+        "live-2",
+        requirement=MasterRequirement.OPTIONAL,
+        depends_on=("hist-x",),
+    )
+    kept_live = _live("live-1")
+    decision = authorize_route(
+        _proposal(
+            (
+                MasterProposedCapability(LIVE, MasterRequirement.REQUIRED),
+                MasterProposedCapability(HISTORY, MasterRequirement.OPTIONAL),
+            ),
+            (optional_history, optional_live, kept_live),
+        ),
+        _context(),
+    )
+    assert decision.outcome is MasterRouteOutcome.AUTHORIZED_PLAN
+    assert [item.step_id for item in decision.plan.steps] == ["live-1"]
+    assert decision.plan.steps[0].depends_on == ()
+    assert decision.plan.steps[0].ready_to_execute is True
+    assert "optional_step_omitted:live-2:dependency_omitted:hist-x" in decision.plan.unsupported_omissions
+    assert decision.execution_authority is MasterRouteExecutionAuthority.DENIED
+
+
+def test_required_dependency_on_an_omitted_step_fails_closed():
+    optional_history = _step(
+        "hist-x",
+        MasterSpecialist.HISTORICAL_ANALYTICS,
+        MasterPurpose.DISCOVERY,
+        HISTORY,
+        requirement=MasterRequirement.OPTIONAL,
+    )
+    optional_live = _live(
+        "live-2",
+        requirement=MasterRequirement.OPTIONAL,
+        depends_on=("hist-x",),
+    )
+    required_decision = _decision("dec-1", depends_on=("live-2",))
+    decision = authorize_route(
+        _proposal(
+            (
+                MasterProposedCapability(RISK, MasterRequirement.REQUIRED),
+                MasterProposedCapability(LIVE, MasterRequirement.OPTIONAL),
+                MasterProposedCapability(HISTORY, MasterRequirement.OPTIONAL),
+            ),
+            (optional_history, optional_live, required_decision),
+        ),
+        _context(),
+    )
+    assert decision.outcome is MasterRouteOutcome.UNSUPPORTED
+    assert decision.plan is None
+    assert decision.reasons == ("required_dependency_omitted:dec-1:live-2",)
+    assert decision.execution_authority is MasterRouteExecutionAuthority.DENIED
+
+
+def test_planned_specialist_request_ids_remain_distinct_planning_identifiers():
+    decision = authorize_route(
+        _proposal(_work(LIVE, HISTORY), (_history(), _live())),
+        _context(),
+    )
+    seen: set[str] = set()
+    for index, step in enumerate(decision.plan.steps, start=1):
+        invocation = step.invocation
+        assert invocation.specialist_request_id == f"master-req-1-specialist-{index}"
+        assert invocation.invocation_id == f"master-req-1-{index}"
+        assert invocation.master_request_id == "master-req-1"
+        assert invocation.correlation_id == "corr-1"
+        assert invocation.specialist_request_id not in seen
+        seen.add(invocation.specialist_request_id)
+        restored = MasterInvocationAuthorization.from_dict(invocation.to_dict())
+        assert restored.specialist_request_id == invocation.specialist_request_id
+    collided = decision.plan.to_dict()
+    collided["steps"][1]["invocation"]["specialist_request_id"] = collided["steps"][0]["invocation"][
+        "specialist_request_id"
+    ]
+    with pytest.raises(ContractValidationError, match="duplicate_specialist_request_id"):
+        type(decision.plan).from_dict(collided)
+    merged = decision.plan.to_dict()
+    merged["steps"][0]["invocation"]["specialist_request_id"] = merged["steps"][0]["invocation"][
+        "invocation_id"
+    ]
+    with pytest.raises(ContractValidationError, match="request_identity_not_distinct"):
+        type(decision.plan).from_dict(merged)
+
+
+def test_unresolved_decision_scope_is_not_invented_as_current():
+    decision = authorize_route(
+        _proposal(
+            _work(RISK),
+            (_decision(temporal_intent=MasterRouteTemporalIntent.UNSPECIFIED),),
+        ),
+        _context(),
+    )
+    step = decision.plan.steps[0]
+    assert step.temporal_scopes == ()
+    assert MasterRouteGate.TEMPORAL_SCOPE_UNRESOLVED in step.gates
+    assert TemporalScope.CURRENT not in step.temporal_scopes
+    assert step.ready_to_execute is False
+    assert step.invocation.expected_aircraft_id is None
+    assert step.target_authorization_granted is False
+
+
+def test_persisted_only_scope_does_not_invent_current_evidence():
+    decision = authorize_route(
+        _proposal(
+            _work(RECOMMENDATION),
+            (
+                _decision(
+                    capability=RECOMMENDATION,
+                    temporal_intent=MasterRouteTemporalIntent.UNSPECIFIED,
+                    needs_persisted_evidence=True,
+                ),
+            ),
+        ),
+        _context(),
+    )
+    step = decision.plan.steps[0]
+    assert step.temporal_scopes == (TemporalScope.PERSISTED,)
+    assert TemporalScope.CURRENT not in step.temporal_scopes
+    assert step.needs_persisted_evidence is True
+    assert step.invocation.expected_recommendation_id is None
+    assert step.ready_to_execute is False
+
+
+def test_recommendation_hint_does_not_mint_a_persisted_target():
+    hints = MasterRouteHints(recommendation_id="rec-9")
+    decision = authorize_route(
+        _proposal(
+            _work(RECOMMENDATION),
+            (_decision(capability=RECOMMENDATION, hints=hints),),
+        ),
+        _context(),
+    )
+    step = decision.plan.steps[0]
+    assert step.temporal_scopes == (TemporalScope.PERSISTED,)
+    assert step.untrusted_hints.recommendation_id == "rec-9"
+    assert step.hint_trust is MasterHintTrust.UNTRUSTED
+    assert step.invocation.expected_recommendation_id is None
+    assert step.target_authorization_granted is False
+    assert step.ready_to_execute is False
+
+
+def test_needs_persisted_evidence_rejects_truthiness_coercion():
+    payload = _decision(needs_persisted_evidence=True).to_dict()
+    for value in ("true", "false", 1, 0, ["persisted"]):
+        payload["needs_persisted_evidence"] = value
+        with pytest.raises(ContractValidationError, match="invalid_needs_persisted_evidence"):
+            MasterProposedStep.from_dict(payload)
+    decision = authorize_route(
+        _proposal(_work(RISK), (_decision(needs_persisted_evidence=True),)),
+        _context(target_candidate_aircraft_id="ac-1"),
+    )
+    planned = decision.plan.to_dict()
+    planned["steps"][0]["needs_persisted_evidence"] = "yes"
+    with pytest.raises(ContractValidationError, match="invalid_needs_persisted_evidence"):
+        type(decision.plan).from_dict(planned)
+    planned = decision.plan.to_dict()
+    planned["steps"][0]["temporal_scopes"] = ["CURRENT"]
+    with pytest.raises(ContractValidationError, match="persisted_scope_missing"):
+        type(decision.plan).from_dict(planned)
+
+
+def test_population_hint_is_bounded():
+    with pytest.raises(ContractValidationError, match="population_aircraft_ids_exceed_bound"):
+        MasterRouteHints(population_aircraft_ids=tuple(f"ac-{index}" for index in range(9)))
+
+
+def test_serialized_plan_rejects_malformed_dependency_graphs():
+    decision = authorize_route(
+        _proposal(_work(LIVE, HISTORY), (_live(), _history())),
+        _context(),
+    )
+    missing = decision.plan.to_dict()
+    missing["steps"][1]["depends_on"] = ["missing-step"]
+    missing["steps"][1]["gates"] = [MasterRouteGate.DEPENDENCY_BLOCKED.value]
+    missing["steps"][1]["ready_to_execute"] = False
+    with pytest.raises(ContractValidationError, match="missing_dependency_id"):
+        type(decision.plan).from_dict(missing)
+    ready = decision.plan.to_dict()
+    ready["steps"][1]["depends_on"] = [ready["steps"][0]["step_id"]]
+    with pytest.raises(ContractValidationError, match="dependency_not_blocked"):
+        type(decision.plan).from_dict(ready)
+    cyclic = decision.plan.to_dict()
+    first_id = cyclic["steps"][0]["step_id"]
+    second_id = cyclic["steps"][1]["step_id"]
+    for item, dependency in ((0, second_id), (1, first_id)):
+        cyclic["steps"][item]["depends_on"] = [dependency]
+        cyclic["steps"][item]["gates"] = [MasterRouteGate.DEPENDENCY_BLOCKED.value]
+        cyclic["steps"][item]["ready_to_execute"] = False
+    with pytest.raises(ContractValidationError, match="cyclic_dependency"):
+        type(decision.plan).from_dict(cyclic)
+    self_dependent = decision.plan.to_dict()
+    self_dependent["steps"][0]["depends_on"] = [self_dependent["steps"][0]["step_id"]]
+    self_dependent["steps"][0]["gates"] = [MasterRouteGate.DEPENDENCY_BLOCKED.value]
+    self_dependent["steps"][0]["ready_to_execute"] = False
+    with pytest.raises(ContractValidationError, match="self_dependency"):
+        type(decision.plan).from_dict(self_dependent)
