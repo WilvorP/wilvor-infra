@@ -18,6 +18,7 @@ NEW_MODULES = (
     SHARED_DIR / "wilvor_ai" / "live_ops_tool_projection.py",
     SHARED_DIR / "wilvor_ai" / "live_ops_claims.py",
     SHARED_DIR / "wilvor_ai" / "live_ops_evidence_verifier.py",
+    SHARED_DIR / "wilvor_ai" / "live_ops_specialist.py",
 )
 
 
@@ -141,3 +142,28 @@ def test_new_modules_have_no_clock_or_aws_imports():
         assert "time.time" not in source
         assert "os.environ" not in source
         assert "boto3" not in source
+
+
+def test_live_ops_specialist_import_stays_provider_neutral():
+    _assert_clean(
+        _run_isolated(
+            """
+import sys
+import wilvor_ai.live_ops_specialist as specialist
+assert hasattr(specialist, 'LiveOpsSpecialist')
+absent = [
+    'anthropic',
+    'openai',
+    'langgraph',
+    'wilvor_ai.providers.anthropic_messages',
+    'wilvor_ai.providers.anthropic_decision_messages',
+    'wilvor_ai.historical_specialist',
+    'wilvor_ai.decision_specialist',
+]
+# boto3 is pulled in by the existing LO1 live_ops readers import.
+assert 'wilvor_ai.live_ops' in sys.modules
+loaded = [name for name in absent if name in sys.modules]
+assert loaded == [], loaded
+"""
+        )
+    )

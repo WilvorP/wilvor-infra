@@ -42,6 +42,24 @@ LIVE_OPS_MODEL_VISIBLE_LIST_MAX = 25
 LIVE_OPS_PROJECTED_STRING_MAX = 256
 LIVE_OPS_PROJECTION_JSON_MAX_BYTES = 32768
 MAX_TOOL_CALLS_PER_BATCH = 2
+_PRIOR_TURN_MAX = 4
+_PRIOR_TURN_TEXT_MAX = 2048
+_PRIOR_TURNS_TOTAL_MAX = 8192
+_SELECTOR_HINT_TEXT_MAX = 512
+_ENTITY_HINT_MAX = 4
+_SELECTOR_HINT_NAMES = frozenset(
+    {
+        "region",
+        "product_type",
+        "hazard_type",
+        "hazard_ids",
+        "aircraft_id",
+        "callsign",
+        "airport_id",
+        "hazard_id",
+    }
+)
+_PRIOR_TURN_ROLES = frozenset({"user", "assistant"})
 
 
 class LiveOpsValidationCode(str, Enum):
@@ -142,6 +160,131 @@ class LiveOpsValidationFailure:
         )
 
 
+def _stripped_token(value: Any, field_name: str, *, max_length: int) -> list[str]:
+    errors = _validate_bounded_text(value, field_name, max_length=max_length)
+    if errors or not isinstance(value, str):
+        return errors or [f"invalid_{field_name}"]
+    if value != value.strip():
+        return [f"invalid_{field_name}"]
+    return []
+
+
+def _freeze_prior_turns(
+    value: Any,
+) -> tuple[list[str], tuple[tuple[str, str], ...]]:
+    """Copy untrusted turns. Roles stay labels, not instructions."""
+
+    if not isinstance(value, tuple):
+        return ["invalid_prior_turns"], ()
+    if len(value) > _PRIOR_TURN_MAX:
+        return ["too_many_prior_turns"], ()
+    frozen: list[tuple[str, str]] = []
+    total = 0
+    for item in value:
+        if (
+            not isinstance(item, tuple)
+            or len(item) != 2
+            or not isinstance(item[0], str)
+            or not isinstance(item[1], str)
+        ):
+            return ["invalid_prior_turns"], ()
+        role, text = item
+        if role not in _PRIOR_TURN_ROLES:
+            return ["invalid_prior_turn_role"], ()
+        if _stripped_token(text, "prior_turn_text", max_length=_PRIOR_TURN_TEXT_MAX):
+            return ["invalid_prior_turn_text"], ()
+        total += len(text)
+        frozen.append((role, text))
+    if total > _PRIOR_TURNS_TOTAL_MAX:
+        return ["prior_turns_too_large"], ()
+    return [], tuple(frozen)
+
+
+def _freeze_hazard_ids(value: Any) -> tuple[list[str], tuple[str, ...]]:
+    if isinstance(value, list):
+        return ["invalid_selector_hint_items"], ()
+    if not isinstance(value, tuple) or not value:
+        return ["invalid_selector_hint_items"], ()
+    if len(value) > LIVE_OPS_HAZARD_IDS_MAX:
+        return ["invalid_selector_hint_items"], ()
+    frozen: list[str] = []
+    for item in value:
+        if _stripped_token(item, "hazard_ids", max_length=_SELECTOR_HINT_TEXT_MAX):
+            return ["invalid_selector_hint_items"], ()
+        frozen.append(item)
+    if len(frozen) != len(set(frozen)) or frozen != sorted(frozen):
+        return ["invalid_selector_hint_items"], ()
+    return [], tuple(frozen)
+
+
+def _freeze_selector_hints(
+    value: Any,
+) -> tuple[list[str], tuple[tuple[str, str | tuple[str, ...]], ...]]:
+    """Copy untrusted selector text. These values do not authorize a tool."""
+
+    if not isinstance(value, tuple):
+        return ["invalid_selector_hint_items"], ()
+    if len(value) > len(_SELECTOR_HINT_NAMES):
+        return ["invalid_selector_hint_items"], ()
+    frozen: list[tuple[str, str | tuple[str, ...]]] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, tuple) or len(item) != 2 or not isinstance(item[0], str):
+            return ["invalid_selector_hint_items"], ()
+        name, raw = item
+        if name not in _SELECTOR_HINT_NAMES or name in seen:
+            return ["invalid_selector_hint_items"], ()
+        seen.add(name)
+        if name == "hazard_ids":
+            errors, hazard_ids = _freeze_hazard_ids(raw)
+            if errors:
+                return errors, ()
+            frozen.append((name, hazard_ids))
+            continue
+        if _stripped_token(raw, name, max_length=_SELECTOR_HINT_TEXT_MAX):
+            return ["invalid_selector_hint_items"], ()
+        frozen.append((name, raw))
+    return [], tuple(frozen)
+
+
+def _freeze_entity_hints(
+    value: Any,
+) -> tuple[list[str], tuple[tuple[str, str, str | None], ...]]:
+    """Copy untrusted identity hints. They carry no entity-ref authority."""
+
+    if not isinstance(value, tuple):
+        return ["invalid_entity_hint_items"], ()
+    if len(value) > _ENTITY_HINT_MAX:
+        return ["too_many_entity_hints"], ()
+    frozen: list[tuple[str, str, str | None]] = []
+    for item in value:
+        if not isinstance(item, tuple) or len(item) != 3:
+            return ["invalid_entity_hint_items"], ()
+        kind, entity_id, callsign = item
+        if kind != "AIRCRAFT":
+            return ["invalid_entity_kind"], ()
+        if _stripped_token(entity_id, "entity_id", max_length=PROVENANCE_TOKEN_MAX_LENGTH):
+            return ["invalid_entity_hint_items"], ()
+        if callsign is not None and _stripped_token(
+            callsign,
+            "callsign",
+            max_length=_SELECTOR_HINT_TEXT_MAX,
+        ):
+            return ["invalid_entity_hint_items"], ()
+        frozen.append((kind, entity_id, callsign))
+    return [], tuple(frozen)
+
+
+def _mapping_items(value: Any, field_name: str) -> list[Mapping[str, Any]] | None:
+    try:
+        items = _sequence(value, field_name)
+    except ContractValidationError:
+        return None
+    if any(not isinstance(item, Mapping) for item in items):
+        return None
+    return items
+
+
 def _validate_instruction_ref(value: Any) -> list[str]:
     errors = _validate_bounded_text(value, "instruction_ref", optional=True)
     if errors or value is None:
@@ -153,13 +296,22 @@ def _validate_instruction_ref(value: Any) -> list[str]:
 
 @dataclass(frozen=True)
 class LiveOpsModelTurnRequest:
-    """Provider-neutral Live Ops turn. Not a vendor transcript."""
+    """Provider-neutral Live Ops turn. Not a vendor transcript.
+
+    ``prior_turns``, ``selector_hint_items``, and ``entity_hint_items`` are
+    untrusted conversational context. They are not evidence, not tool
+    authority, and not a place for server instructions or raw tool results.
+    Empty values stay out of ``to_dict`` so older payloads still round-trip.
+    """
 
     user_text: str
     instruction_ref: str | None = None
     tools: tuple[ToolSchema, ...] = ()
     tool_results: tuple[Any, ...] = ()
     validation_feedback: LiveOpsValidationFailure | None = None
+    prior_turns: tuple[tuple[str, str], ...] = ()
+    selector_hint_items: tuple[tuple[str, str | tuple[str, ...]], ...] = ()
+    entity_hint_items: tuple[tuple[str, str, str | None], ...] = ()
 
     def __post_init__(self) -> None:
         errors = _validate_bounded_text(
@@ -188,8 +340,17 @@ class LiveOpsModelTurnRequest:
             and not isinstance(self.validation_feedback, LiveOpsValidationFailure)
         ):
             errors.append("invalid_validation_feedback")
+        prior_errors, prior_turns = _freeze_prior_turns(self.prior_turns)
+        selector_errors, selector_items = _freeze_selector_hints(self.selector_hint_items)
+        entity_errors, entity_items = _freeze_entity_hints(self.entity_hint_items)
+        errors.extend(prior_errors)
+        errors.extend(selector_errors)
+        errors.extend(entity_errors)
         if errors:
             raise ContractValidationError(errors)
+        object.__setattr__(self, "prior_turns", prior_turns)
+        object.__setattr__(self, "selector_hint_items", selector_items)
+        object.__setattr__(self, "entity_hint_items", entity_items)
 
     def to_dict(self) -> dict[str, JsonValue]:
         payload: dict[str, JsonValue] = {"user_text": self.user_text}
@@ -201,6 +362,29 @@ class LiveOpsModelTurnRequest:
             payload["tool_results"] = [item.to_dict() for item in self.tool_results]
         if self.validation_feedback is not None:
             payload["validation_feedback"] = self.validation_feedback.to_dict()
+        if self.prior_turns:
+            payload["prior_turns"] = [
+                {"role": role, "text": text} for role, text in self.prior_turns
+            ]
+        if self.selector_hint_items:
+            payload["selector_hint_items"] = [
+                {
+                    "name": name,
+                    "value": list(value) if isinstance(value, tuple) else value,
+                }
+                for name, value in self.selector_hint_items
+            ]
+        if self.entity_hint_items:
+            entities: list[dict[str, JsonValue]] = []
+            for kind, entity_id, callsign in self.entity_hint_items:
+                item: dict[str, JsonValue] = {
+                    "entity_kind": kind,
+                    "entity_id": entity_id,
+                }
+                if callsign is not None:
+                    item["callsign"] = callsign
+                entities.append(item)
+            payload["entity_hint_items"] = entities
         return payload
 
     @classmethod
@@ -210,6 +394,9 @@ class LiveOpsModelTurnRequest:
         tools: tuple[ToolSchema, ...] = ()
         tool_results: tuple[Any, ...] = ()
         validation_feedback = None
+        prior_turns: tuple[tuple[str, str], ...] = ()
+        selector_items: tuple[tuple[str, str | tuple[str, ...]], ...] = ()
+        entity_items: tuple[tuple[str, str, str | None], ...] = ()
         if "tools" in data:
             tools = tuple(
                 ToolSchema.from_dict(item)
@@ -226,6 +413,51 @@ class LiveOpsModelTurnRequest:
             validation_feedback = LiveOpsValidationFailure.from_dict(
                 data["validation_feedback"]
             )
+        if "prior_turns" in data:
+            parsed_turns = _mapping_items(data["prior_turns"], "prior_turns")
+            if parsed_turns is None:
+                raise ContractValidationError("invalid_prior_turns")
+            turns: list[tuple[str, str]] = []
+            for item in parsed_turns:
+                if set(item) - {"role", "text"}:
+                    raise ContractValidationError("unexpected_prior_turn_field")
+                if "role" not in item or "text" not in item:
+                    raise ContractValidationError("invalid_prior_turns")
+                turns.append((item["role"], item["text"]))
+            prior_turns = tuple(turns)
+        if "selector_hint_items" in data:
+            parsed_hints = _mapping_items(data["selector_hint_items"], "selector_hint_items")
+            if parsed_hints is None:
+                raise ContractValidationError("invalid_selector_hint_items")
+            hints: list[tuple[str, str | tuple[str, ...]]] = []
+            for item in parsed_hints:
+                if set(item) - {"name", "value"}:
+                    raise ContractValidationError("unexpected_selector_field")
+                if "name" not in item or "value" not in item:
+                    raise ContractValidationError("invalid_selector_hint_items")
+                raw_value = item["value"]
+                if item["name"] == "hazard_ids":
+                    if not isinstance(raw_value, list) or any(
+                        not isinstance(part, str) for part in raw_value
+                    ):
+                        raise ContractValidationError("invalid_selector_hint_items")
+                    hints.append((item["name"], tuple(raw_value)))
+                else:
+                    hints.append((item["name"], raw_value))
+            selector_items = tuple(hints)
+        if "entity_hint_items" in data:
+            parsed_entities = _mapping_items(data["entity_hint_items"], "entity_hint_items")
+            if parsed_entities is None:
+                raise ContractValidationError("invalid_entity_hint_items")
+            entities: list[tuple[str, str, str | None]] = []
+            for item in parsed_entities:
+                if set(item) - {"entity_kind", "entity_id", "callsign"}:
+                    raise ContractValidationError("unexpected_entity_hint_field")
+                if "entity_kind" not in item or "entity_id" not in item:
+                    raise ContractValidationError("invalid_entity_hint_items")
+                callsign = item["callsign"] if "callsign" in item else None
+                entities.append((item["entity_kind"], item["entity_id"], callsign))
+            entity_items = tuple(entities)
         return cls(
             user_text=_required(data, "user_text"),
             instruction_ref=(
@@ -234,6 +466,9 @@ class LiveOpsModelTurnRequest:
             tools=tools,
             tool_results=tool_results,
             validation_feedback=validation_feedback,
+            prior_turns=prior_turns,
+            selector_hint_items=selector_items,
+            entity_hint_items=entity_items,
         )
 
 
