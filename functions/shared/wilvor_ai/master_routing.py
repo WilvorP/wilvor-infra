@@ -302,8 +302,6 @@ class MasterRouteHints:
         }
         if set(data) - allowed:
             raise ContractValidationError("unexpected_route_hint_field")
-        if allowed - set(data):
-            raise ContractValidationError("invalid_route_hints")
         population = tuple(
             _sequence(data.get("population_aircraft_ids", ()), "population_aircraft_ids")
         )
@@ -708,6 +706,8 @@ class MasterRouteStepPlan:
         if not isinstance(self.capability, AgentCapability):
             raise ContractValidationError("invalid_capability")
         object.__setattr__(self, "gates", _enum_tuple(self.gates, MasterRouteGate, "gates"))
+        if self.region_text is not None and MasterRouteGate.REGION_VALIDATION_PENDING not in self.gates:
+            raise ContractValidationError("region_validation_pending_required")
         if not isinstance(self.ready_to_execute, bool):
             raise ContractValidationError("invalid_ready_to_execute")
         blocking = tuple(item for item in self.gates if item is not MasterRouteGate.NOT_REQUIRED)
@@ -1013,11 +1013,7 @@ def _capability_matches(step: MasterProposedStep) -> bool:
 
 
 def _covers(step: MasterProposedStep, capability: AgentCapability) -> bool:
-    if not _capability_matches(step):
-        return False
-    if capability in _EXPLAIN:
-        return step.specialist is MasterSpecialist.DECISION and step.purpose is MasterPurpose.ANSWER
-    return step.capability is capability
+    return _capability_matches(step) and step.capability is capability
 
 
 def _window_problem(step: MasterProposedStep) -> tuple[str, str] | None:
@@ -1304,6 +1300,22 @@ def authorize_route(
         return _decision(
             MasterRouteOutcome.REFUSED,
             tuple(f"prohibited_capability:{item.value}" for item in prohibited),
+        )
+
+    required_explain = tuple(
+        sorted(
+            (
+                item.capability
+                for item in proposal.capabilities
+                if item.capability in _EXPLAIN and item.requirement is MasterRequirement.REQUIRED
+            ),
+            key=lambda item: item.value,
+        )
+    )
+    if len(required_explain) > MAX_DECISION_STEPS:
+        return _decision(
+            MasterRouteOutcome.UNSUPPORTED,
+            tuple(f"decision_capabilities_exceed_bound:{item.value}" for item in required_explain),
         )
 
     proposed = {item.capability for item in proposal.capabilities}

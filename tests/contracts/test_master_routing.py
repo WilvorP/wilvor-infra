@@ -813,3 +813,105 @@ def test_serialized_plan_rejects_malformed_dependency_graphs():
     self_dependent["steps"][0]["ready_to_execute"] = False
     with pytest.raises(ContractValidationError, match="self_dependency"):
         type(decision.plan).from_dict(self_dependent)
+
+
+def test_decision_capabilities_require_exact_coverage():
+    risk = authorize_route(
+        _proposal(_work(RISK), (_decision(),)),
+        _context(target_candidate_aircraft_id="ac-1"),
+    )
+    assert risk.outcome is MasterRouteOutcome.AUTHORIZED_PLAN
+    assert risk.plan.steps[0].capability is RISK
+    assert risk.request_coverage is MasterRequestCoverage.NOT_ESTABLISHED
+    assert risk.plan.steps[0].invocation.expected_aircraft_id == "ac-1"
+    assert risk.plan.steps[0].target_authorization_granted is False
+    recommendations = authorize_route(
+        _proposal(_work(RECOMMENDATION), (_decision(capability=RECOMMENDATION),)),
+        _context(target_candidate_aircraft_id="ac-1"),
+    )
+    assert recommendations.outcome is MasterRouteOutcome.AUTHORIZED_PLAN
+    assert recommendations.plan.steps[0].capability is RECOMMENDATION
+    assert recommendations.request_coverage is MasterRequestCoverage.NOT_ESTABLISHED
+    both = authorize_route(
+        _proposal(
+            _work(RISK, RECOMMENDATION),
+            (_decision(),),
+        ),
+        _context(target_candidate_aircraft_id="ac-1"),
+    )
+    assert both.outcome is MasterRouteOutcome.UNSUPPORTED
+    assert both.plan is None
+    assert both.request_coverage is MasterRequestCoverage.NOT_ESTABLISHED
+    assert both.reasons == tuple(
+        f"decision_capabilities_exceed_bound:{item.value}"
+        for item in sorted((RECOMMENDATION, RISK), key=lambda item: item.value)
+    )
+    assert both.execution_authority is MasterRouteExecutionAuthority.DENIED
+    missing = authorize_route(
+        _proposal(
+            (
+                MasterProposedCapability(RISK, MasterRequirement.REQUIRED),
+                MasterProposedCapability(RECOMMENDATION, MasterRequirement.OPTIONAL),
+            ),
+            (_decision(capability=RECOMMENDATION),),
+        ),
+        _context(target_candidate_aircraft_id="ac-1"),
+    )
+    assert missing.outcome is MasterRouteOutcome.CLARIFICATION_REQUIRED
+    assert missing.reasons == ("required_capability_has_no_step",)
+    assert missing.plan is None
+    assert missing.request_coverage is MasterRequestCoverage.NOT_ESTABLISHED
+
+
+def test_sparse_hint_inputs_round_trip_and_reject_invalid_values():
+    callsign = MasterRouteHints.from_dict({"callsign": "UAL123"})
+    assert callsign == MasterRouteHints(callsign="UAL123")
+    assert callsign.to_dict() == {
+        "callsign": "UAL123",
+        "typed_aircraft_id": None,
+        "recommendation_id": None,
+        "region_text": None,
+        "population_aircraft_ids": [],
+    }
+    assert MasterRouteHints.from_dict(callsign.to_dict()) == callsign
+    region = MasterRouteHints.from_dict({"region_text": "California"})
+    assert region == MasterRouteHints(region_text="California")
+    assert region.to_dict()["region_text"] == "California"
+    assert region.to_dict()["callsign"] is None
+    with pytest.raises(ContractValidationError, match="unexpected_route_hint_field"):
+        MasterRouteHints.from_dict({"callsign": "UAL123", "polygon": []})
+    with pytest.raises(ContractValidationError, match="invalid_callsign"):
+        MasterRouteHints.from_dict({"callsign": "UAL 123"})
+    with pytest.raises(ContractValidationError, match="contradictory_targets"):
+        MasterRouteHints.from_dict(
+            {"typed_aircraft_id": "ac-1", "recommendation_id": "rec-1"}
+        )
+    with pytest.raises(ContractValidationError, match="duplicate_population_aircraft_id"):
+        MasterRouteHints.from_dict({"population_aircraft_ids": ["ac-1", "ac-1"]})
+    with pytest.raises(ContractValidationError, match="population_aircraft_ids_exceed_bound"):
+        MasterRouteHints.from_dict(
+            {"population_aircraft_ids": [f"ac-{index}" for index in range(9)]}
+        )
+    with pytest.raises(ContractValidationError, match="invalid_population_aircraft_ids"):
+        MasterRouteHints.from_dict({"population_aircraft_ids": "ac-1"})
+
+
+def test_california_plan_cannot_drop_the_region_gate():
+    decision = authorize_route(
+        _proposal(_work(LIVE), (_live(hints=MasterRouteHints(region_text="California")),)),
+        _context(),
+    )
+    planned = decision.plan.steps[0]
+    assert planned.region_text == "California"
+    assert planned.untrusted_hints.region_text == "California"
+    assert planned.hint_trust is MasterHintTrust.UNTRUSTED
+    assert MasterRouteGate.REGION_VALIDATION_PENDING in planned.gates
+    assert planned.ready_to_execute is False
+    payload = decision.plan.to_dict()
+    payload["steps"][0]["gates"] = [
+        gate for gate in payload["steps"][0]["gates"] if gate != MasterRouteGate.REGION_VALIDATION_PENDING.value
+    ]
+    payload["steps"][0]["ready_to_execute"] = True
+    with pytest.raises(ContractValidationError, match="region_validation_pending_required"):
+        type(decision.plan).from_dict(payload)
+    assert decision.execution_authority is MasterRouteExecutionAuthority.DENIED
