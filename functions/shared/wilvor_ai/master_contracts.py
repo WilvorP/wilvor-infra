@@ -29,6 +29,7 @@ from wilvor_ai.contracts import (
 from wilvor_ai.decision_specialist_runtime_contracts import (
     DecisionSpecialistRunResult,
     DecisionSpecialistRunStatus,
+    DecisionTargetMode,
 )
 from wilvor_ai.live_ops_public_contracts import (
     LIVE_OPS_COMPLETENESS_NOTICE,
@@ -132,6 +133,7 @@ class MasterBindingKind(str, Enum):
 
 class MasterBindingDefect(str, Enum):
     CORRELATION_MISMATCH = "CORRELATION_MISMATCH"
+    REQUEST_ID_MISMATCH = "REQUEST_ID_MISMATCH"
     TIME_MISMATCH = "TIME_MISMATCH"
     TARGET_MISMATCH = "TARGET_MISMATCH"
 
@@ -284,6 +286,7 @@ class MasterInvocationRecord:
     """
 
     invocation_id: str
+    master_request_id: str
     specialist: MasterSpecialist
     purpose: MasterPurpose
     requirement: MasterRequirement
@@ -313,6 +316,7 @@ class MasterInvocationRecord:
             raise ContractValidationError("invalid_schema_version")
         _deny_production(self.production_authority)
         _token(self.invocation_id, "invocation_id")
+        _token(self.master_request_id, "master_request_id")
         _token(self.specialist_request_id, "specialist_request_id", optional=True)
         _token(self.correlation_id, "correlation_id", optional=True)
         _token(self.artifact_correlation_id, "artifact_correlation_id", optional=True)
@@ -367,6 +371,7 @@ class MasterInvocationRecord:
         return {
             "schema_version": self.schema_version,
             "invocation_id": self.invocation_id,
+            "master_request_id": self.master_request_id,
             "specialist": self.specialist.value,
             "purpose": self.purpose.value,
             "requirement": self.requirement.value,
@@ -398,6 +403,7 @@ class MasterInvocationRecord:
         unexpected = set(data) - {
             "schema_version",
             "invocation_id",
+            "master_request_id",
             "specialist",
             "purpose",
             "requirement",
@@ -442,6 +448,7 @@ class MasterInvocationRecord:
         limitations = tuple(_sequence(_required(data, "limitation_codes"), "limitation_codes"))
         return cls(
             invocation_id=_required(data, "invocation_id"),
+            master_request_id=_required(data, "master_request_id"),
             specialist=_parse_enum(MasterSpecialist, _required(data, "specialist"), "specialist"),
             purpose=_parse_enum(MasterPurpose, _required(data, "purpose"), "purpose"),
             requirement=_parse_enum(
@@ -618,6 +625,35 @@ def project_public(record: MasterInvocationRecord) -> MasterPublicSection:
     return section
 
 
+def validate_public_section(
+    record: MasterInvocationRecord,
+    section: MasterPublicSection,
+) -> None:
+    """Reject a public section that differs from the canonical projection."""
+
+    if not isinstance(record, MasterInvocationRecord):
+        raise TypeError("public validation requires a MasterInvocationRecord")
+    if not isinstance(section, MasterPublicSection):
+        raise TypeError("public validation requires a MasterPublicSection")
+    canonical = project_public(record)
+    errors: list[str] = []
+    compared = (
+        ("limitation_codes", "limitation_codes_mismatch"),
+        ("completeness_notice", "completeness_notice_mismatch"),
+        ("answer", "answer_mismatch"),
+        ("temporal_scopes", "temporal_scopes_mismatch"),
+        ("verification", "verification_mismatch"),
+        ("condition_flags", "condition_flags_mismatch"),
+    )
+    for field_name, code in compared:
+        if getattr(section, field_name) != getattr(canonical, field_name):
+            errors.append(code)
+    if section != canonical and not errors:
+        errors.append("public_section_mismatch")
+    if errors:
+        raise ContractValidationError(errors)
+
+
 @dataclass(frozen=True)
 class MasterInvocationCollection:
     records: tuple[MasterInvocationRecord, ...] = ()
@@ -626,18 +662,24 @@ class MasterInvocationCollection:
         if not isinstance(self.records, tuple):
             raise ContractValidationError("invalid_records")
         seen: set[str] = set()
+        request_ids: set[str] = set()
         for item in self.records:
             if not isinstance(item, MasterInvocationRecord):
                 raise ContractValidationError("invalid_record")
             if item.invocation_id in seen:
                 raise ContractValidationError("duplicate_invocation_id")
             seen.add(item.invocation_id)
+            request_ids.add(item.master_request_id)
+        if len(request_ids) > 1:
+            raise ContractValidationError("master_request_mismatch")
 
     def add(self, record: MasterInvocationRecord) -> "MasterInvocationCollection":
         if not isinstance(record, MasterInvocationRecord):
             raise ContractValidationError("invalid_record")
         if any(item.invocation_id == record.invocation_id for item in self.records):
             raise ContractValidationError("duplicate_invocation_id")
+        if self.records and record.master_request_id != self.records[0].master_request_id:
+            raise ContractValidationError("master_request_mismatch")
         return MasterInvocationCollection(self.records + (record,))
 
 
@@ -783,6 +825,7 @@ def _record_from(
 ) -> MasterClassification:
     record = MasterInvocationRecord(
         invocation_id=authorization.invocation_id,
+        master_request_id=authorization.master_request_id,
         specialist=authorization.specialist,
         purpose=authorization.purpose,
         requirement=authorization.requirement,
@@ -980,15 +1023,21 @@ def _target_defects(
     authorization: MasterInvocationAuthorization,
     result: DecisionSpecialistRunResult,
 ) -> tuple[MasterBindingDefect, ...]:
-    if (
-        authorization.expected_aircraft_id is not None
-        and authorization.expected_aircraft_id != result.aircraft_id
-    ):
+    """Compare one expected target with the Decision mode. This does not mint a target."""
+
+    aircraft = authorization.expected_aircraft_id
+    recommendation = authorization.expected_recommendation_id
+    if result.mode is DecisionTargetMode.AIRCRAFT:
+        expected = aircraft
+        actual = result.aircraft_id
+        other = recommendation
+    elif result.mode is DecisionTargetMode.DIRECT_PERSISTED:
+        expected = recommendation
+        actual = result.recommendation_id
+        other = aircraft
+    else:
         return (MasterBindingDefect.TARGET_MISMATCH,)
-    if (
-        authorization.expected_recommendation_id is not None
-        and authorization.expected_recommendation_id != result.recommendation_id
-    ):
+    if expected is None or other is not None or expected != actual:
         return (MasterBindingDefect.TARGET_MISMATCH,)
     return ()
 
@@ -1020,6 +1069,34 @@ _LIVE_OPS_DISPOSITION = {
 }
 
 
+def _live_ops_binding_defects(
+    authorization: MasterInvocationAuthorization,
+    request: LiveOpsRunRequest,
+    context: LiveOpsTrustedContext,
+    result: LiveOpsRunResult,
+) -> tuple[MasterBindingDefect, ...]:
+    """Master-managed identity rules. Public Live Ops fields stay optional."""
+
+    defects: list[MasterBindingDefect] = []
+    request_id = authorization.specialist_request_id
+    if (
+        request_id is None
+        or request.request_id is None
+        or result.request_id is None
+        or request.request_id != request_id
+        or result.request_id != request_id
+    ):
+        defects.append(MasterBindingDefect.REQUEST_ID_MISMATCH)
+    correlation_id = authorization.correlation_id
+    if (
+        correlation_id is None
+        or result.correlation_id != correlation_id
+        or context.correlation_id != result.correlation_id
+    ):
+        defects.append(MasterBindingDefect.CORRELATION_MISMATCH)
+    return tuple(defects)
+
+
 def classify_live_ops_result(
     authorization: MasterInvocationAuthorization,
     request: LiveOpsRunRequest,
@@ -1040,9 +1117,7 @@ def classify_live_ops_result(
     validate_live_ops_presentation(result, section)
     if section.factual_text != result.answer or section.mandatory_limitations != result.mandatory_limitations:
         raise ContractValidationError("presentation_rewrite")
-    defects = list(_correlation_defect(authorization, result.correlation_id))
-    if context.correlation_id != result.correlation_id:
-        defects.append(MasterBindingDefect.CORRELATION_MISMATCH)
+    defects = _live_ops_binding_defects(authorization, request, context, result)
     flags = [
         MasterCondition.FRESHNESS_UNKNOWN,
         MasterCondition.SOURCE_COMPLETENESS_NOT_ESTABLISHED,

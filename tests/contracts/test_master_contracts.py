@@ -6,6 +6,8 @@ remain production-ineligible.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from wilvor_ai.contracts import ContractValidationError, TemporalScope, ToolResult, ToolResultStatus
@@ -41,7 +43,6 @@ from wilvor_ai.master_contracts import (
     MasterInvocationCollection,
     MasterInvocationRecord,
     MasterProductionAuthority,
-    MasterPublicSection,
     MasterPurpose,
     MasterReportedShape,
     MasterRequirement,
@@ -58,6 +59,7 @@ from wilvor_ai.master_contracts import (
     observe_typed_aircraft_id,
     project_public,
     reserved_production_adapter,
+    validate_public_section,
 )
 from wilvor_ai.model_contracts import ModelDecisionKind
 from wilvor_ai.specialist_contracts import (
@@ -113,6 +115,16 @@ def _authorization(**overrides: object) -> MasterInvocationAuthorization:
     }
     values.update(overrides)
     return MasterInvocationAuthorization(**values)  # type: ignore[arg-type]
+
+
+def _live_ops_authorization(**overrides: object) -> MasterInvocationAuthorization:
+    values: dict[str, object] = {
+        "specialist": MasterSpecialist.LIVE_OPS,
+        "correlation_id": SYNTHETIC_CORRELATION_ID,
+        "specialist_request_id": SYNTHETIC_REQUEST_ID,
+    }
+    values.update(overrides)
+    return _authorization(**values)
 
 
 def _historical_result(**overrides: object) -> SpecialistResult:
@@ -219,6 +231,7 @@ def test_valid_invocation_record_round_trip_keeps_authority_denied():
     record = classify_historical_result(_authorization(), _historical_result()).record
     restored = MasterInvocationRecord.from_dict(record.to_dict())
     assert restored.invocation_id == "inv-1"
+    assert restored.master_request_id == "master-req-1"
     assert restored.production_authority is MasterProductionAuthority.DENIED
     assert restored.reported_shape is MasterReportedShape.QUALIFIES
     assert classify_deserialized(restored).binding.binding_kind is MasterBindingKind.DESERIALIZED
@@ -244,6 +257,44 @@ def test_duplicate_invocation_ids_are_rejected():
     collection = MasterInvocationCollection().add(record)
     with pytest.raises(ContractValidationError, match="duplicate_invocation_id"):
         collection.add(record)
+
+
+def test_master_request_id_is_bound_and_cannot_restore_authority():
+    first = classify_historical_result(_authorization(), _historical_result()).record
+    other = classify_historical_result(
+        _authorization(master_request_id="master-req-2", invocation_id="inv-2"),
+        _historical_result(),
+    ).record
+    assert first.master_request_id == "master-req-1"
+    assert other.master_request_id == "master-req-2"
+    collection = MasterInvocationCollection().add(first)
+    with pytest.raises(ContractValidationError, match="master_request_mismatch"):
+        collection.add(other)
+    with pytest.raises(ContractValidationError, match="master_request_mismatch"):
+        MasterInvocationCollection((first, other))
+    sibling = classify_historical_result(
+        _authorization(invocation_id="inv-3"),
+        _historical_result(),
+    ).record
+    joined = collection.add(sibling)
+    assert tuple(item.master_request_id for item in joined.records) == (
+        "master-req-1",
+        "master-req-1",
+    )
+    payload = first.to_dict()
+    assert payload["master_request_id"] == "master-req-1"
+    payload["production_authority"] = "PRODUCTION"
+    payload["eligibility"] = "ELIGIBLE"
+    payload["master_request_id"] = "master-req-9"
+    restored = MasterInvocationRecord.from_dict(payload)
+    assert restored.master_request_id == "master-req-9"
+    assert restored.production_authority is MasterProductionAuthority.DENIED
+    deserialized = classify_deserialized(restored)
+    assert deserialized.binding.binding_kind is MasterBindingKind.DESERIALIZED
+    assert deserialized.binding.production_authority is MasterProductionAuthority.DENIED
+    del payload["master_request_id"]
+    with pytest.raises(ContractValidationError, match="missing_master_request_id"):
+        MasterInvocationRecord.from_dict(payload)
 
 
 def test_historical_run_is_unfinalized_and_result_can_qualify_without_authority():
@@ -381,15 +432,76 @@ def test_decision_target_mismatch_is_unresolved_and_not_a_minted_target():
     assert not hasattr(record, "trusted_target")
 
 
+def test_decision_shape_requires_one_matching_expected_target():
+    result = _factual_result()
+    matched = classify_decision_result(
+        _authorization(
+            specialist=MasterSpecialist.DECISION,
+            expected_aircraft_id="ac-1",
+            requested_evaluation_time_utc=None,
+        ),
+        result,
+    ).record
+    assert matched.binding_defects == ()
+    assert matched.reported_shape is MasterReportedShape.QUALIFIES
+    assert matched.production_authority is MasterProductionAuthority.DENIED
+    assert not hasattr(matched, "trusted_target")
+    negatives = (
+        {},
+        {"expected_aircraft_id": "ac-1", "expected_recommendation_id": "rec-1"},
+        {"expected_recommendation_id": "rec-1"},
+        {"expected_aircraft_id": "ac-other"},
+    )
+    for overrides in negatives:
+        record = classify_decision_result(
+            _authorization(
+                specialist=MasterSpecialist.DECISION,
+                requested_evaluation_time_utc=None,
+                **overrides,
+            ),
+            result,
+        ).record
+        assert MasterBindingDefect.TARGET_MISMATCH in record.binding_defects
+        assert record.disposition is MasterDisposition.TARGET_UNRESOLVED
+        assert record.reported_shape is MasterReportedShape.DOES_NOT_QUALIFY
+        assert record.production_authority is MasterProductionAuthority.DENIED
+    persisted = _result(
+        mode=DecisionTargetMode.DIRECT_PERSISTED,
+        aircraft_id=None,
+        recommendation_id="rec-1",
+    )
+    persisted_match = classify_decision_result(
+        _authorization(
+            specialist=MasterSpecialist.DECISION,
+            expected_recommendation_id="rec-1",
+            requested_evaluation_time_utc=None,
+        ),
+        persisted,
+    ).record
+    assert MasterBindingDefect.TARGET_MISMATCH not in persisted_match.binding_defects
+    assert persisted_match.reported_shape is MasterReportedShape.DOES_NOT_QUALIFY
+    for overrides in (
+        {},
+        {"expected_aircraft_id": "ac-1"},
+        {"expected_aircraft_id": "ac-1", "expected_recommendation_id": "rec-1"},
+        {"expected_recommendation_id": "rec-9"},
+    ):
+        record = classify_decision_result(
+            _authorization(
+                specialist=MasterSpecialist.DECISION,
+                requested_evaluation_time_utc=None,
+                **overrides,
+            ),
+            persisted,
+        ).record
+        assert MasterBindingDefect.TARGET_MISMATCH in record.binding_defects
+        assert record.reported_shape is MasterReportedShape.DOES_NOT_QUALIFY
+
+
 def test_live_ops_all_verified_is_not_fresh_or_complete_or_authorized():
     result = completed_all_verified()
     record = classify_live_ops_result(
-        _authorization(
-            specialist=MasterSpecialist.LIVE_OPS,
-            purpose=MasterPurpose.DISCOVERY,
-            correlation_id=SYNTHETIC_CORRELATION_ID,
-            specialist_request_id=SYNTHETIC_REQUEST_ID,
-        ),
+        _live_ops_authorization(purpose=MasterPurpose.DISCOVERY),
         sample_request(),
         trusted_context(),
         result,
@@ -407,10 +519,7 @@ def test_live_ops_all_verified_is_not_fresh_or_complete_or_authorized():
 def test_live_ops_partially_verified_is_incomplete():
     result = partially_verified()
     record = classify_live_ops_result(
-        _authorization(
-            specialist=MasterSpecialist.LIVE_OPS,
-            correlation_id=SYNTHETIC_CORRELATION_ID,
-        ),
+        _live_ops_authorization(),
         sample_request(),
         trusted_context(),
         result,
@@ -423,10 +532,7 @@ def test_live_ops_partially_verified_is_incomplete():
 def test_live_ops_none_verified_is_not_a_verified_zero():
     result = none_verified()
     record = classify_live_ops_result(
-        _authorization(
-            specialist=MasterSpecialist.LIVE_OPS,
-            correlation_id=SYNTHETIC_CORRELATION_ID,
-        ),
+        _live_ops_authorization(),
         sample_request(),
         trusted_context(),
         result,
@@ -440,10 +546,7 @@ def test_live_ops_none_verified_is_not_a_verified_zero():
 def test_live_ops_not_authorized_stays_denied():
     result = tool_failed_not_authorized()
     record = classify_live_ops_result(
-        _authorization(
-            specialist=MasterSpecialist.LIVE_OPS,
-            correlation_id=SYNTHETIC_CORRELATION_ID,
-        ),
+        _live_ops_authorization(),
         sample_request(),
         trusted_context(),
         result,
@@ -466,6 +569,7 @@ def test_synthetic_and_deserialized_results_cannot_restore_production_authority(
     with pytest.raises(ContractValidationError, match="production_authority_not_issued"):
         MasterInvocationRecord(
             invocation_id="inv-9",
+            master_request_id="master-req-1",
             specialist=MasterSpecialist.HISTORICAL_ANALYTICS,
             purpose=MasterPurpose.ANSWER,
             requirement=MasterRequirement.REQUIRED,
@@ -499,10 +603,7 @@ def test_fake_specialist_cannot_mint_production_authority():
 def test_incomplete_and_unknown_freshness_coexist():
     result = partially_verified()
     record = classify_live_ops_result(
-        _authorization(
-            specialist=MasterSpecialist.LIVE_OPS,
-            correlation_id=SYNTHETIC_CORRELATION_ID,
-        ),
+        _live_ops_authorization(),
         sample_request(),
         trusted_context(),
         result,
@@ -645,44 +746,48 @@ def test_absent_decision_verification_does_not_invent_limitations():
     assert record.production_authority is MasterProductionAuthority.DENIED
 
 
-def test_rewritten_decision_limitation_projection_is_not_the_public_section():
-    result = _mixed_scope_decision_result()
-    record = classify_decision_result(
+def test_altered_public_sections_are_rejected():
+    decision_result = _mixed_scope_decision_result()
+    decision = classify_decision_result(
         _authorization(
             specialist=MasterSpecialist.DECISION,
             expected_aircraft_id="ac-1",
-            requested_evaluation_time_utc=result.verification.current_as_of_utc,
+            requested_evaluation_time_utc=decision_result.verification.current_as_of_utc,
         ),
-        result,
+        decision_result,
     ).record
-    public = project_public(record)
-    canonical = public.to_dict()
-    dropped = dict(canonical)
-    dropped["limitation_codes"] = list(canonical["limitation_codes"][:-1])
-    rewritten = dict(canonical)
-    rewritten["limitation_codes"] = ["NOT_CURRENT"]
-    assert dropped != canonical
-    assert rewritten != canonical
-    assert public.limitation_codes == result.verification.mandatory_limitations
-    altered = MasterPublicSection(
-        invocation_id=public.invocation_id,
-        specialist=public.specialist,
-        disposition=public.disposition,
-        verification=public.verification,
-        condition_flags=public.condition_flags,
-        reported_shape=public.reported_shape,
-        temporal_scopes=public.temporal_scopes,
-        answer=public.answer,
-        limitation_codes=public.limitation_codes[:-1],
-        completeness_notice=public.completeness_notice,
-        binding_defects=public.binding_defects,
-        evidence_evaluation_time_utc=public.evidence_evaluation_time_utc,
-        specialist_reference_time_utc=public.specialist_reference_time_utc,
-        source_observation_time_utc=public.source_observation_time_utc,
-        failure_code=public.failure_code,
+    live = classify_live_ops_result(
+        _live_ops_authorization(),
+        sample_request(),
+        trusted_context(),
+        completed_all_verified(),
+    ).record
+    canonical = project_public(decision)
+    validate_public_section(decision, canonical)
+    assert project_public(decision) == canonical
+    assert canonical.limitation_codes == decision_result.verification.mandatory_limitations
+    assert canonical.temporal_scopes == (TemporalScope.CURRENT, TemporalScope.PERSISTED)
+    assert canonical.answer == decision_result.render.answer
+    rejections = (
+        (replace(canonical, limitation_codes=canonical.limitation_codes[:-1]), "limitation_codes_mismatch"),
+        (replace(canonical, limitation_codes=("NOT_CURRENT",)), "limitation_codes_mismatch"),
+        (replace(canonical, answer="Rewritten answer."), "answer_mismatch"),
+        (replace(canonical, temporal_scopes=(TemporalScope.CURRENT,)), "temporal_scopes_mismatch"),
+        (replace(canonical, verification=MasterVerification.FAILED), "verification_mismatch"),
+        (replace(canonical, condition_flags=()), "condition_flags_mismatch"),
     )
-    assert altered != public
-    assert altered.limitation_codes != result.verification.mandatory_limitations
+    for section, code in rejections:
+        with pytest.raises(ContractValidationError, match=code):
+            validate_public_section(decision, section)
+    live_section = project_public(live)
+    validate_public_section(live, live_section)
+    assert live_section.completeness_notice == LIVE_OPS_COMPLETENESS_NOTICE
+    assert "tool_results" not in live_section.to_dict()
+    with pytest.raises(ContractValidationError, match="completeness_notice_mismatch"):
+        validate_public_section(
+            live,
+            replace(live_section, completeness_notice="Rewritten notice."),
+        )
 
 
 def test_timestamps_stay_independent_and_reference_time_is_not_observation_time():
@@ -696,10 +801,7 @@ def test_timestamps_stay_independent_and_reference_time_is_not_observation_time(
     assert historical.application_request_time_utc == "2026-01-15T00:00:01Z"
     assert historical.source_observation_time_utc is None
     live = classify_live_ops_result(
-        _authorization(
-            specialist=MasterSpecialist.LIVE_OPS,
-            correlation_id=SYNTHETIC_CORRELATION_ID,
-        ),
+        _live_ops_authorization(),
         sample_request(),
         trusted_context(),
         completed_all_verified(),
@@ -715,10 +817,7 @@ def test_correlation_mismatch_is_recorded_without_inventing_historical_correlati
     assert historical.artifact_correlation_id is None
     assert MasterBindingDefect.CORRELATION_MISMATCH not in historical.binding_defects
     mismatched = classify_live_ops_result(
-        _authorization(
-            specialist=MasterSpecialist.LIVE_OPS,
-            correlation_id="corr-other",
-        ),
+        _live_ops_authorization(correlation_id="corr-other"),
         sample_request(),
         trusted_context(),
         completed_all_verified(),
@@ -728,13 +827,76 @@ def test_correlation_mismatch_is_recorded_without_inventing_historical_correlati
     assert mismatched.reported_shape is MasterReportedShape.DOES_NOT_QUALIFY
 
 
+def test_live_ops_request_identity_must_match_for_qualification():
+    result = completed_all_verified()
+    matched = classify_live_ops_result(
+        _live_ops_authorization(),
+        sample_request(),
+        trusted_context(),
+        result,
+    ).record
+    assert matched.specialist_request_id == result.request_id == SYNTHETIC_REQUEST_ID
+    assert matched.correlation_id == matched.artifact_correlation_id == SYNTHETIC_CORRELATION_ID
+    assert matched.binding_defects == ()
+    assert matched.reported_shape is MasterReportedShape.QUALIFIES
+    assert matched.production_authority is MasterProductionAuthority.DENIED
+    assert matched.completeness_notice == LIVE_OPS_COMPLETENESS_NOTICE
+    mismatched_ids = (
+        (replace(sample_request(), request_id="req-other"), completed_all_verified()),
+        (sample_request(), completed_all_verified(request_id="req-other")),
+    )
+    for request, candidate in mismatched_ids:
+        record = classify_live_ops_result(
+            _live_ops_authorization(),
+            request,
+            trusted_context(),
+            candidate,
+        ).record
+        assert MasterBindingDefect.REQUEST_ID_MISMATCH in record.binding_defects
+        assert record.reported_shape is MasterReportedShape.DOES_NOT_QUALIFY
+        assert record.production_authority is MasterProductionAuthority.DENIED
+    missing_ids = (
+        (
+            _live_ops_authorization(specialist_request_id=None),
+            sample_request(),
+            completed_all_verified(),
+        ),
+        (
+            _live_ops_authorization(),
+            replace(sample_request(), request_id=None),
+            completed_all_verified(),
+        ),
+        (
+            _live_ops_authorization(),
+            sample_request(),
+            completed_all_verified(request_id=None),
+        ),
+    )
+    for authorization, request, candidate in missing_ids:
+        record = classify_live_ops_result(
+            authorization,
+            request,
+            trusted_context(),
+            candidate,
+        ).record
+        assert MasterBindingDefect.REQUEST_ID_MISMATCH in record.binding_defects
+        assert record.reported_shape is MasterReportedShape.DOES_NOT_QUALIFY
+    missing_correlation = classify_live_ops_result(
+        _live_ops_authorization(correlation_id=None),
+        sample_request(),
+        trusted_context(),
+        completed_all_verified(),
+    ).record
+    assert MasterBindingDefect.CORRELATION_MISMATCH in missing_correlation.binding_defects
+    assert MasterBindingDefect.REQUEST_ID_MISMATCH not in missing_correlation.binding_defects
+    assert missing_correlation.reported_shape is MasterReportedShape.DOES_NOT_QUALIFY
+    assert missing_correlation.production_authority is MasterProductionAuthority.DENIED
+
+
 def test_required_limitations_and_notice_are_copied_exactly():
     result = completed_all_verified()
     record = classify_live_ops_result(
-        _authorization(
-            specialist=MasterSpecialist.LIVE_OPS,
-            correlation_id=SYNTHETIC_CORRELATION_ID,
-        ),
+        _live_ops_authorization(),
         sample_request(),
         trusted_context(),
         result,
