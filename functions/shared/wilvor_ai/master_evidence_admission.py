@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from wilvor_ai.contracts import ContractValidationError, TemporalScope
+from wilvor_ai.contracts import PROVENANCE_TOKEN_MAX_LENGTH, ContractValidationError, TemporalScope, _validate_bounded_text
 from wilvor_ai.decision_specialist_runtime_contracts import (
     DecisionSpecialistRunResult,
     DecisionTargetMode,
@@ -117,6 +117,9 @@ class MasterAdmissionReason(str, Enum):
     HISTORICAL_RUN_CANNOT_REPRODUCE_VERIFICATION = "HISTORICAL_RUN_CANNOT_REPRODUCE_VERIFICATION"
     DECISION_TEMPORAL_SCOPE_NOT_CARRIED = "DECISION_TEMPORAL_SCOPE_NOT_CARRIED"
     LIVE_OPS_EVIDENCE_REFS_ARE_NOT_TOOL_RESULTS = "LIVE_OPS_EVIDENCE_REFS_ARE_NOT_TOOL_RESULTS"
+    LIVE_OPS_CONVERSATION_MISMATCH = "LIVE_OPS_CONVERSATION_MISMATCH"
+    LIVE_OPS_CONVERSATION_ABSENT = "LIVE_OPS_CONVERSATION_ABSENT"
+    LIVE_OPS_REFERENCE_EPOCH_MISMATCH = "LIVE_OPS_REFERENCE_EPOCH_MISMATCH"
 
 
 class MasterTemporalLimitation(str, Enum):
@@ -196,9 +199,22 @@ class MasterEvidenceAdmission:
             raise ContractValidationError("invalid_admission_status")
         if not isinstance(self.specialist, MasterSpecialist):
             raise ContractValidationError("invalid_specialist")
+        _identity(self.master_request_id, "master_request_id")
+        _identity(self.invocation_id, "invocation_id")
         _enum_tuple(self.reason_codes, MasterAdmissionReason, "reason_codes")
         _enum_tuple(self.binding_defects, MasterBindingDefect, "binding_defects")
         _enum_tuple(self.temporal_limitations, MasterTemporalLimitation, "temporal_limitations")
+        if MasterAdmissionReason.SOURCE_AUTHENTICITY_NOT_ESTABLISHED not in self.reason_codes:
+            raise ContractValidationError("source_authenticity_not_established")
+        if MasterTemporalLimitation.FRESHNESS_UNKNOWN not in self.temporal_limitations:
+            raise ContractValidationError("freshness_unknown_required")
+        if self.binding_defects and self.admission_status is not MasterAdmissionStatus.REJECTED:
+            raise ContractValidationError("binding_defect_requires_rejection")
+        if (
+            self.invocation_id == self.master_request_id
+            and self.admission_status is not MasterAdmissionStatus.REJECTED
+        ):
+            raise ContractValidationError("request_identity_not_distinct")
 
 
 @dataclass(frozen=True)
@@ -227,12 +243,22 @@ class MasterEvidenceAdmissionCollection:
             raise ContractValidationError("request_coverage_not_established")
         if self.end_to_end_fulfilled is not False:
             raise ContractValidationError("end_to_end_fulfillment_not_granted")
+        _identity(self.master_request_id, "master_request_id")
         if not isinstance(self.admissions, tuple) or any(
             not isinstance(item, MasterEvidenceAdmission) for item in self.admissions
         ):
             raise ContractValidationError("invalid_admissions")
+        if not self.admissions:
+            raise ContractValidationError("empty_admission")
+        if len(self.admissions) > MAX_ROUTE_STEPS:
+            raise ContractValidationError("excessive_plan_size")
+        if sum(item.specialist is MasterSpecialist.DECISION for item in self.admissions) > MAX_DECISION_STEPS:
+            raise ContractValidationError("decision_fanout_not_permitted")
         if any(item.master_request_id != self.master_request_id for item in self.admissions):
             raise ContractValidationError("master_request_mismatch")
+        invocation_ids = [item.invocation_id for item in self.admissions]
+        if len(invocation_ids) != len(set(invocation_ids)):
+            raise ContractValidationError("duplicate_invocation_id")
 
 
 def admit_master_evidence(
@@ -437,6 +463,8 @@ def _live_ops(
     result = artifact.result
     reasons.add(MasterAdmissionReason.LIVE_OPS_EVIDENCE_REFS_ARE_NOT_TOOL_RESULTS)
     temporal.add(MasterTemporalLimitation.LIVE_OPS_REFERENCE_TIME_NOT_FRESHNESS)
+    rejected, unresolved = _live_ops_conversation(artifact.request, result, reasons, rejected, unresolved)
+    rejected, unresolved = _live_ops_clocks(authorization, artifact.context, result, reasons, temporal, rejected, unresolved)
     if result.discoveries:
         reasons.add(MasterAdmissionReason.CALLSIGN_DISCOVERY_NOT_TARGET)
     outcome = result.verification_outcome
@@ -471,6 +499,56 @@ def _live_ops(
     except ContractValidationError:
         rejected = True
         reasons.add(MasterAdmissionReason.PRESENTATION_INVALID)
+    return rejected, unresolved
+
+
+def _live_ops_conversation(
+    request: LiveOpsRunRequest,
+    result: LiveOpsRunResult,
+    reasons: set[MasterAdmissionReason],
+    rejected: bool,
+    unresolved: bool,
+) -> tuple[bool, bool]:
+    """Compare the two optional public conversation IDs. Authorization has none."""
+
+    request_conversation = request.conversation_id
+    result_conversation = result.conversation_id
+    if request_conversation is not None and result_conversation is not None:
+        if request_conversation != result_conversation:
+            rejected = True
+            reasons.add(MasterAdmissionReason.LIVE_OPS_CONVERSATION_MISMATCH)
+        return rejected, unresolved
+    if request_conversation is not None or result_conversation is not None:
+        unresolved = True
+        reasons.add(MasterAdmissionReason.LIVE_OPS_CONVERSATION_ABSENT)
+    return rejected, unresolved
+
+
+def _live_ops_clocks(
+    authorization: MasterInvocationAuthorization,
+    context: LiveOpsTrustedContext,
+    result: LiveOpsRunResult,
+    reasons: set[MasterAdmissionReason],
+    temporal: set[MasterTemporalLimitation],
+    rejected: bool,
+    unresolved: bool,
+) -> tuple[bool, bool]:
+    """Bind the Live Ops batch epoch. Do not treat it as evaluation time or freshness.
+
+    ``context.now_epoch`` and ``result.reference_epoch`` are the same batch
+    clock. ``rejected_payload`` copies one into the other, and evidence,
+    discoveries, and entity refs must already share ``result.reference_epoch``.
+    ``context.clock`` is not polled. ``requested_evaluation_time_utc`` is a
+    different clock and is not compared with ``reference_utc``.
+    """
+
+    if context.now_epoch != result.reference_epoch:
+        rejected = True
+        reasons.add(MasterAdmissionReason.LIVE_OPS_REFERENCE_EPOCH_MISMATCH)
+    if authorization.requested_evaluation_time_utc is not None:
+        unresolved = True
+        reasons.add(MasterAdmissionReason.NATIVE_EVALUATION_TIME_ABSENT)
+        temporal.add(MasterTemporalLimitation.EVALUATION_TIME_ABSENT)
     return rejected, unresolved
 
 
@@ -537,6 +615,14 @@ def _result(
         binding_defects=tuple(sorted(defects, key=lambda item: item.value)),
         temporal_limitations=tuple(sorted(temporal, key=lambda item: item.value)),
     )
+
+
+def _identity(value: object, field_name: str) -> None:
+    errors = _validate_bounded_text(value, field_name, max_length=PROVENANCE_TOKEN_MAX_LENGTH)
+    if errors:
+        raise ContractValidationError(errors)
+    if not isinstance(value, str) or value != value.strip():
+        raise ContractValidationError(f"invalid_{field_name}")
 
 
 def _enum_tuple(value: tuple[Any, ...], enum_type: type[Enum], field_name: str) -> None:

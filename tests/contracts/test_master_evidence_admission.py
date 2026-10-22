@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from tests.fixtures.live_ops_public_examples import (
+    SYNTHETIC_CONVERSATION_ID,
     SYNTHETIC_CORRELATION_ID,
+    SYNTHETIC_EPOCH,
     SYNTHETIC_REQUEST_ID,
+    SYNTHETIC_UTC,
     completed_all_verified,
     none_verified,
     partially_verified,
@@ -16,6 +21,7 @@ from tests.fixtures.live_ops_public_examples import (
 )
 from tests.contracts.test_master_contracts import _mixed_scope_decision_result
 from wilvor_ai.contracts import ContractValidationError, TemporalScope
+from wilvor_ai.live_ops_public_contracts import live_ops_reference_utc
 from wilvor_ai.decision_model_contracts import DecisionUnsupportedReason
 from wilvor_ai.decision_specialist_runtime_contracts import (
     DecisionSpecialistRunResult,
@@ -37,6 +43,7 @@ from wilvor_ai.master_evidence_admission import (
     MasterAdmissionReason,
     MasterAdmissionStatus,
     MasterEvidenceAdmission,
+    MasterEvidenceAdmissionCollection,
     MasterEvidenceAdmissionInput,
     MasterSourceAuthenticity,
     MasterTemporalLimitation,
@@ -601,3 +608,168 @@ def test_all_verified_live_ops_is_not_master_source_authentication():
     assert admission.admission_status is MasterAdmissionStatus.CONTRACT_ONLY
     assert MasterAdmissionReason.LIVE_OPS_ALL_VERIFIED_NOT_SOURCE_AUTHENTICATION in admission.reason_codes
     _untrusted(admission)
+
+
+def _live_authorization(**overrides: object) -> MasterInvocationAuthorization:
+    values: dict[str, object] = {
+        "invocation_id": "inv-live-1",
+        "specialist": MasterSpecialist.LIVE_OPS,
+        "specialist_request_id": SYNTHETIC_REQUEST_ID,
+        "correlation_id": SYNTHETIC_CORRELATION_ID,
+        "requested_evaluation_time_utc": None,
+    }
+    values.update(overrides)
+    return _authorization(**values)
+
+
+def test_matching_live_ops_conversation_ids_are_admitted():
+    request = sample_request()
+    result = none_verified()
+    assert request.conversation_id == result.conversation_id == SYNTHETIC_CONVERSATION_ID
+    admission = _one(_live_authorization(), _live_sources(result, request))
+    assert admission.admission_status is MasterAdmissionStatus.CONTRACT_ONLY
+    assert MasterAdmissionReason.LIVE_OPS_CONVERSATION_MISMATCH not in admission.reason_codes
+    assert MasterAdmissionReason.LIVE_OPS_CONVERSATION_ABSENT not in admission.reason_codes
+    _untrusted(admission)
+
+
+def test_mismatched_live_ops_conversation_ids_are_rejected():
+    request = replace(sample_request(), conversation_id="conv-other")
+    admission = _one(_live_authorization(), _live_sources(none_verified(), request))
+    assert admission.admission_status is MasterAdmissionStatus.REJECTED
+    assert MasterAdmissionReason.LIVE_OPS_CONVERSATION_MISMATCH in admission.reason_codes
+    _untrusted(admission)
+
+
+def test_one_sided_live_ops_conversation_id_stays_unresolved():
+    missing_on_result = _one(
+        _live_authorization(),
+        _live_sources(replace(none_verified(), conversation_id=None), sample_request()),
+    )
+    missing_on_request = _one(
+        _live_authorization(),
+        _live_sources(none_verified(), replace(sample_request(), conversation_id=None)),
+    )
+    both_absent = _one(
+        _live_authorization(),
+        _live_sources(
+            replace(none_verified(), conversation_id=None),
+            replace(sample_request(), conversation_id=None),
+        ),
+    )
+    for admission in (missing_on_result, missing_on_request):
+        assert admission.admission_status is MasterAdmissionStatus.BINDING_UNRESOLVED
+        assert MasterAdmissionReason.LIVE_OPS_CONVERSATION_ABSENT in admission.reason_codes
+        assert MasterAdmissionReason.LIVE_OPS_CONVERSATION_MISMATCH not in admission.reason_codes
+        _untrusted(admission)
+    assert both_absent.admission_status is MasterAdmissionStatus.CONTRACT_ONLY
+    assert MasterAdmissionReason.LIVE_OPS_CONVERSATION_ABSENT not in both_absent.reason_codes
+    assert "conversation_id" not in MasterEvidenceAdmission.__dataclass_fields__
+
+
+def test_matching_live_ops_batch_clock_is_not_freshness():
+    context = trusted_context(clock=lambda: SYNTHETIC_EPOCH + 999)
+    result = none_verified()
+    assert context.now_epoch == result.reference_epoch
+    admission = _one(_live_authorization(), _live_sources(result, context=context))
+    assert admission.admission_status is MasterAdmissionStatus.CONTRACT_ONLY
+    assert MasterAdmissionReason.LIVE_OPS_REFERENCE_EPOCH_MISMATCH not in admission.reason_codes
+    assert MasterBindingDefect.TIME_MISMATCH not in admission.binding_defects
+    assert MasterTemporalLimitation.FRESHNESS_UNKNOWN in admission.temporal_limitations
+    assert MasterTemporalLimitation.LIVE_OPS_REFERENCE_TIME_NOT_FRESHNESS in admission.temporal_limitations
+    assert not any(item.value == "FRESH" for item in admission.temporal_limitations)
+    _untrusted(admission)
+
+
+def test_contradictory_live_ops_reference_epoch_is_rejected():
+    shifted = SYNTHETIC_EPOCH + 60
+    result = replace(
+        none_verified(),
+        reference_epoch=shifted,
+        reference_utc=live_ops_reference_utc(shifted),
+    )
+    assert trusted_context().now_epoch != result.reference_epoch
+    admission = _one(_live_authorization(), _live_sources(result))
+    assert admission.admission_status is MasterAdmissionStatus.REJECTED
+    assert MasterAdmissionReason.LIVE_OPS_REFERENCE_EPOCH_MISMATCH in admission.reason_codes
+    assert MasterBindingDefect.TIME_MISMATCH not in admission.binding_defects
+    assert MasterTemporalLimitation.FRESHNESS_UNKNOWN in admission.temporal_limitations
+    _untrusted(admission)
+
+
+def test_requested_evaluation_time_is_not_a_live_ops_reference_clock():
+    authorization = _live_authorization(requested_evaluation_time_utc=SYNTHETIC_UTC)
+    result = none_verified()
+    assert result.reference_utc == SYNTHETIC_UTC
+    admission = _one(authorization, _live_sources(result))
+    assert admission.admission_status is MasterAdmissionStatus.BINDING_UNRESOLVED
+    assert MasterAdmissionReason.NATIVE_EVALUATION_TIME_ABSENT in admission.reason_codes
+    assert MasterTemporalLimitation.EVALUATION_TIME_ABSENT in admission.temporal_limitations
+    assert MasterBindingDefect.TIME_MISMATCH not in admission.binding_defects
+    assert MasterTemporalLimitation.FRESHNESS_UNKNOWN in admission.temporal_limitations
+    assert MasterTemporalLimitation.LIVE_OPS_REFERENCE_TIME_NOT_FRESHNESS in admission.temporal_limitations
+    _untrusted(admission)
+
+
+def _direct_admission(**overrides: object) -> MasterEvidenceAdmission:
+    values: dict[str, object] = {
+        "master_request_id": "master-req-1",
+        "invocation_id": "inv-hist-1",
+        "specialist": MasterSpecialist.HISTORICAL_ANALYTICS,
+        "admission_status": MasterAdmissionStatus.CONTRACT_ONLY,
+        "reason_codes": (MasterAdmissionReason.SOURCE_AUTHENTICITY_NOT_ESTABLISHED,),
+        "binding_defects": (),
+        "temporal_limitations": (MasterTemporalLimitation.FRESHNESS_UNKNOWN,),
+    }
+    values.update(overrides)
+    return MasterEvidenceAdmission(**values)  # type: ignore[arg-type]
+
+
+def test_collection_constructor_rejects_invalid_direct_invariants():
+    valid = _direct_admission()
+    with pytest.raises(ContractValidationError, match="invalid_master_request_id"):
+        MasterEvidenceAdmissionCollection(master_request_id=" ", admissions=(valid,))
+    with pytest.raises(ContractValidationError, match="empty_admission"):
+        MasterEvidenceAdmissionCollection(master_request_id="master-req-1", admissions=())
+    with pytest.raises(ContractValidationError, match="duplicate_invocation_id"):
+        MasterEvidenceAdmissionCollection(
+            master_request_id="master-req-1",
+            admissions=(valid, _direct_admission(invocation_id="inv-hist-1")),
+        )
+    with pytest.raises(ContractValidationError, match="master_request_mismatch"):
+        MasterEvidenceAdmissionCollection(
+            master_request_id="master-req-1",
+            admissions=(valid, _direct_admission(master_request_id="master-req-2", invocation_id="inv-hist-2")),
+        )
+    with pytest.raises(ContractValidationError, match="excessive_plan_size"):
+        MasterEvidenceAdmissionCollection(
+            master_request_id="master-req-1",
+            admissions=tuple(_direct_admission(invocation_id=f"inv-{index}") for index in range(5)),
+        )
+    with pytest.raises(ContractValidationError, match="decision_fanout_not_permitted"):
+        MasterEvidenceAdmissionCollection(
+            master_request_id="master-req-1",
+            admissions=(
+                _direct_admission(invocation_id="inv-dec-1", specialist=MasterSpecialist.DECISION),
+                _direct_admission(invocation_id="inv-dec-2", specialist=MasterSpecialist.DECISION),
+            ),
+        )
+
+
+def test_admission_constructor_rejects_defects_without_rejection():
+    with pytest.raises(ContractValidationError, match="binding_defect_requires_rejection"):
+        _direct_admission(binding_defects=(MasterBindingDefect.TIME_MISMATCH,))
+    with pytest.raises(ContractValidationError, match="binding_defect_requires_rejection"):
+        _direct_admission(
+            admission_status=MasterAdmissionStatus.BINDING_UNRESOLVED,
+            binding_defects=(MasterBindingDefect.CORRELATION_MISMATCH,),
+        )
+    with pytest.raises(ContractValidationError, match="request_identity_not_distinct"):
+        _direct_admission(invocation_id="master-req-1")
+    rejected = _direct_admission(
+        admission_status=MasterAdmissionStatus.REJECTED,
+        binding_defects=(MasterBindingDefect.TIME_MISMATCH,),
+    )
+    assert rejected.admission_status is MasterAdmissionStatus.REJECTED
+    assert rejected.evidence_verified is False
+    assert rejected.production_authority is MasterProductionAuthority.DENIED
