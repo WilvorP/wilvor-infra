@@ -11,3 +11,6 @@ shapely>=2.0,<3
 
 # Keep the local SIGMET dependency aligned with the Lambda package.
 -r ../functions/weather/sigmet/processor/requirements.txt
+
+# Test-only synthetic orchestration. Do not add this to Lambda requirement files.
+langgraph==1.2.16
