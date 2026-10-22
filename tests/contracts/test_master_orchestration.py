@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.metadata
+import threading
 
 import pytest
 
@@ -215,6 +216,61 @@ def test_result_order_follows_the_plan_not_completion_order():
         MasterSpecialist.HISTORICAL_ANALYTICS,
         MasterSpecialist.LIVE_OPS,
     ]
+
+
+def test_live_ops_can_finish_before_historical_while_results_stay_in_plan_order():
+    entered = {
+        MasterSpecialist.HISTORICAL_ANALYTICS: threading.Event(),
+        MasterSpecialist.LIVE_OPS: threading.Event(),
+    }
+    live_finished = threading.Event()
+    finish_order: list[MasterSpecialist] = []
+    thread_ids: list[int] = []
+    calls: list[SyntheticAssignment] = []
+    lock = threading.Lock()
+
+    def make(specialist: MasterSpecialist):
+        def worker(assignment: SyntheticAssignment) -> SyntheticWorkerResult:
+            with lock:
+                calls.append(assignment)
+                thread_ids.append(threading.get_ident())
+            entered[specialist].set()
+            for event in entered.values():
+                if not event.wait(5):
+                    raise ContractValidationError("parallel_peer_did_not_enter")
+            if specialist is MasterSpecialist.LIVE_OPS:
+                with lock:
+                    finish_order.append(specialist)
+                live_finished.set()
+            else:
+                if not live_finished.wait(5):
+                    raise ContractValidationError("live_ops_did_not_finish_first")
+                with lock:
+                    finish_order.append(specialist)
+            return _envelope(assignment)
+
+        return worker
+
+    result = run_synthetic_master_workflow(
+        _context(),
+        _proposal((_live(), _history()), _work(LIVE, HISTORY)),
+        {
+            MasterSpecialist.LIVE_OPS: make(MasterSpecialist.LIVE_OPS),
+            MasterSpecialist.HISTORICAL_ANALYTICS: make(MasterSpecialist.HISTORICAL_ANALYTICS),
+        },
+    )
+    assert finish_order == [MasterSpecialist.LIVE_OPS, MasterSpecialist.HISTORICAL_ANALYTICS]
+    assert len(set(thread_ids)) == 2
+    assert [item.specialist for item in result.results] == [
+        MasterSpecialist.HISTORICAL_ANALYTICS,
+        MasterSpecialist.LIVE_OPS,
+    ]
+    assert {item.outcome for item in result.results} == {SyntheticOutcome.SYNTHETIC_COMPLETED}
+    assert len({item.invocation_id for item in result.results}) == 2
+    flat = [item for batch in result.dispatch_batches for item in batch]
+    assert len(flat) == len(set(flat)) == 2
+    assert result.dispatch_count == 2
+    assert {item.step_id for item in calls} == {"live-1", "hist-1"}
 
 
 def test_live_ops_then_historical_waits_for_the_parent():
@@ -581,6 +637,42 @@ def test_parallel_cancellation_records_the_sibling_that_already_ran():
     assert child_result.terminal_status is SyntheticTerminalStatus.CANCELLED
 
 
+def test_cancellation_does_not_dispatch_a_later_ready_step():
+    steps = (
+        _history("hist-1"),
+        _live("live-1"),
+        _live("live-2", depends_on=("live-1",)),
+    )
+    proposal = _proposal(steps, _work(LIVE, HISTORY))
+    context = _context()
+    before = authorize_route(proposal, context).plan.to_dict()
+    calls: list[SyntheticAssignment] = []
+    result = run_synthetic_master_workflow(
+        context,
+        proposal,
+        _workers(calls, {"hist-1": SyntheticOutcome.CANCELLED}),
+    )
+    assert {item.step_id for item in calls} == {"hist-1", "live-1"}
+    assert result.terminal_status is SyntheticTerminalStatus.CANCELLED
+    assert [item.outcome for item in result.results] == [
+        SyntheticOutcome.CANCELLED,
+        SyntheticOutcome.SYNTHETIC_COMPLETED,
+    ]
+    assert result.step_statuses[2][1] is SyntheticStepStatus.WAITING
+    assert "not_executed_cancelled:live-2" in result.reasons
+    assert result.executed_nodes.count("invoke_fake_specialist") == 2
+    assert result.executed_nodes[-2:] == ("select_ready", "finalize_workflow")
+    flat = [item for batch in result.dispatch_batches for item in batch]
+    assert len(flat) == len(set(flat)) == 2
+    assert result.decision.plan.to_dict() == before
+    assert result.execution_authority is MasterRouteExecutionAuthority.DENIED
+    assert result.request_coverage is MasterRequestCoverage.NOT_ESTABLISHED
+    assert result.end_to_end_fulfilled is False
+    assert result.evidence_verified is False
+    assert result.decision.plan.execution_authority is MasterRouteExecutionAuthority.DENIED
+    assert CANCELLATION_SUPERSTEP_LIMITATION in result.limitations
+
+
 def test_scripted_timeout_is_a_failure_not_a_wall_clock_timer():
     result, calls = _run((_live(),), outcomes={"live-1": SyntheticOutcome.TIMED_OUT})
     assert len(calls) == 1
@@ -650,6 +742,78 @@ def test_synthetic_result_cannot_claim_verified_evidence_or_production():
             note="synthetic",
             evidence_verified=True,
         )
+
+
+def _valid_result_payload() -> dict[str, object]:
+    return {
+        "schema_version": "wilvor.ai.synthetic_worker_result.v1",
+        "master_request_id": "master-req-1",
+        "correlation_id": "corr-1",
+        "invocation_id": "master-req-1-1",
+        "specialist_request_id": "master-req-1-specialist-1",
+        "specialist": "LIVE_OPS",
+        "outcome": "SYNTHETIC_COMPLETED",
+        "note": "synthetic",
+        "evidence_verified": False,
+        "production_authority": "DENIED",
+    }
+
+
+def test_synthetic_result_round_trip_preserves_a_valid_payload():
+    workflow, _calls = _run((_live(),))
+    original = workflow.results[0]
+    payload = original.to_dict()
+    restored = SyntheticWorkerResult.from_dict(payload)
+    assert restored == original
+    assert restored.to_dict() == payload
+    assert restored.evidence_verified is False
+    assert restored.production_authority is SyntheticProductionAuthority.DENIED
+
+
+def test_synthetic_result_from_dict_rejects_malformed_payloads():
+    valid = _valid_result_payload()
+    with pytest.raises(ContractValidationError, match="invalid_synthetic_result"):
+        SyntheticWorkerResult.from_dict(["not", "a", "mapping"])  # type: ignore[arg-type]
+    missing = dict(valid)
+    del missing["invocation_id"]
+    with pytest.raises(ContractValidationError, match="missing_invocation_id"):
+        SyntheticWorkerResult.from_dict(missing)
+    unknown = dict(valid)
+    unknown["aircraft_id"] = "ac-1"
+    with pytest.raises(ContractValidationError, match="unexpected_synthetic_result_field"):
+        SyntheticWorkerResult.from_dict(unknown)
+    wrong_schema = dict(valid)
+    wrong_schema["schema_version"] = "wilvor.ai.synthetic_worker_result.v0"
+    with pytest.raises(ContractValidationError, match="invalid_schema_version"):
+        SyntheticWorkerResult.from_dict(wrong_schema)
+    bad_identity = dict(valid)
+    bad_identity["master_request_id"] = 12
+    with pytest.raises(ContractValidationError, match="invalid_master_request_id"):
+        SyntheticWorkerResult.from_dict(bad_identity)
+    bad_specialist = dict(valid)
+    bad_specialist["specialist"] = "NOT_A_SPECIALIST"
+    with pytest.raises(ContractValidationError, match="invalid_specialist"):
+        SyntheticWorkerResult.from_dict(bad_specialist)
+    bad_outcome = dict(valid)
+    bad_outcome["outcome"] = "MAYBE"
+    with pytest.raises(ContractValidationError, match="invalid_outcome"):
+        SyntheticWorkerResult.from_dict(bad_outcome)
+    padded = dict(valid)
+    padded["note"] = " synthetic"
+    with pytest.raises(ContractValidationError, match="invalid_synthetic_note"):
+        SyntheticWorkerResult.from_dict(padded)
+    oversized = dict(valid)
+    oversized["note"] = "x" * 513
+    with pytest.raises(ContractValidationError, match="invalid_synthetic_note"):
+        SyntheticWorkerResult.from_dict(oversized)
+    coerced = dict(valid)
+    coerced["evidence_verified"] = 0
+    with pytest.raises(ContractValidationError, match="synthetic_evidence_not_verified"):
+        SyntheticWorkerResult.from_dict(coerced)
+    missing_authority = dict(valid)
+    del missing_authority["production_authority"]
+    with pytest.raises(ContractValidationError, match="missing_production_authority"):
+        SyntheticWorkerResult.from_dict(missing_authority)
 
 
 def test_stored_gates_are_unchanged_after_a_successful_dependency():

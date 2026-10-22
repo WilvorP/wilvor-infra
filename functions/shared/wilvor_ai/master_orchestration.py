@@ -8,8 +8,10 @@ and it does not grant production execution.
 
 ``execution_authority`` stays ``DENIED``. A synthetic completion is not
 verified aviation evidence. Workers already dispatched in one LangGraph
-superstep can still finish after a sibling returns a cancellation; this module
-does not claim a stronger cancellation guarantee.
+superstep can still finish after a sibling returns a cancellation. Once any
+step is ``CANCELLED``, later scheduling rounds dispatch no further workers.
+This module does not interrupt a running worker, and it does not claim a
+stronger cancellation guarantee than that.
 
 Recursion limit 14 was measured on LangGraph 1.2.16. A four-step dependency
 chain runs 11 supersteps, and that release rejects ``recursion_limit`` 11
@@ -29,7 +31,7 @@ from langgraph.errors import GraphRecursionError
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Send
 
-from wilvor_ai.contracts import AgentCapability, ContractValidationError
+from wilvor_ai.contracts import AgentCapability, ContractValidationError, _parse_enum
 from wilvor_ai.master_contracts import (
     MasterPurpose,
     MasterRequirement,
@@ -54,6 +56,20 @@ from wilvor_ai.master_routing import (
 
 SYNTHETIC_WORKFLOW_SCHEMA_VERSION = "wilvor.ai.synthetic_master_workflow.v1"
 SYNTHETIC_RESULT_SCHEMA_VERSION = "wilvor.ai.synthetic_worker_result.v1"
+_SYNTHETIC_RESULT_FIELDS = frozenset(
+    {
+        "schema_version",
+        "master_request_id",
+        "correlation_id",
+        "invocation_id",
+        "specialist_request_id",
+        "specialist",
+        "outcome",
+        "note",
+        "evidence_verified",
+        "production_authority",
+    }
+)
 SYNTHETIC_NOTE_MAX_LENGTH = 512
 SYNTHETIC_RECURSION_LIMIT = 14
 SYNTHETIC_GRAPH_NODES = (
@@ -68,7 +84,7 @@ SYNTHETIC_EVIDENCE_LIMITATION = (
 )
 CANCELLATION_SUPERSTEP_LIMITATION = (
     "Cancellation does not prevent other synthetic workers already dispatched "
-    "in the same LangGraph superstep from running."
+    "in the same LangGraph superstep from running. No further workers are dispatched."
 )
 SCRIPTED_TIMEOUT_LIMITATION = (
     "A scripted timeout records a synthetic outcome. It does not prove "
@@ -145,6 +161,24 @@ _OUTCOME_STATUS = {
     SyntheticOutcome.TIMED_OUT: SyntheticStepStatus.TIMED_OUT,
     SyntheticOutcome.CANCELLED: SyntheticStepStatus.CANCELLED,
 }
+
+
+def _result_identity(data: Mapping[str, Any], field_name: str) -> str:
+    value = data[field_name]
+    if (
+        not isinstance(value, str)
+        or not value
+        or value != value.strip()
+        or any(character.isspace() for character in value)
+    ):
+        raise ContractValidationError(f"invalid_{field_name}")
+    return value
+
+
+def _result_enum(enum_type: type[Any], value: Any, field_name: str) -> Any:
+    if not isinstance(value, str):
+        raise ContractValidationError(f"invalid_{field_name}")
+    return _parse_enum(enum_type, value, field_name)
 
 
 def _note(value: Any) -> str:
@@ -231,22 +265,36 @@ class SyntheticWorkerResult:
     def from_dict(cls, data: Mapping[str, Any]) -> "SyntheticWorkerResult":
         if not isinstance(data, Mapping):
             raise ContractValidationError("invalid_synthetic_result")
-        if data.get("evidence_verified") is not False:
+        unexpected = set(data) - _SYNTHETIC_RESULT_FIELDS
+        if unexpected:
+            raise ContractValidationError("unexpected_synthetic_result_field")
+        missing = _SYNTHETIC_RESULT_FIELDS - set(data)
+        if missing:
+            raise ContractValidationError(f"missing_{min(missing)}")
+        schema_version = data["schema_version"]
+        if schema_version != SYNTHETIC_RESULT_SCHEMA_VERSION:
+            raise ContractValidationError("invalid_schema_version")
+        if data["evidence_verified"] is not False:
             raise ContractValidationError("synthetic_evidence_not_verified")
-        if data.get("production_authority") != SyntheticProductionAuthority.DENIED.value:
+        if data["production_authority"] != SyntheticProductionAuthority.DENIED.value:
             raise ContractValidationError("production_authority_not_issued")
-        return cls(
-            master_request_id=data["master_request_id"],
-            correlation_id=data["correlation_id"],
-            invocation_id=data["invocation_id"],
-            specialist_request_id=data["specialist_request_id"],
-            specialist=MasterSpecialist(data["specialist"]),
-            outcome=SyntheticOutcome(data["outcome"]),
-            note=data["note"],
-            evidence_verified=False,
-            production_authority=SyntheticProductionAuthority.DENIED,
-            schema_version=data["schema_version"],
-        )
+        try:
+            return cls(
+                master_request_id=_result_identity(data, "master_request_id"),
+                correlation_id=_result_identity(data, "correlation_id"),
+                invocation_id=_result_identity(data, "invocation_id"),
+                specialist_request_id=_result_identity(data, "specialist_request_id"),
+                specialist=_result_enum(MasterSpecialist, data["specialist"], "specialist"),
+                outcome=_result_enum(SyntheticOutcome, data["outcome"], "outcome"),
+                note=_note(data["note"]),
+                evidence_verified=False,
+                production_authority=SyntheticProductionAuthority.DENIED,
+                schema_version=schema_version,
+            )
+        except ContractValidationError:
+            raise
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ContractValidationError("invalid_synthetic_result") from exc
 
 
 @dataclass(frozen=True)
@@ -451,7 +499,7 @@ def _classify_terminal(
     if budget_exhausted:
         return SyntheticTerminalStatus.BUDGET_EXHAUSTED, ("dispatch_budget_exhausted",)
     reasons: list[str] = []
-    saw_cancel = False
+    saw_cancel = any(status is SyntheticStepStatus.CANCELLED for status in statuses.values())
     saw_required_failure = False
     saw_required_block = False
     saw_optional_issue = False
@@ -462,8 +510,10 @@ def _classify_terminal(
         if status is SyntheticStepStatus.SYNTHETIC_COMPLETED:
             continue
         if status is SyntheticStepStatus.CANCELLED:
-            saw_cancel = True
             reasons.append(f"worker_cancelled:{step.step_id}")
+            continue
+        if status is SyntheticStepStatus.WAITING and saw_cancel:
+            reasons.append(f"not_executed_cancelled:{step.step_id}")
             continue
         if status is SyntheticStepStatus.TIMED_OUT:
             reasons.append(f"worker_timed_out:{step.step_id}")
@@ -584,6 +634,9 @@ def compile_synthetic_test_graph(
         if state["budget_exhausted"]:
             return {"ready": []}
         statuses = dict(state["statuses"])
+        if any(status is SyntheticStepStatus.CANCELLED for status in statuses.values()):
+            # Same-superstep results are already recorded. Do not start another wave.
+            return {"ready": []}
         updates: dict[str, SyntheticStepStatus] = {}
         for step in plan.steps:
             invocation_id = step.invocation.invocation_id
