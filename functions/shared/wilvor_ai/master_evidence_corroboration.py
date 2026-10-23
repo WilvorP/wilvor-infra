@@ -46,11 +46,17 @@ from wilvor_ai.master_evidence_admission import (
     admit_master_evidence,
 )
 from wilvor_ai.master_routing import MAX_DECISION_STEPS, MAX_ROUTE_STEPS, MasterRequestCoverage
-from wilvor_ai.specialist_contracts import SpecialistResult, VerifierOutcome
+from wilvor_ai.specialist_contracts import SpecialistResult, SpecialistStatus, VerifierOutcome
 from wilvor_ai.specialist_runtime_contracts import HistoricalSpecialistRunResult, SpecialistRunStatus
 
 
 MASTER_EVIDENCE_CORROBORATION_SCHEMA_VERSION = "wilvor.ai.master_evidence_corroboration.v1"
+_FACTUAL_HISTORICAL_STATUSES = frozenset(
+    {
+        SpecialistStatus.ANSWERED,
+        SpecialistStatus.PARTIAL,
+    }
+)
 _FINAL_DECISION = frozenset(
     {
         DecisionSpecialistRunStatus.COMPLETED,
@@ -80,6 +86,9 @@ class MasterCorroborationReason(str, Enum):
     HISTORICAL_STORED_PASSED_NOT_TRUSTED = "HISTORICAL_STORED_PASSED_NOT_TRUSTED"
     HISTORICAL_VERIFICATION_NOT_FACTUAL = "HISTORICAL_VERIFICATION_NOT_FACTUAL"
     HISTORICAL_NON_FACTUAL_RUN = "HISTORICAL_NON_FACTUAL_RUN"
+    HISTORICAL_UNAVAILABLE_CORROBORATED = "HISTORICAL_UNAVAILABLE_CORROBORATED"
+    HISTORICAL_NON_FACTUAL_FINAL_STATUS = "HISTORICAL_NON_FACTUAL_FINAL_STATUS"
+    HISTORICAL_PARTIAL_EVIDENCE_NOT_COMPLETE = "HISTORICAL_PARTIAL_EVIDENCE_NOT_COMPLETE"
     ANSWER_MISMATCH = "ANSWER_MISMATCH"
     CLAIM_MISMATCH = "CLAIM_MISMATCH"
     TOOL_RESULT_MISMATCH = "TOOL_RESULT_MISMATCH"
@@ -306,7 +315,15 @@ def _historical(
     if verification.outcome is not VerifierOutcome.PASSED:
         reasons.add(MasterCorroborationReason.HISTORICAL_VERIFICATION_NOT_FACTUAL)
         return MasterCorroborationStatus.NO_FACTUAL_CLAIMS, reasons, codes
+    if finalized.status is SpecialistStatus.UNAVAILABLE:
+        reasons.add(MasterCorroborationReason.HISTORICAL_UNAVAILABLE_CORROBORATED)
+        return MasterCorroborationStatus.NO_FACTUAL_CLAIMS, reasons, codes
+    if finalized.status not in _FACTUAL_HISTORICAL_STATUSES:
+        reasons.add(MasterCorroborationReason.HISTORICAL_NON_FACTUAL_FINAL_STATUS)
+        return MasterCorroborationStatus.NO_FACTUAL_CLAIMS, reasons, codes
     reasons.add(MasterCorroborationReason.SUPPLIED_EVIDENCE_ONLY)
+    if finalized.status is SpecialistStatus.PARTIAL:
+        reasons.add(MasterCorroborationReason.HISTORICAL_PARTIAL_EVIDENCE_NOT_COMPLETE)
     return MasterCorroborationStatus.CONSISTENT_WITH_SUPPLIED_EVIDENCE, reasons, ()
 
 

@@ -327,6 +327,11 @@ def _ordered(enum_type: type[Enum], selected: set[Any]) -> tuple[Any, ...]:
     return tuple(item for item in enum_type if item in selected)
 
 
+def _enum_tuple(value: object, enum_type: type[Enum], field_name: str) -> None:
+    if not isinstance(value, tuple) or any(not isinstance(item, enum_type) for item in value):
+        raise ContractValidationError(f"invalid_{field_name}")
+
+
 def _pair_matches(category: MasterComparisonCategory, left: MasterSpecialist, right: MasterSpecialist) -> bool:
     required = _EXACT_PAIRS.get(category)
     if required is None:
@@ -397,12 +402,23 @@ class MasterComparisonAssessment:
             raise ContractValidationError("request_coverage_not_established")
         if self.end_to_end_fulfilled is not False:
             raise ContractValidationError("end_to_end_fulfillment_not_granted")
-        if self.established_prerequisites != ():
-            raise ContractValidationError("prerequisite_not_established")
         if not isinstance(self.eligibility, MasterComparisonEligibility):
             raise ContractValidationError("invalid_comparison_eligibility")
         if not isinstance(self.category, MasterComparisonCategory):
             raise ContractValidationError("invalid_comparison_category")
+        if not isinstance(self.left_admission_status, MasterAdmissionStatus):
+            raise ContractValidationError("invalid_left_admission_status")
+        if not isinstance(self.right_admission_status, MasterAdmissionStatus):
+            raise ContractValidationError("invalid_right_admission_status")
+        _enum_tuple(self.reason_codes, MasterComparisonReason, "reason_codes")
+        _enum_tuple(self.missing_prerequisites, MasterComparisonPrerequisite, "missing_prerequisites")
+        _enum_tuple(self.established_prerequisites, MasterComparisonPrerequisite, "established_prerequisites")
+        _enum_tuple(self.left_admission_reasons, MasterAdmissionReason, "left_admission_reasons")
+        _enum_tuple(self.right_admission_reasons, MasterAdmissionReason, "right_admission_reasons")
+        _enum_tuple(self.left_binding_defects, MasterBindingDefect, "left_binding_defects")
+        _enum_tuple(self.right_binding_defects, MasterBindingDefect, "right_binding_defects")
+        if self.established_prerequisites != ():
+            raise ContractValidationError("prerequisite_not_established")
         if MasterComparisonReason.SOURCE_AUTHENTICITY_NOT_ESTABLISHED not in self.reason_codes:
             raise ContractValidationError("source_authenticity_not_established")
         if MasterComparisonPrerequisite.SOURCE_AUTHENTICITY not in self.missing_prerequisites:
@@ -410,6 +426,26 @@ class MasterComparisonAssessment:
         _identity(self.master_request_id, "master_request_id")
         _identity(self.left_invocation_id, "left_invocation_id")
         _identity(self.right_invocation_id, "right_invocation_id")
+        if self.left_invocation_id == self.right_invocation_id:
+            raise ContractValidationError("duplicate_invocation_id")
+        rejected = (
+            self.left_admission_status is MasterAdmissionStatus.REJECTED
+            or self.right_admission_status is MasterAdmissionStatus.REJECTED
+        )
+        if rejected and self.eligibility is not MasterComparisonEligibility.BLOCKED:
+            raise ContractValidationError("rejected_admission_requires_blocked")
+        unresolved = (
+            self.left_admission_status is MasterAdmissionStatus.BINDING_UNRESOLVED
+            or self.right_admission_status is MasterAdmissionStatus.BINDING_UNRESOLVED
+        )
+        if unresolved and (
+            self.source_authenticity is not MasterSourceAuthenticity.NOT_ESTABLISHED
+            or self.evidence_verified is not False
+            or self.production_authority is not MasterProductionAuthority.DENIED
+            or self.request_coverage is not MasterRequestCoverage.NOT_ESTABLISHED
+            or self.end_to_end_fulfilled is not False
+        ):
+            raise ContractValidationError("unresolved_admission_not_authenticated")
 
 
 def assess_master_evidence_comparability(

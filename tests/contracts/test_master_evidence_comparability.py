@@ -64,7 +64,7 @@ from wilvor_ai.live_ops_public_contracts import (
     LiveOpsPublicRiskMode,
     LiveOpsPublicScope,
 )
-from wilvor_ai.master_contracts import MasterProductionAuthority, MasterSpecialist
+from wilvor_ai.master_contracts import MasterBindingDefect, MasterProductionAuthority, MasterSpecialist
 from wilvor_ai.master_evidence_admission import (
     LiveOpsAdmissionSources,
     MasterAdmissionReason,
@@ -992,6 +992,104 @@ def test_denial_invariants_cannot_be_overwritten():
             MasterComparisonPrerequisite.SOURCE_AUTHENTICITY,
         ))
     _deny(result)
+
+
+def _legitimate_assessment():
+    return _assess(
+        MasterComparisonCategory.LIVE_OPS_RECOMMENDATIONS_VS_DECISION_RECOMMENDATIONS,
+        _live("inv-left"),
+        _decision("inv-right"),
+    )
+
+
+def test_legitimate_comparison_assessment_remains_valid():
+    result = _legitimate_assessment()
+    assert result.eligibility in {
+        MasterComparisonEligibility.BLOCKED,
+        MasterComparisonEligibility.UNSUPPORTED,
+        MasterComparisonEligibility.NOT_ESTABLISHED,
+        MasterComparisonEligibility.CONTRACT_CHECKABLE_ONLY,
+    }
+    assert result.left_invocation_id != result.right_invocation_id
+    assert isinstance(result.reason_codes, tuple)
+    assert isinstance(result.left_admission_status, MasterAdmissionStatus)
+    _deny(result)
+
+
+def test_rejected_admission_cannot_pair_with_a_non_blocked_eligibility():
+    sample = _legitimate_assessment()
+    with pytest.raises(ContractValidationError, match="rejected_admission_requires_blocked"):
+        replace(
+            sample,
+            eligibility=MasterComparisonEligibility.CONTRACT_CHECKABLE_ONLY,
+            left_admission_status=MasterAdmissionStatus.REJECTED,
+        )
+    with pytest.raises(ContractValidationError, match="rejected_admission_requires_blocked"):
+        replace(
+            sample,
+            eligibility=MasterComparisonEligibility.NOT_ESTABLISHED,
+            right_admission_status=MasterAdmissionStatus.REJECTED,
+        )
+    blocked = replace(
+        sample,
+        eligibility=MasterComparisonEligibility.BLOCKED,
+        left_admission_status=MasterAdmissionStatus.REJECTED,
+    )
+    assert blocked.eligibility is MasterComparisonEligibility.BLOCKED
+    assert blocked.left_admission_status is MasterAdmissionStatus.REJECTED
+    _deny(blocked)
+
+
+def test_constructor_rejects_mistyped_assessment_fields():
+    sample = _legitimate_assessment()
+    with pytest.raises(ContractValidationError, match="invalid_reason_codes"):
+        replace(sample, reason_codes=[MasterComparisonReason.SOURCE_AUTHENTICITY_NOT_ESTABLISHED])
+    with pytest.raises(ContractValidationError, match="invalid_reason_codes"):
+        replace(sample, reason_codes="SOURCE_AUTHENTICITY_NOT_ESTABLISHED")
+    with pytest.raises(ContractValidationError, match="invalid_reason_codes"):
+        replace(sample, reason_codes=(MasterAdmissionReason.SOURCE_AUTHENTICITY_NOT_ESTABLISHED,))
+    with pytest.raises(ContractValidationError, match="invalid_missing_prerequisites"):
+        replace(sample, missing_prerequisites=[MasterComparisonPrerequisite.SOURCE_AUTHENTICITY])
+    with pytest.raises(ContractValidationError, match="invalid_left_admission_status"):
+        replace(sample, left_admission_status="CONTRACT_ONLY")
+    with pytest.raises(ContractValidationError, match="invalid_left_admission_reasons"):
+        replace(sample, left_admission_reasons=list(sample.left_admission_reasons))
+    with pytest.raises(ContractValidationError, match="invalid_left_binding_defects"):
+        replace(sample, left_binding_defects=(MasterComparisonReason.SOURCE_AUTHENTICITY_NOT_ESTABLISHED,))
+    with pytest.raises(ContractValidationError, match="invalid_right_binding_defects"):
+        replace(sample, right_binding_defects="TIME_MISMATCH")
+    _deny(sample)
+
+
+def test_duplicate_invocation_ids_are_not_a_valid_comparison():
+    sample = _legitimate_assessment()
+    with pytest.raises(ContractValidationError, match="duplicate_invocation_id"):
+        replace(sample, right_invocation_id=sample.left_invocation_id)
+
+
+def test_unresolved_admission_cannot_be_upgraded_to_verified_authority():
+    unresolved = _assess(
+        MasterComparisonCategory.QUERY_TIME_VS_OBSERVATION_TIME,
+        _historical("inv-left", correlation_id="corr-offline-historical"),
+        _decision("inv-right"),
+    )
+    assert unresolved.left_admission_status is MasterAdmissionStatus.BINDING_UNRESOLVED
+    assert unresolved.evidence_verified is False
+    assert unresolved.production_authority is MasterProductionAuthority.DENIED
+    assert unresolved.source_authenticity is MasterSourceAuthenticity.NOT_ESTABLISHED
+    _deny(unresolved)
+    with pytest.raises(ContractValidationError):
+        replace(unresolved, evidence_verified=True)
+    with pytest.raises(ContractValidationError):
+        replace(unresolved, production_authority=MasterProductionAuthority.PRODUCTION)
+    with pytest.raises(ContractValidationError):
+        replace(
+            unresolved,
+            source_authenticity=MasterSourceAuthenticity.NOT_ESTABLISHED,
+            established_prerequisites=(MasterComparisonPrerequisite.SOURCE_AUTHENTICITY,),
+        )
+    with pytest.raises(ContractValidationError, match="invalid_left_binding_defects"):
+        replace(unresolved, left_binding_defects=[MasterBindingDefect.TIME_MISMATCH])
 
 
 def test_advisory_claim_constant_remains_advisory_only():

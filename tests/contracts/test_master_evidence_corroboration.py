@@ -50,8 +50,9 @@ from wilvor_ai.decision_specialist_runtime_contracts import (
     DecisionTargetMode,
 )
 from wilvor_ai.decision_tool_projection import project_decision_tool_result
+from tests.contracts.test_historical_verification import CALL_A, _coverage_blocked, _run
 from wilvor_ai.historical_answer_renderer import finalize_historical_specialist_run
-from wilvor_ai.historical_evidence_verifier import ClaimRejectionCode
+from wilvor_ai.historical_evidence_verifier import ClaimRejectionCode, verify_historical_specialist_run
 from wilvor_ai.master_contracts import MasterProductionAuthority, MasterSpecialist
 from wilvor_ai.master_evidence_admission import (
     LiveOpsAdmissionSources,
@@ -70,7 +71,16 @@ from wilvor_ai.master_evidence_corroboration import (
 )
 from wilvor_ai.master_orchestration import SyntheticOutcome, SyntheticWorkerResult
 from wilvor_ai.model_contracts import ModelDecisionKind
-from wilvor_ai.specialist_contracts import ExactCountClaim, LowerBoundCountClaim, SpecialistResult, VerifierOutcome
+from wilvor_ai.specialist_contracts import (
+    ExactCountClaim,
+    LowerBoundCountClaim,
+    SpecialistResult,
+    SpecialistStatus,
+    UnavailableClaim,
+    VerifiedZeroClaim,
+    VerifierOutcome,
+)
+from wilvor_historical.query_contracts import COVERAGE_REASON_EPOCH_AMBIGUOUS
 
 
 def _historical_input(run, artifact: SpecialistResult | None = None, **authorization: object):
@@ -181,13 +191,79 @@ def _live_input(result, **authorization: object):
     )
 
 
+def _unavailable_historical_run():
+    blocked = _coverage_blocked()
+    return _run(
+        tool_results=(blocked,),
+        claims=(
+            UnavailableClaim(
+                tool_call_id=CALL_A,
+                error_or_coverage_code=COVERAGE_REASON_EPOCH_AMBIGUOUS,
+            ),
+        ),
+        evaluated_as_of_utc=blocked.as_of_utc,
+    )
+
+
 def test_matching_historical_run_is_consistent_only_with_supplied_evidence():
     run = historical_exact_count_run()
+    final = finalize_historical_specialist_run(run)
     result = _one(_historical_input(run))
+    assert final.status is SpecialistStatus.ANSWERED
+    assert final.verifier_outcome is VerifierOutcome.PASSED
     assert result.corroboration_status is MasterCorroborationStatus.CONSISTENT_WITH_SUPPLIED_EVIDENCE
     assert result.admission_status is MasterAdmissionStatus.CONTRACT_ONLY
     assert MasterCorroborationReason.SUPPLIED_EVIDENCE_ONLY in result.reason_codes
     assert result.rejected_claim_codes == ()
+    _untrusted(result)
+
+
+def test_verified_unavailable_claim_is_not_factual_corroboration():
+    run = _unavailable_historical_run()
+    verification = verify_historical_specialist_run(run)
+    final = finalize_historical_specialist_run(run)
+    assert verification.outcome is VerifierOutcome.PASSED
+    assert final.status is SpecialistStatus.UNAVAILABLE
+    assert final.verifier_outcome is VerifierOutcome.PASSED
+    assert "cannot certify" in final.answer
+    assert not any(isinstance(item, VerifiedZeroClaim) for item in final.verified_claims)
+    assert not any(isinstance(item, ExactCountClaim) for item in final.verified_claims)
+    result = _one(_historical_input(run, final))
+    assert result.corroboration_status is MasterCorroborationStatus.NO_FACTUAL_CLAIMS
+    assert MasterCorroborationReason.HISTORICAL_UNAVAILABLE_CORROBORATED in result.reason_codes
+    assert MasterCorroborationReason.HISTORICAL_VERIFICATION_NOT_FACTUAL not in result.reason_codes
+    assert MasterCorroborationReason.SUPPLIED_EVIDENCE_ONLY not in result.reason_codes
+    assert result.corroboration_status is not MasterCorroborationStatus.CONSISTENT_WITH_SUPPLIED_EVIDENCE
+    assert result.rejected_claim_codes == ()
+    _untrusted(result)
+
+
+def test_forged_unavailable_final_remains_inconsistent():
+    run = _unavailable_historical_run()
+    forged = replace(
+        finalize_historical_specialist_run(run),
+        answer="No matching historical records.",
+        status=SpecialistStatus.ANSWERED,
+    )
+    result = _one(_historical_input(run, forged))
+    assert result.corroboration_status is MasterCorroborationStatus.INCONSISTENT
+    assert MasterCorroborationReason.ANSWER_MISMATCH in result.reason_codes
+    assert MasterCorroborationReason.STATUS_MISMATCH in result.reason_codes
+    assert MasterCorroborationReason.HISTORICAL_UNAVAILABLE_CORROBORATED not in result.reason_codes
+    _untrusted(result)
+
+
+def test_partial_lower_bound_stays_consistent_with_its_limitation():
+    run = historical_truncated_lower_bound_run()
+    final = finalize_historical_specialist_run(run)
+    result = _one(_historical_input(run))
+    assert final.verifier_outcome is VerifierOutcome.PASSED
+    assert final.status is SpecialistStatus.PARTIAL
+    assert "RESULT_TRUNCATED" in final.limitations
+    assert result.corroboration_status is MasterCorroborationStatus.CONSISTENT_WITH_SUPPLIED_EVIDENCE
+    assert MasterCorroborationReason.SUPPLIED_EVIDENCE_ONLY in result.reason_codes
+    assert MasterCorroborationReason.HISTORICAL_PARTIAL_EVIDENCE_NOT_COMPLETE in result.reason_codes
+    assert not any(isinstance(item, ExactCountClaim) for item in final.verified_claims)
     _untrusted(result)
 
 
