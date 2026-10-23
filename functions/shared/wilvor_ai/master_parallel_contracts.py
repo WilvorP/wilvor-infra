@@ -17,7 +17,11 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
-from wilvor_ai.contracts import ContractValidationError
+from wilvor_ai.contracts import (
+    PROVENANCE_TOKEN_MAX_LENGTH,
+    ContractValidationError,
+    _validate_bounded_text,
+)
 from wilvor_ai.decision_specialist_runtime_contracts import DecisionSpecialistRunResult
 from wilvor_ai.master_contracts import (
     MasterInvocationAuthorization,
@@ -44,6 +48,11 @@ from wilvor_ai.specialist_runtime_contracts import HistoricalSpecialistRunResult
 
 
 MASTER_PARALLEL_CONTRACTS_SCHEMA_VERSION = "wilvor.ai.master_parallel_contracts.v1"
+
+# One comparison for every ordered pair of distinct steps on a four-step route.
+# Extra categories for the same pair consume this same budget. Oversized
+# collections are rejected whole; they are not truncated.
+MAX_COMPARISON_REQUESTS = MAX_ROUTE_STEPS * (MAX_ROUTE_STEPS - 1)
 
 _SYNTHETIC_RESULT_NAMES = frozenset(
     {
@@ -177,7 +186,12 @@ class MasterInvocationBinding:
     def __post_init__(self) -> None:
         if not isinstance(self.authorization, MasterInvocationAuthorization):
             raise ContractValidationError("invalid_invocation_authorization")
-        if self.step_id != self.step_id.strip() or not self.step_id:
+        errors = _validate_bounded_text(
+            self.step_id,
+            "step_id",
+            max_length=PROVENANCE_TOKEN_MAX_LENGTH,
+        )
+        if errors or self.step_id != self.step_id.strip():
             raise ContractValidationError("invalid_step_id")
 
 
@@ -218,9 +232,11 @@ class MasterParallelContractBundle(MasterParallelDenial):
             not isinstance(item, MasterEvidenceCorroborationInput) for item in self.evidence_inputs
         ):
             raise ContractValidationError("invalid_evidence_inputs")
-        if not isinstance(self.comparison_requests, tuple) or any(
-            not isinstance(item, MasterComparisonRequest) for item in self.comparison_requests
-        ):
+        if not isinstance(self.comparison_requests, tuple):
+            raise ContractValidationError("invalid_comparison_requests")
+        if len(self.comparison_requests) > MAX_COMPARISON_REQUESTS:
+            raise ContractValidationError("excessive_comparison_requests")
+        if any(not isinstance(item, MasterComparisonRequest) for item in self.comparison_requests):
             raise ContractValidationError("invalid_comparison_requests")
         if len(self.plan.steps) > MAX_ROUTE_STEPS or len(self.evidence_inputs) > MAX_ROUTE_STEPS:
             raise ContractValidationError("excessive_plan_size")

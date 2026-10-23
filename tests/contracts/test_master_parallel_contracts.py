@@ -13,7 +13,12 @@ from tests.fixtures.ma4_specialist_evidence_examples import (
     live_ops_context,
     live_ops_request,
 )
-from wilvor_ai.contracts import AgentCapability, ContractValidationError, ToolResult
+from wilvor_ai.contracts import (
+    PROVENANCE_TOKEN_MAX_LENGTH,
+    AgentCapability,
+    ContractValidationError,
+    ToolResult,
+)
 from wilvor_ai.historical_answer_renderer import finalize_historical_specialist_run
 from wilvor_ai.master_contracts import (
     MasterInvocationAuthorization,
@@ -42,8 +47,10 @@ from wilvor_ai.master_evidence_corroboration import (
 from wilvor_ai.master_orchestration import SyntheticOutcome, SyntheticWorkerResult
 from wilvor_ai.master_parallel_contracts import (
     MASTER_PARALLEL_CONTRACTS_SCHEMA_VERSION,
+    MAX_COMPARISON_REQUESTS,
     MasterExecutionPreflightReport,
     MasterExecutionPreflightState,
+    MasterInvocationBinding,
     MasterParallelContractBundle,
     MasterProvenanceRequirement,
     MasterResponseLimitation,
@@ -534,6 +541,67 @@ def test_constructor_rejects_mistyped_and_contradictory_fields():
         )
         replace(bundle, comparison_requests=(request,))
     assert MasterRouteGate.NOT_REQUIRED.value == "NOT_REQUIRED"
+
+
+def _comparison_requests(bundle: MasterParallelContractBundle, count: int):
+    categories = tuple(MasterComparisonCategory)
+    assert count <= len(categories)
+    left = bundle.plan.steps[0].invocation.invocation_id
+    right = bundle.plan.steps[1].invocation.invocation_id
+    return tuple(
+        MasterComparisonRequest(
+            master_request_id=bundle.context.master_request_id,
+            left_invocation_id=left,
+            right_invocation_id=right,
+            category=categories[index],
+        )
+        for index in range(count)
+    )
+
+
+def test_comparison_request_budget_is_the_ordered_pairs_of_a_four_step_route():
+    assert MAX_COMPARISON_REQUESTS == MAX_ROUTE_STEPS * (MAX_ROUTE_STEPS - 1) == 12
+    bundle = _bundle(_live(), _history())
+    empty = replace(bundle, comparison_requests=())
+    assert empty.comparison_requests == ()
+    permitted = replace(bundle, comparison_requests=_comparison_requests(bundle, 2))
+    assert len(permitted.comparison_requests) == 2
+    exact = replace(bundle, comparison_requests=_comparison_requests(bundle, MAX_COMPARISON_REQUESTS))
+    assert len(exact.comparison_requests) == MAX_COMPARISON_REQUESTS
+    oversized = _comparison_requests(bundle, MAX_COMPARISON_REQUESTS) + (object(),)
+    with pytest.raises(ContractValidationError, match="excessive_comparison_requests"):
+        replace(bundle, comparison_requests=oversized)
+    duplicated = (permitted.comparison_requests[0], permitted.comparison_requests[0])
+    with pytest.raises(ContractValidationError, match="duplicate_comparison_request"):
+        replace(bundle, comparison_requests=duplicated)
+    unknown = MasterComparisonRequest(
+        master_request_id=bundle.context.master_request_id,
+        left_invocation_id=bundle.plan.steps[0].invocation.invocation_id,
+        right_invocation_id="inv-not-on-the-plan",
+        category=MasterComparisonCategory.QUERY_TIME_VS_OBSERVATION_TIME,
+    )
+    with pytest.raises(ContractValidationError, match="invocation_not_in_plan"):
+        replace(bundle, comparison_requests=(unknown,))
+    _deny(exact)
+
+
+def test_step_id_must_be_a_provenance_token():
+    _, plan = _authorized(_live())
+    authorization = plan.steps[0].invocation
+    valid = MasterInvocationBinding(plan.steps[0].step_id, authorization)
+    assert valid.step_id == plan.steps[0].step_id
+    rejected = (
+        1,
+        None,
+        "",
+        "   ",
+        f" {plan.steps[0].step_id}",
+        f"{plan.steps[0].step_id} ",
+        "x" * (PROVENANCE_TOKEN_MAX_LENGTH + 1),
+    )
+    for step_id in rejected:
+        with pytest.raises(ContractValidationError, match="invalid_step_id"):
+            MasterInvocationBinding(step_id, authorization)
 
 
 def test_received_result_cannot_invent_a_route_step():

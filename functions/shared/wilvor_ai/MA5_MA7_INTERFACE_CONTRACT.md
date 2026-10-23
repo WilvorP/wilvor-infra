@@ -119,7 +119,8 @@ The bundle does not accept a caller-built `MasterEvidenceAdmission`, `MasterEvid
 - Invocation ids are unique across the plan and across evidence inputs.
 - At most four steps and four evidence inputs (`MAX_ROUTE_STEPS`).
 - At most one Decision invocation (`MAX_DECISION_STEPS`).
-- Comparison requests use native invocation ids from that same plan. Left and right must differ. Hints stay hints.
+- At most twelve comparison requests (`MAX_COMPARISON_REQUESTS`). That is one request for every ordered pair of distinct steps on a four-step route. A second category for the same pair uses the same budget. A larger collection raises `excessive_comparison_requests` before any request is interpreted, and nothing is truncated.
+- Comparison requests use native invocation ids from that same plan. Left and right must differ. The same left, right, and category cannot be repeated. Selector hints stay untrusted. `assess_master_evidence_comparability` remains the only comparability assessor; this bundle does not call it.
 
 ## 6. Source-authenticity limitations
 
