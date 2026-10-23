@@ -437,9 +437,39 @@ def test_instruction_text_is_stable_and_covers_the_catalog():
     assert "They do not establish complete network coverage." in first
     assert "omit the count claim" in first
     assert "Do not turn a partial count into a global total." in first
-    assert "prefer supported CONFIRMED_IMPACT claims" in first
-    assert "Do not add an aggregate count unless the question asks for one" in first
     assert "authoritative zero" in first
+    prose, _guidance = first.split("\n\nTerminal transport rules:\n", 1)
+    schema_blob = json.dumps(live_ops_terminal_json_schema())
+    identification_rule = (
+        "An identification-only recorded-impact question asks which aircraft have recorded impacts "
+        "and does not ask for a count. Submit only supported CONFIRMED_IMPACT claims and applicable "
+        "evidence-backed COVERAGE_LIMITATION claims. Do not submit SCOPED_COUNT, including "
+        "EXACT_RETURNED_SET or CONFIRMED_SUBSET, even when the cited projection supports that numeric count."
+    )
+    count_rule = (
+        "An explicit count question asks how many, asks for a total, or requests an aggregate. "
+        "SCOPED_COUNT remains permitted under the count rules above, and LO2 verification still "
+        "decides whether that count is established."
+    )
+    both_rule = (
+        "When the user asks both which aircraft have recorded impacts and how many, supported "
+        "CONFIRMED_IMPACT claims and a supported SCOPED_COUNT may both be submitted."
+    )
+    for phrase in (
+        identification_rule,
+        count_rule,
+        both_rule,
+        "A recorded impact does not prove physical weather penetration.",
+        "Do not infer that the observed impacts are geographically exhaustive.",
+        "Do not manufacture claims to satisfy a preferred output shape.",
+    ):
+        assert phrase in prose
+        assert phrase in first
+        assert phrase not in schema_blob
+    assert "prefer supported CONFIRMED_IMPACT claims" not in prose
+    assert "Do not add an aggregate count unless the question asks for one" not in prose
+    assert len(LIVE_OPS_INSTRUCTION_TOOL_NAMES) == 8
+    assert len(LiveOpsClaimKind) == 16
     schema = live_ops_terminal_json_schema()
     kinds = set()
     for branch in schema["anyOf"]:

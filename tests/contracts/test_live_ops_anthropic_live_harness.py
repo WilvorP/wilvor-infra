@@ -15,10 +15,12 @@ from tests.fakes.fake_anthropic_messages import end_turn_response, tool_use_resp
 from wilvor_ai.live_ops_claims import (
     CallsignMatchSetClaim,
     ConfirmedImpactClaim,
+    CoverageLimitationClaim,
     HazardRegionIntersectionClaim,
     LiveOpsCountMetric,
     LiveOpsCountMode,
     LiveOpsExecutedScope,
+    LiveOpsLimitationCode,
     LiveOpsRiskMode,
     RiskStateClaim,
     ScopedCountClaim,
@@ -38,6 +40,7 @@ from wilvor_ai.live_ops_public_contracts import (
     LiveOpsFailureReason,
     LiveOpsPublicClaimKind,
     LiveOpsPublicClaimVerdict,
+    LiveOpsPublicCountMode,
     LiveOpsPublicVerificationOutcome,
     LiveOpsRunRequest,
     LiveOpsRunStatus,
@@ -165,6 +168,47 @@ def _impact_count_claim(projection: dict, mode: LiveOpsCountMode, **scope) -> Sc
         mode=mode,
         value=projection["data"]["impact_count"],
         scope=LiveOpsExecutedScope(**scope),
+    )
+
+
+def _california_sigmet_tools() -> dict:
+    return _tool(
+        (
+            ("search_current_hazards", {"region": "California", "product_type": "SIGMET"}),
+            ("search_current_impacts", {"region": "California", "product_type": "SIGMET"}),
+        )
+    )
+
+
+def _partial_california_impacts(projections: list[dict]) -> dict:
+    impacts = next(item for item in projections if item["tool_name"] == "search_current_impacts")
+    assert impacts["status"] == "PARTIAL"
+    data = impacts["data"]
+    assert data["operationally_unevaluated"] or data["geospatial_unevaluated"]
+    return impacts
+
+
+def _supported_subset_count(projection: dict) -> ScopedCountClaim:
+    """CONFIRMED_SUBSET is the mode LO2 authorizes for this partial projection."""
+
+    return _impact_count_claim(
+        projection,
+        LiveOpsCountMode.CONFIRMED_SUBSET,
+        region="California",
+        product_type="SIGMET",
+    )
+
+
+def _supported_coverage_claim(projection: dict) -> CoverageLimitationClaim:
+    data = projection["data"]
+    if data["geospatial_unevaluated"]:
+        code = LiveOpsLimitationCode.GEOSPATIAL_UNEVALUATED_PRESENT
+    else:
+        code = LiveOpsLimitationCode.OPERATIONALLY_UNEVALUATED_PRESENT
+    return CoverageLimitationClaim(
+        tool_call_id=projection["tool_call_id"],
+        tool_name=projection["tool_name"],
+        code=code,
     )
 
 
@@ -1011,6 +1055,106 @@ def test_scenario_c_impacts_only_passes(runner: ModuleType) -> None:
     assert "None of them establishes physical entry" in result.answer
     assert "exact returned-set count" not in result.answer
     _assert_no_raw_tool_result(evaluation)
+
+
+def _assert_extra_verified_count_fails_shape(evaluation, projection: dict, impact_count: int) -> None:
+    result = evaluation.result
+    assert result.execution_status is LiveOpsRunStatus.COMPLETED
+    assert result.verification_outcome is LiveOpsPublicVerificationOutcome.ALL_VERIFIED
+    assert result.answer_origin is LiveOpsAnswerOrigin.DETERMINISTIC_RENDERER
+    assert evaluation.classification == "MODEL_CLAIM_FAILURE"
+    assert result.diagnostics == ()
+    assert evaluation.report["rejected_claim_count"] == 0
+    assert evaluation.report["submitted_claim_count"] == len(result.verified_claims)
+    impacts = [
+        claim
+        for claim in result.verified_claims
+        if claim.kind is LiveOpsPublicClaimKind.CONFIRMED_IMPACT
+    ]
+    counts = [
+        claim
+        for claim in result.verified_claims
+        if claim.kind is LiveOpsPublicClaimKind.SCOPED_COUNT
+    ]
+    assert len(impacts) == impact_count
+    assert len(counts) == 1
+    assert counts[0].count_mode is LiveOpsPublicCountMode.CONFIRMED_SUBSET
+    assert counts[0].count_value == projection["data"]["impact_count"]
+    assert "SCOPED_COUNT" in evaluation.report["verified_claim_kinds"]
+    assert "confirmed-subset count" in result.answer
+    assert "None of them establishes physical entry" in result.answer
+    _assert_no_raw_tool_result(evaluation)
+
+
+def test_scenario_c_complete_impacts_plus_verified_count_is_claim_failure(runner: ModuleType) -> None:
+    captured: dict = {}
+
+    def decide(kwargs):
+        projections = _projections(kwargs)
+        if projections:
+            impacts = _partial_california_impacts(projections)
+            captured["impacts"] = impacts
+            return _terminal(
+                _claims(
+                    *_impact_claims(impacts),
+                    _supported_subset_count(impacts),
+                    _supported_coverage_claim(impacts),
+                )
+            )
+        return _california_sigmet_tools()
+
+    evaluation, _budget, _client = _run(runner, "C", decide)
+    projection = captured["impacts"]
+    _assert_extra_verified_count_fails_shape(
+        evaluation,
+        projection,
+        len(projection["data"]["impacts"]),
+    )
+    assert len(projection["data"]["impacts"]) >= 1
+
+
+def test_scenario_c_incomplete_impacts_plus_verified_count_fails_before_completeness(
+    runner: ModuleType,
+) -> None:
+    """The kind filter returns before the oracle checks impact completeness.
+
+    MODEL_CLAIM_FAILURE here does not mean every recorded impact was identified.
+    The omitted impact remains in the tool projection and is absent from the
+    verified claims. _oracle_c never compares that set with impact_ground_truth().
+    """
+
+    captured: dict = {}
+
+    def decide(kwargs):
+        projections = _projections(kwargs)
+        if projections:
+            impacts = _partial_california_impacts(projections)
+            rows = _impact_claims(impacts)
+            assert len(rows) >= 2
+            captured["impacts"] = impacts
+            captured["omitted"] = rows[-1]
+            return _terminal(
+                _claims(
+                    *rows[:-1],
+                    _supported_subset_count(impacts),
+                    _supported_coverage_claim(impacts),
+                )
+            )
+        return _california_sigmet_tools()
+
+    evaluation, _budget, _client = _run(runner, "C", decide)
+    projection = captured["impacts"]
+    omitted = captured["omitted"]
+    submitted_impacts = len(projection["data"]["impacts"]) - 1
+    _assert_extra_verified_count_fails_shape(evaluation, projection, submitted_impacts)
+    verified_ids = {
+        (claim.aircraft_id, claim.hazard_id, claim.source_version, claim.encounter_id)
+        for claim in evaluation.result.verified_claims
+        if claim.kind is LiveOpsPublicClaimKind.CONFIRMED_IMPACT
+    }
+    omitted_id = (omitted.aircraft_id, omitted.hazard_id, omitted.source_version, omitted.encounter_id)
+    assert omitted_id not in verified_ids
+    assert submitted_impacts < len(projection["data"]["impacts"])
 
 
 def test_scenario_c_exact_count_on_partial_impacts_is_safe_incomplete(runner: ModuleType) -> None:
