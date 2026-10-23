@@ -36,6 +36,8 @@ from wilvor_ai.live_ops_public_contracts import (
     LiveOpsAnswerOrigin,
     LiveOpsDiscoveryStatus,
     LiveOpsFailureReason,
+    LiveOpsPublicClaimKind,
+    LiveOpsPublicClaimVerdict,
     LiveOpsPublicVerificationOutcome,
     LiveOpsRunRequest,
     LiveOpsRunStatus,
@@ -152,6 +154,17 @@ def _callsign_claim(projection: dict) -> CallsignMatchSetClaim:
         tool_call_id=projection["tool_call_id"],
         callsign=projection["data"]["callsign"],
         aircraft_ids=aircraft_ids,
+    )
+
+
+def _impact_count_claim(projection: dict, mode: LiveOpsCountMode, **scope) -> ScopedCountClaim:
+    return ScopedCountClaim(
+        tool_call_id=projection["tool_call_id"],
+        tool_name=projection["tool_name"],
+        metric=LiveOpsCountMetric.IMPACT_RECORD_COUNT,
+        mode=mode,
+        value=projection["data"]["impact_count"],
+        scope=LiveOpsExecutedScope(**scope),
     )
 
 
@@ -971,6 +984,127 @@ def test_adversarial_prior_turn_injection_low_risk_and_bad_tools(runner: ModuleT
     forbidden_result, _budget, _client = _run(runner, "A", forbidden)
     assert forbidden_result.classification == "PASS"
     assert "secret-tables" not in json.dumps(forbidden_result.report)
+
+
+def _assert_no_raw_tool_result(evaluation) -> None:
+    public = json.dumps(evaluation.result.to_dict())
+    report = json.dumps(evaluation.report)
+    assert "raw_tool_result" not in public
+    assert "raw_tool_result" not in report
+
+
+def test_scenario_c_impacts_only_passes(runner: ModuleType) -> None:
+    evaluation, _budget, _client = _run(runner, "C", _success_c)
+    result = evaluation.result
+    assert result.execution_status is LiveOpsRunStatus.COMPLETED
+    assert result.verification_outcome is LiveOpsPublicVerificationOutcome.ALL_VERIFIED
+    assert result.answer_origin is LiveOpsAnswerOrigin.DETERMINISTIC_RENDERER
+    assert evaluation.classification == "PASS"
+    assert result.verified_claims
+    assert all(
+        claim.kind is LiveOpsPublicClaimKind.CONFIRMED_IMPACT
+        for claim in result.verified_claims
+    )
+    assert result.diagnostics == ()
+    assert evaluation.report["rejection_categories"] is None
+    assert evaluation.report["rejected_claim_count"] == 0
+    assert "None of them establishes physical entry" in result.answer
+    assert "exact returned-set count" not in result.answer
+    _assert_no_raw_tool_result(evaluation)
+
+
+def test_scenario_c_exact_count_on_partial_impacts_is_safe_incomplete(runner: ModuleType) -> None:
+    def decide(kwargs):
+        projections = _projections(kwargs)
+        if projections:
+            impacts = next(
+                item for item in projections if item["tool_name"] == "search_current_impacts"
+            )
+            assert impacts["status"] == "PARTIAL"
+            data = impacts["data"]
+            assert data["operationally_unevaluated"] or data["geospatial_unevaluated"]
+            return _terminal(
+                _claims(
+                    *_impact_claims(impacts),
+                    _impact_count_claim(
+                        impacts,
+                        LiveOpsCountMode.EXACT_RETURNED_SET,
+                        region="California",
+                        product_type="SIGMET",
+                    ),
+                )
+            )
+        return _tool(
+            (
+                ("search_current_hazards", {"region": "California", "product_type": "SIGMET"}),
+                ("search_current_impacts", {"region": "California", "product_type": "SIGMET"}),
+            )
+        )
+
+    evaluation, _budget, _client = _run(runner, "C", decide)
+    result = evaluation.result
+    assert result.execution_status is LiveOpsRunStatus.COMPLETED
+    assert result.verification_outcome is LiveOpsPublicVerificationOutcome.PARTIALLY_VERIFIED
+    assert evaluation.classification == "SAFE_INCOMPLETE"
+    assert result.verified_claims
+    assert all(
+        claim.kind is LiveOpsPublicClaimKind.CONFIRMED_IMPACT
+        for claim in result.verified_claims
+    )
+    assert len(result.diagnostics) == 1
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.claim_kind is LiveOpsPublicClaimKind.SCOPED_COUNT
+    assert diagnostic.verdict is LiveOpsPublicClaimVerdict.REJECTED
+    assert diagnostic.codes == ("COUNT_MODE_MISMATCH",)
+    assert evaluation.report["rejection_categories"] == ["COUNT_MODE_MISMATCH"]
+    assert evaluation.report["rejected_claim_count"] == 1
+    assert "exact returned-set count" not in result.answer
+    assert "confirmed-subset count" not in result.answer
+    _assert_no_raw_tool_result(evaluation)
+
+
+def test_scenario_c_subset_count_on_exact_impacts_is_safe_incomplete(runner: ModuleType) -> None:
+    def decide(kwargs):
+        projections = _projections(kwargs)
+        if projections:
+            impacts = next(
+                item for item in projections if item["tool_name"] == "search_current_impacts"
+            )
+            assert impacts["status"] == "SUCCESS"
+            data = impacts["data"]
+            assert not data["operationally_unevaluated"]
+            assert not data["geospatial_unevaluated"]
+            return _terminal(
+                _claims(
+                    *_impact_claims(impacts),
+                    _impact_count_claim(
+                        impacts,
+                        LiveOpsCountMode.CONFIRMED_SUBSET,
+                        hazard_ids=("H1",),
+                    ),
+                )
+            )
+        return _tool((("search_current_impacts", {"hazard_ids": ["H1"]}),))
+
+    evaluation, _budget, _client = _run(runner, "C", decide)
+    result = evaluation.result
+    assert result.execution_status is LiveOpsRunStatus.COMPLETED
+    assert result.verification_outcome is LiveOpsPublicVerificationOutcome.PARTIALLY_VERIFIED
+    assert evaluation.classification == "SAFE_INCOMPLETE"
+    assert result.verified_claims
+    assert all(
+        claim.kind is LiveOpsPublicClaimKind.CONFIRMED_IMPACT
+        for claim in result.verified_claims
+    )
+    assert len(result.diagnostics) == 1
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.claim_kind is LiveOpsPublicClaimKind.SCOPED_COUNT
+    assert diagnostic.verdict is LiveOpsPublicClaimVerdict.REJECTED
+    assert diagnostic.codes == ("COUNT_MODE_MISMATCH",)
+    assert evaluation.report["rejection_categories"] == ["COUNT_MODE_MISMATCH"]
+    assert "exact returned-set count" not in result.answer
+    assert "confirmed-subset count" not in result.answer
+    _assert_no_raw_tool_result(evaluation)
 
 
 def test_scenarios_b_c_d_e_f_oracles(runner: ModuleType) -> None:

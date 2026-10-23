@@ -418,10 +418,28 @@ def test_instruction_text_is_stable_and_covers_the_catalog():
         assert reason.value in first
     for kind in LiveOpsClaimKind:
         assert kind.value in first
+    assert LIVE_OPS_INSTRUCTION_REF == "wilvor.live_ops.specialist.v1"
     assert "physical weather penetration" in first
     assert "source freshness" in first
     assert "ATC" in first
     assert "LO2" in first
+    assert "Use EXACT_RETURNED_SET only when the cited projection status is SUCCESS" in first
+    assert "operationally_unevaluated and geospatial_unevaluated are both empty" in first
+    assert "no retrieval limitation is present" in first
+    assert "Use CONFIRMED_SUBSET only when the cited projection status is PARTIAL" in first
+    assert "operationally_unevaluated or geospatial_unevaluated records are present" in first
+    assert "not a complete population count" in first
+    assert "Do not treat a record count as a distinct-entity count." in first
+    assert "IMPACT_RECORD_COUNT counts recorded impact rows." in first
+    assert "UNIQUE_AIRCRAFT_COUNT counts distinct aircraft identities." in first
+    assert "search_current_hazards supports hazard counts, not impact-record or aircraft counts." in first
+    assert "Network inventory counts require get_observed_network_state and EXACT_RETURNED_SET." in first
+    assert "They do not establish complete network coverage." in first
+    assert "omit the count claim" in first
+    assert "Do not turn a partial count into a global total." in first
+    assert "prefer supported CONFIRMED_IMPACT claims" in first
+    assert "Do not add an aggregate count unless the question asks for one" in first
+    assert "authoritative zero" in first
     schema = live_ops_terminal_json_schema()
     kinds = set()
     for branch in schema["anyOf"]:
@@ -438,6 +456,23 @@ def test_instruction_text_is_stable_and_covers_the_catalog():
     )
     assert "projection_id" in encounter["properties"]
     assert "projection_id" not in encounter["required"]
+    scoped = next(
+        item
+        for item in schema["anyOf"][0]["properties"]["claims"]["items"]["anyOf"]
+        if item["properties"]["kind"]["const"] == "SCOPED_COUNT"
+    )
+    assert scoped["additionalProperties"] is False
+    assert set(scoped["required"]) == {
+        "kind",
+        "tool_call_id",
+        "tool_name",
+        "metric",
+        "mode",
+        "value",
+        "scope",
+    }
+    assert scoped["properties"]["mode"]["enum"] == [item.value for item in LiveOpsCountMode]
+    assert scoped["properties"]["metric"]["enum"] == [item.value for item in LiveOpsCountMetric]
     wire = live_ops_terminal_transport_schema()
     assert "CONFIRMED_IMPACT" not in json.dumps(wire)
     assert set(wire["required"]) == {"transport_version", "kind", "decision_json"}
