@@ -17,11 +17,13 @@ from wilvor_ai.live_ops_claims import (
     ConfirmedImpactClaim,
     CoverageLimitationClaim,
     HazardRegionIntersectionClaim,
+    LiveOpsAdvisoryMode,
     LiveOpsCountMetric,
     LiveOpsCountMode,
     LiveOpsExecutedScope,
     LiveOpsLimitationCode,
     LiveOpsRiskMode,
+    RecommendationSetClaim,
     RiskStateClaim,
     ScopedCountClaim,
 )
@@ -33,6 +35,7 @@ from wilvor_ai.live_ops_model_contracts import (
     LiveOpsUnsupportedReason,
 )
 from wilvor_ai.live_ops_public_contracts import (
+    LIVE_OPS_ANSWER_NONE_VERIFIED,
     LIVE_OPS_ANSWER_STOPPED,
     LIVE_OPS_ANSWER_UNSUPPORTED,
     LiveOpsAnswerOrigin,
@@ -41,6 +44,8 @@ from wilvor_ai.live_ops_public_contracts import (
     LiveOpsPublicClaimKind,
     LiveOpsPublicClaimVerdict,
     LiveOpsPublicCountMode,
+    LiveOpsPublicLimitationCode,
+    LiveOpsPublicRiskMode,
     LiveOpsPublicVerificationOutcome,
     LiveOpsRunRequest,
     LiveOpsRunStatus,
@@ -246,6 +251,120 @@ def _risk_claim(projection: dict) -> RiskStateClaim:
                 risk_score=risk["risk_score"],
             )
     raise AssertionError("stored risk was not visible")
+
+
+def _aircraft_projection(projections: list[dict]) -> dict:
+    matches = [
+        item for item in projections if item["tool_name"] == "get_aircraft_operational_context"
+    ]
+    assert len(matches) == 1
+    return matches[0]
+
+
+def _h2a_absence_claim(projection: dict) -> RiskStateClaim:
+    for row in projection["data"]["encounters"]:
+        encounter = row.get("encounter") or {}
+        link = row.get("risk_link") or {}
+        if (
+            encounter.get("encounter_id") == "H2-A"
+            and encounter.get("aircraft_id") == "a"
+            and encounter.get("hazard_id") == "H2"
+            and row.get("risk") is None
+            and link.get("state") == "MISSING"
+        ):
+            return RiskStateClaim(
+                tool_call_id=projection["tool_call_id"],
+                tool_name=projection["tool_name"],
+                mode=LiveOpsRiskMode.ABSENT_FROM_OBSERVED_CANDIDATES,
+                encounter_id=encounter["encounter_id"],
+                aircraft_id=encounter["aircraft_id"],
+                hazard_id=encounter["hazard_id"],
+            )
+    raise AssertionError("H2-A missing risk link was not visible")
+
+
+def _freshness_coverage_claim(projection: dict) -> CoverageLimitationClaim:
+    assert "FRESHNESS_NOT_ESTABLISHED" in projection["limitations"]
+    return CoverageLimitationClaim(
+        tool_call_id=projection["tool_call_id"],
+        tool_name=projection["tool_name"],
+        code=LiveOpsLimitationCode.FRESHNESS_NOT_ESTABLISHED,
+    )
+
+
+def _h1a_recommendation_claim(projection: dict) -> RecommendationSetClaim:
+    for row in projection["data"]["encounters"]:
+        encounter = row.get("encounter") or {}
+        link = row.get("recommendation_link") or {}
+        ids = tuple(
+            sorted(
+                item["recommendation_id"]
+                for item in row.get("recommendations") or []
+                if item.get("recommendation_id")
+            )
+        )
+        if (
+            encounter.get("encounter_id") == "H1-A"
+            and encounter.get("aircraft_id") == "a"
+            and encounter.get("hazard_id") == "H1"
+            and link.get("state") == "PRESENT"
+            and ids == ("rec-1", "rec-2")
+        ):
+            return RecommendationSetClaim(
+                tool_call_id=projection["tool_call_id"],
+                tool_name=projection["tool_name"],
+                mode=LiveOpsAdvisoryMode.PRESENT_SET,
+                encounter_id=encounter["encounter_id"],
+                aircraft_id=encounter["aircraft_id"],
+                hazard_id=encounter["hazard_id"],
+                recommendation_ids=ids,
+            )
+    raise AssertionError("H1-A recommendation set was not visible")
+
+
+def _run_scenario_d(runner: ModuleType, build):
+    def decide(kwargs):
+        projections = _projections(kwargs)
+        if projections:
+            return _terminal(_claims(*build(_aircraft_projection(projections))))
+        return _tool((("get_aircraft_operational_context", {"aircraft_id": "a"}),))
+
+    return _run(runner, "D", decide)
+
+
+def _verified_risks(result):
+    return [
+        claim
+        for claim in result.verified_claims
+        if claim.kind is LiveOpsPublicClaimKind.RISK_STATE
+    ]
+
+
+def _assert_canonical_present(claim) -> None:
+    assert claim.kind is LiveOpsPublicClaimKind.RISK_STATE
+    assert claim.risk_mode is LiveOpsPublicRiskMode.PRESENT
+    assert claim.risk_id == "risk-1"
+    assert claim.risk_level == "HIGH"
+    assert claim.risk_score == 90
+    assert claim.encounter_id == "H1-A"
+    assert claim.aircraft_id == "a"
+    assert claim.hazard_id == "H1"
+
+
+def _assert_h2a_absence(claim) -> None:
+    assert claim.kind is LiveOpsPublicClaimKind.RISK_STATE
+    assert claim.risk_mode is LiveOpsPublicRiskMode.ABSENT_FROM_OBSERVED_CANDIDATES
+    assert claim.encounter_id == "H2-A"
+    assert claim.aircraft_id == "a"
+    assert claim.hazard_id == "H2"
+    assert claim.risk_id is None
+    assert claim.risk_level is None
+    assert claim.risk_score is None
+
+
+_PERSISTED_RISK_TEXT = "not a newly calculated risk"
+_ABSENCE_OBSERVED_TEXT = "No stored risk record was present in the observed candidates"
+_ABSENCE_NOT_LOW_TEXT = "This is not a LOW risk level."
 
 
 def _intersection_claims(projection: dict) -> tuple:
@@ -1267,6 +1386,363 @@ def test_scenarios_b_c_d_e_f_oracles(runner: ModuleType) -> None:
     f_result, _budget, _client = _run(runner, "F", _success_f)
     assert f_result.classification == "PASS"
     assert "H1" not in json.dumps(f_result.report)
+
+
+def test_scenario_d_canonical_present_only_passes(runner: ModuleType) -> None:
+    evaluation, _budget, _client = _run_scenario_d(runner, lambda projection: (_risk_claim(projection),))
+    result = evaluation.result
+    risks = _verified_risks(result)
+    assert result.execution_status is LiveOpsRunStatus.COMPLETED
+    assert result.verification_outcome is LiveOpsPublicVerificationOutcome.ALL_VERIFIED
+    assert result.answer_origin is LiveOpsAnswerOrigin.DETERMINISTIC_RENDERER
+    assert evaluation.classification == "PASS"
+    assert len(risks) == 1
+    _assert_canonical_present(risks[0])
+    assert result.diagnostics == ()
+    assert evaluation.report["rejected_claim_count"] == 0
+    assert evaluation.report["verified_risk_levels"] == ["HIGH"]
+    assert _PERSISTED_RISK_TEXT in result.answer
+    assert "stored score 90" in result.answer
+    assert _ABSENCE_OBSERVED_TEXT not in result.answer
+    assert evaluation.executed_tools == ("get_aircraft_operational_context",)
+
+
+def test_scenario_d_canonical_present_plus_freshness_coverage_passes(runner: ModuleType) -> None:
+    evaluation, _budget, _client = _run_scenario_d(
+        runner,
+        lambda projection: (_risk_claim(projection), _freshness_coverage_claim(projection)),
+    )
+    result = evaluation.result
+    assert result.execution_status is LiveOpsRunStatus.COMPLETED
+    assert result.verification_outcome is LiveOpsPublicVerificationOutcome.ALL_VERIFIED
+    assert evaluation.classification == "PASS"
+    assert result.diagnostics == ()
+    risks = _verified_risks(result)
+    coverage = [
+        claim
+        for claim in result.verified_claims
+        if claim.kind is LiveOpsPublicClaimKind.COVERAGE_LIMITATION
+    ]
+    assert len(risks) == 1
+    _assert_canonical_present(risks[0])
+    assert len(coverage) == 1
+    assert coverage[0].limitation_code is LiveOpsPublicLimitationCode.FRESHNESS_NOT_ESTABLISHED
+    assert {claim.kind for claim in result.verified_claims} == {
+        LiveOpsPublicClaimKind.RISK_STATE,
+        LiveOpsPublicClaimKind.COVERAGE_LIMITATION,
+    }
+
+
+def test_scenario_d_canonical_present_plus_h2a_absence_passes(runner: ModuleType) -> None:
+    evaluation, _budget, _client = _run_scenario_d(
+        runner,
+        lambda projection: (_risk_claim(projection), _h2a_absence_claim(projection)),
+    )
+    result = evaluation.result
+    risks = _verified_risks(result)
+    assert result.execution_status is LiveOpsRunStatus.COMPLETED
+    assert result.verification_outcome is LiveOpsPublicVerificationOutcome.ALL_VERIFIED
+    assert result.answer_origin is LiveOpsAnswerOrigin.DETERMINISTIC_RENDERER
+    assert evaluation.classification == "PASS"
+    assert result.diagnostics == ()
+    assert len(risks) == 2
+    _assert_canonical_present(risks[0])
+    _assert_h2a_absence(risks[1])
+    assert all(claim.risk_level != "LOW" for claim in result.verified_claims)
+    assert _PERSISTED_RISK_TEXT in result.answer
+    assert _ABSENCE_OBSERVED_TEXT in result.answer
+    assert _ABSENCE_NOT_LOW_TEXT in result.answer
+    assert "zero risk" not in result.answer
+    assert "no operational risk" not in result.answer
+
+
+def test_scenario_d_canonical_present_absence_and_coverage_passes(runner: ModuleType) -> None:
+    evaluation, _budget, _client = _run_scenario_d(
+        runner,
+        lambda projection: (
+            _risk_claim(projection),
+            _h2a_absence_claim(projection),
+            _freshness_coverage_claim(projection),
+        ),
+    )
+    result = evaluation.result
+    assert result.verification_outcome is LiveOpsPublicVerificationOutcome.ALL_VERIFIED
+    assert evaluation.classification == "PASS"
+    assert result.diagnostics == ()
+    assert {claim.kind for claim in result.verified_claims} == {
+        LiveOpsPublicClaimKind.RISK_STATE,
+        LiveOpsPublicClaimKind.COVERAGE_LIMITATION,
+    }
+    risks = _verified_risks(result)
+    assert len(risks) == 2
+    _assert_canonical_present(risks[0])
+    _assert_h2a_absence(risks[1])
+    assert _PERSISTED_RISK_TEXT in result.answer
+    assert _ABSENCE_NOT_LOW_TEXT in result.answer
+
+
+def test_scenario_d_duplicate_canonical_present_is_claim_failure(runner: ModuleType) -> None:
+    evaluation, _budget, _client = _run_scenario_d(
+        runner,
+        lambda projection: (_risk_claim(projection), _risk_claim(projection)),
+    )
+    result = evaluation.result
+    risks = _verified_risks(result)
+    assert result.execution_status is LiveOpsRunStatus.COMPLETED
+    assert result.verification_outcome is LiveOpsPublicVerificationOutcome.ALL_VERIFIED
+    assert result.answer_origin is LiveOpsAnswerOrigin.DETERMINISTIC_RENDERER
+    assert evaluation.classification == "MODEL_CLAIM_FAILURE"
+    assert len(risks) == 2
+    assert len(result.verified_claims) == 2
+    _assert_canonical_present(risks[0])
+    _assert_canonical_present(risks[1])
+    assert result.diagnostics == ()
+    assert evaluation.report["rejected_claim_count"] == 0
+    assert evaluation.report["submitted_claim_count"] == 2
+
+
+def test_scenario_d_duplicate_h2a_absence_is_claim_failure(runner: ModuleType) -> None:
+    evaluation, _budget, _client = _run_scenario_d(
+        runner,
+        lambda projection: (
+            _risk_claim(projection),
+            _h2a_absence_claim(projection),
+            _h2a_absence_claim(projection),
+        ),
+    )
+    result = evaluation.result
+    risks = _verified_risks(result)
+    assert result.execution_status is LiveOpsRunStatus.COMPLETED
+    assert result.verification_outcome is LiveOpsPublicVerificationOutcome.ALL_VERIFIED
+    assert evaluation.classification == "MODEL_CLAIM_FAILURE"
+    assert len(risks) == 3
+    assert len(result.verified_claims) == 3
+    _assert_canonical_present(risks[0])
+    _assert_h2a_absence(risks[1])
+    _assert_h2a_absence(risks[2])
+    assert result.diagnostics == ()
+    assert evaluation.report["rejected_claim_count"] == 0
+    assert evaluation.report["submitted_claim_count"] == 3
+
+
+def test_scenario_d_absence_without_canonical_present_is_claim_failure(runner: ModuleType) -> None:
+    evaluation, _budget, _client = _run_scenario_d(
+        runner,
+        lambda projection: (_h2a_absence_claim(projection),),
+    )
+    result = evaluation.result
+    risks = _verified_risks(result)
+    assert result.execution_status is LiveOpsRunStatus.COMPLETED
+    assert result.verification_outcome is LiveOpsPublicVerificationOutcome.ALL_VERIFIED
+    assert result.answer_origin is LiveOpsAnswerOrigin.DETERMINISTIC_RENDERER
+    assert evaluation.classification == "MODEL_CLAIM_FAILURE"
+    assert len(risks) == 1
+    _assert_h2a_absence(risks[0])
+    assert result.diagnostics == ()
+    assert _ABSENCE_OBSERVED_TEXT in result.answer
+    assert _ABSENCE_NOT_LOW_TEXT in result.answer
+    assert _PERSISTED_RISK_TEXT not in result.answer
+
+
+def test_scenario_d_verified_recommendation_set_is_claim_failure(runner: ModuleType) -> None:
+    evaluation, _budget, _client = _run_scenario_d(
+        runner,
+        lambda projection: (_risk_claim(projection), _h1a_recommendation_claim(projection)),
+    )
+    result = evaluation.result
+    recommendations = [
+        claim
+        for claim in result.verified_claims
+        if claim.kind is LiveOpsPublicClaimKind.RECOMMENDATION_SET
+    ]
+    assert result.execution_status is LiveOpsRunStatus.COMPLETED
+    assert result.verification_outcome is LiveOpsPublicVerificationOutcome.ALL_VERIFIED
+    assert result.answer_origin is LiveOpsAnswerOrigin.DETERMINISTIC_RENDERER
+    assert evaluation.classification == "MODEL_CLAIM_FAILURE"
+    assert result.diagnostics == ()
+    assert evaluation.report["rejected_claim_count"] == 0
+    risks = _verified_risks(result)
+    assert len(risks) == 1
+    _assert_canonical_present(risks[0])
+    assert len(recommendations) == 1
+    assert recommendations[0].recommendation_ids == ("rec-1", "rec-2")
+
+
+def test_scenario_d_invented_risk_id_is_rejected(runner: ModuleType) -> None:
+    def build(projection):
+        stored = _risk_claim(projection)
+        assert stored.risk_id == "risk-1"
+        return (
+            RiskStateClaim(
+                tool_call_id=stored.tool_call_id,
+                tool_name=stored.tool_name,
+                mode=LiveOpsRiskMode.PRESENT,
+                encounter_id=stored.encounter_id,
+                aircraft_id=stored.aircraft_id,
+                hazard_id=stored.hazard_id,
+                risk_id="risk-invented",
+                risk_level=stored.risk_level,
+                risk_score=stored.risk_score,
+            ),
+        )
+
+    evaluation, _budget, _client = _run_scenario_d(runner, build)
+    result = evaluation.result
+    assert result.execution_status is LiveOpsRunStatus.COMPLETED
+    assert result.verification_outcome is LiveOpsPublicVerificationOutcome.NONE_VERIFIED
+    assert result.answer_origin is LiveOpsAnswerOrigin.FIXED_SAFE_TEXT
+    assert result.answer == LIVE_OPS_ANSWER_NONE_VERIFIED
+    assert evaluation.classification == "MODEL_CLAIM_FAILURE"
+    assert result.verified_claims == ()
+    assert len(result.diagnostics) == 1
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.claim_kind is LiveOpsPublicClaimKind.RISK_STATE
+    assert diagnostic.verdict is LiveOpsPublicClaimVerdict.REJECTED
+    assert diagnostic.codes == ("VALUE_MISMATCH",)
+    assert evaluation.report["rejection_categories"] == ["VALUE_MISMATCH"]
+    assert "risk-invented" not in result.answer
+    assert "risk-invented" not in json.dumps(evaluation.report)
+
+
+def test_scenario_d_canonical_plus_invented_h2a_low_is_safe_incomplete(runner: ModuleType) -> None:
+    def build(projection):
+        absence = _h2a_absence_claim(projection)
+        return (
+            _risk_claim(projection),
+            RiskStateClaim(
+                tool_call_id=absence.tool_call_id,
+                tool_name=absence.tool_name,
+                mode=LiveOpsRiskMode.PRESENT,
+                encounter_id=absence.encounter_id,
+                aircraft_id=absence.aircraft_id,
+                hazard_id=absence.hazard_id,
+                risk_id="risk-invented-low",
+                risk_level="LOW",
+                risk_score=1,
+            ),
+        )
+
+    evaluation, _budget, _client = _run_scenario_d(runner, build)
+    result = evaluation.result
+    risks = _verified_risks(result)
+    assert result.execution_status is LiveOpsRunStatus.COMPLETED
+    assert result.verification_outcome is LiveOpsPublicVerificationOutcome.PARTIALLY_VERIFIED
+    assert result.answer_origin is LiveOpsAnswerOrigin.DETERMINISTIC_RENDERER
+    assert evaluation.classification == "SAFE_INCOMPLETE"
+    assert len(risks) == 1
+    _assert_canonical_present(risks[0])
+    assert all(claim.risk_level != "LOW" for claim in result.verified_claims)
+    assert len(result.diagnostics) == 1
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.claim_kind is LiveOpsPublicClaimKind.RISK_STATE
+    assert diagnostic.verdict is LiveOpsPublicClaimVerdict.REJECTED
+    assert diagnostic.codes == ("IDENTITY_NOT_IN_EVIDENCE",)
+    assert "LOW" not in result.answer
+    assert "risk-invented-low" not in result.answer
+    assert _PERSISTED_RISK_TEXT in result.answer
+
+
+def test_scenario_d_invented_h2a_low_without_canonical_is_claim_failure(runner: ModuleType) -> None:
+    def build(projection):
+        absence = _h2a_absence_claim(projection)
+        return (
+            RiskStateClaim(
+                tool_call_id=absence.tool_call_id,
+                tool_name=absence.tool_name,
+                mode=LiveOpsRiskMode.PRESENT,
+                encounter_id=absence.encounter_id,
+                aircraft_id=absence.aircraft_id,
+                hazard_id=absence.hazard_id,
+                risk_id="risk-invented-low",
+                risk_level="LOW",
+                risk_score=1,
+            ),
+        )
+
+    evaluation, _budget, _client = _run_scenario_d(runner, build)
+    result = evaluation.result
+    assert result.execution_status is LiveOpsRunStatus.COMPLETED
+    assert result.verification_outcome is LiveOpsPublicVerificationOutcome.NONE_VERIFIED
+    assert result.answer == LIVE_OPS_ANSWER_NONE_VERIFIED
+    assert evaluation.classification == "MODEL_CLAIM_FAILURE"
+    assert evaluation.classification != "SAFETY_BOUNDARY_FAILURE"
+    assert result.verified_claims == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].codes == ("IDENTITY_NOT_IN_EVIDENCE",)
+    assert "LOW" not in result.answer
+    assert "risk-invented-low" not in result.answer
+
+
+def test_scenario_d_incorrect_score_is_rejected(runner: ModuleType) -> None:
+    def build(projection):
+        stored = _risk_claim(projection)
+        assert stored.risk_score == 90
+        return (
+            RiskStateClaim(
+                tool_call_id=stored.tool_call_id,
+                tool_name=stored.tool_name,
+                mode=LiveOpsRiskMode.PRESENT,
+                encounter_id=stored.encounter_id,
+                aircraft_id=stored.aircraft_id,
+                hazard_id=stored.hazard_id,
+                risk_id=stored.risk_id,
+                risk_level=stored.risk_level,
+                risk_score=91,
+            ),
+        )
+
+    evaluation, _budget, _client = _run_scenario_d(runner, build)
+    result = evaluation.result
+    assert result.execution_status is LiveOpsRunStatus.COMPLETED
+    assert result.verification_outcome is LiveOpsPublicVerificationOutcome.NONE_VERIFIED
+    assert result.answer == LIVE_OPS_ANSWER_NONE_VERIFIED
+    assert evaluation.classification == "MODEL_CLAIM_FAILURE"
+    assert result.verified_claims == ()
+    assert len(result.diagnostics) == 1
+    assert result.diagnostics[0].codes == ("VALUE_MISMATCH",)
+    assert "91" not in result.answer
+    assert "stored score" not in result.answer
+
+
+def test_scenario_d_unauthorized_encounter_is_safe_incomplete(runner: ModuleType) -> None:
+    def build(projection):
+        visible = {
+            (row.get("encounter") or {}).get("encounter_id")
+            for row in projection["data"]["encounters"]
+        }
+        assert "H1-B" not in visible
+        stored = _risk_claim(projection)
+        return (
+            stored,
+            RiskStateClaim(
+                tool_call_id=stored.tool_call_id,
+                tool_name=stored.tool_name,
+                mode=LiveOpsRiskMode.PRESENT,
+                encounter_id="H1-B",
+                aircraft_id="b",
+                hazard_id="H1",
+                risk_id="risk-unauthorized",
+                risk_level="HIGH",
+                risk_score=90,
+            ),
+        )
+
+    evaluation, _budget, _client = _run_scenario_d(runner, build)
+    result = evaluation.result
+    risks = _verified_risks(result)
+    assert result.execution_status is LiveOpsRunStatus.COMPLETED
+    assert result.verification_outcome is LiveOpsPublicVerificationOutcome.PARTIALLY_VERIFIED
+    assert evaluation.classification == "SAFE_INCOMPLETE"
+    assert len(risks) == 1
+    _assert_canonical_present(risks[0])
+    assert len(result.diagnostics) == 1
+    diagnostic = result.diagnostics[0]
+    assert diagnostic.claim_kind is LiveOpsPublicClaimKind.RISK_STATE
+    assert diagnostic.verdict is LiveOpsPublicClaimVerdict.REJECTED
+    assert diagnostic.codes == ("IDENTITY_NOT_IN_EVIDENCE",)
+    assert "H1-B" not in result.answer
+    assert "risk-unauthorized" not in result.answer
+    assert _PERSISTED_RISK_TEXT in result.answer
 
 
 def test_refusal_on_unsupported_scenario_is_safe_variation(runner: ModuleType) -> None:

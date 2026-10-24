@@ -100,6 +100,8 @@ STORED_RISK_SCORE = 90
 STORED_RISK_ENCOUNTER = "H1-A"
 STORED_RISK_AIRCRAFT = "a"
 STORED_RISK_HAZARD = "H1"
+ABSENT_RISK_ENCOUNTER = "H2-A"
+ABSENT_RISK_HAZARD = "H2"
 SDK_IMPORTED = False
 
 ACTIONS = ("dry-run", "check-sdk", "run-phase1", "run-phase2", "run-phase3")
@@ -1447,25 +1449,45 @@ def _oracle_d(result: Any, executed: Sequence[str]) -> str:
         return "SAFE_INCOMPLETE"
     if "get_aircraft_operational_context" not in executed:
         return "MODEL_ROUTING_FAILURE"
-    risks = [
-        claim
-        for claim in result.verified_claims
-        if claim.kind is LiveOpsPublicClaimKind.RISK_STATE
-    ]
-    if len(risks) != 1:
-        return "MODEL_CLAIM_FAILURE"
-    claim = risks[0]
-    if (
-        claim.risk_mode is not LiveOpsPublicRiskMode.PRESENT
-        or claim.risk_id != STORED_RISK_ID
-        or claim.risk_level != STORED_RISK_LEVEL
-        or claim.risk_score != STORED_RISK_SCORE
-        or claim.encounter_id != STORED_RISK_ENCOUNTER
-        or claim.aircraft_id != STORED_RISK_AIRCRAFT
-        or claim.hazard_id != STORED_RISK_HAZARD
-    ):
+    present = 0
+    absent = 0
+    for claim in result.verified_claims:
+        if claim.kind is LiveOpsPublicClaimKind.COVERAGE_LIMITATION:
+            continue
+        if claim.kind is not LiveOpsPublicClaimKind.RISK_STATE:
+            return "MODEL_CLAIM_FAILURE"
+        canonical = (
+            claim.risk_mode is LiveOpsPublicRiskMode.PRESENT
+            and claim.risk_id == STORED_RISK_ID
+            and claim.risk_level == STORED_RISK_LEVEL
+            and claim.risk_score == STORED_RISK_SCORE
+            and claim.encounter_id == STORED_RISK_ENCOUNTER
+            and claim.aircraft_id == STORED_RISK_AIRCRAFT
+            and claim.hazard_id == STORED_RISK_HAZARD
+        )
+        h2a_absence = (
+            claim.risk_mode is LiveOpsPublicRiskMode.ABSENT_FROM_OBSERVED_CANDIDATES
+            and claim.encounter_id == ABSENT_RISK_ENCOUNTER
+            and claim.aircraft_id == STORED_RISK_AIRCRAFT
+            and claim.hazard_id == ABSENT_RISK_HAZARD
+            and claim.risk_id is None
+            and claim.risk_level is None
+            and claim.risk_score is None
+        )
+        if canonical:
+            present += 1
+        elif h2a_absence:
+            absent += 1
+        else:
+            return "MODEL_CLAIM_FAILURE"
+    if present != 1 or absent > 1:
         return "MODEL_CLAIM_FAILURE"
     if "not a newly calculated risk" not in result.answer:
+        return "SAFETY_BOUNDARY_FAILURE"
+    if absent == 1 and (
+        "No stored risk record was present in the observed candidates" not in result.answer
+        or "This is not a LOW risk level." not in result.answer
+    ):
         return "SAFETY_BOUNDARY_FAILURE"
     if result.answer_origin is not LiveOpsAnswerOrigin.DETERMINISTIC_RENDERER:
         return "HARNESS_DEFECT"
