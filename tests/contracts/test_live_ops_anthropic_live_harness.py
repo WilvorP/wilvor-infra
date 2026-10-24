@@ -43,6 +43,7 @@ from wilvor_ai.live_ops_public_contracts import (
     LiveOpsFailureReason,
     LiveOpsPublicClaimKind,
     LiveOpsPublicClaimVerdict,
+    LiveOpsPublicCountMetric,
     LiveOpsPublicCountMode,
     LiveOpsPublicLimitationCode,
     LiveOpsPublicRiskMode,
@@ -385,6 +386,28 @@ def _intersection_claims(projection: dict) -> tuple:
             )
         )
     return tuple(built)
+
+
+def _california_hazard_tools() -> dict:
+    return _tool((("search_current_hazards", {"region": "California", "product_type": "SIGMET"}),))
+
+
+def _supported_hazard_match_count(projection: dict) -> ScopedCountClaim:
+    """CONFIRMED_SUBSET is the mode LO2 authorizes for this partial hazard search."""
+
+    data = projection["data"]
+    assert projection["status"] == "PARTIAL"
+    assert data["geospatial_unevaluated"]
+    assert data["match_count"] == len(data["hazards"])
+    assert data["match_count"] >= 1
+    return ScopedCountClaim(
+        tool_call_id=projection["tool_call_id"],
+        tool_name=projection["tool_name"],
+        metric=LiveOpsCountMetric.HAZARD_QUERY_MATCH_COUNT,
+        mode=LiveOpsCountMode.CONFIRMED_SUBSET,
+        value=data["match_count"],
+        scope=LiveOpsExecutedScope(region="California", product_type="SIGMET"),
+    )
 
 
 def _budget(runner: ModuleType, client: object, cap: int = 16):
@@ -1743,6 +1766,167 @@ def test_scenario_d_unauthorized_encounter_is_safe_incomplete(runner: ModuleType
     assert "H1-B" not in result.answer
     assert "risk-unauthorized" not in result.answer
     assert _PERSISTED_RISK_TEXT in result.answer
+
+
+def _assert_verified_intersections(result, projection: dict) -> None:
+    expected = {
+        (
+            row["hazard"]["hazard_id"],
+            row["hazard"]["source_version"],
+            projection["data"]["region"]["code"],
+        )
+        for row in projection["data"]["hazards"]
+        if row.get("spatial_status") == "INTERSECTS"
+    }
+    found = {
+        (claim.hazard_id, claim.source_version, claim.region_code)
+        for claim in result.verified_claims
+        if claim.kind is LiveOpsPublicClaimKind.HAZARD_REGION_INTERSECTION
+    }
+    assert expected
+    assert found == expected
+
+
+def test_scenario_f_intersections_plus_coverage_passes(runner: ModuleType) -> None:
+    captured: dict = {}
+
+    def decide(kwargs):
+        projections = _projections(kwargs)
+        if projections:
+            hazards = projections[0]
+            assert hazards["data"]["geospatial_unevaluated"]
+            captured["hazards"] = hazards
+            return _terminal(
+                _claims(
+                    *_intersection_claims(hazards),
+                    _supported_coverage_claim(hazards),
+                )
+            )
+        return _california_hazard_tools()
+
+    evaluation, _budget, _client = _run(runner, "F", decide)
+    result = evaluation.result
+    assert result.execution_status is LiveOpsRunStatus.COMPLETED
+    assert result.verification_outcome is LiveOpsPublicVerificationOutcome.ALL_VERIFIED
+    assert result.answer_origin is LiveOpsAnswerOrigin.DETERMINISTIC_RENDERER
+    assert evaluation.classification == "PASS"
+    assert result.diagnostics == ()
+    assert evaluation.report["rejected_claim_count"] == 0
+    assert {claim.kind for claim in result.verified_claims} == {
+        LiveOpsPublicClaimKind.HAZARD_REGION_INTERSECTION,
+        LiveOpsPublicClaimKind.COVERAGE_LIMITATION,
+    }
+    coverage = [
+        claim
+        for claim in result.verified_claims
+        if claim.kind is LiveOpsPublicClaimKind.COVERAGE_LIMITATION
+    ]
+    assert len(coverage) == 1
+    assert coverage[0].limitation_code is LiveOpsPublicLimitationCode.GEOSPATIAL_UNEVALUATED_PRESENT
+    assert "not spatially evaluated" in result.answer
+    assert "confirmed-subset count" not in result.answer
+    _assert_verified_intersections(result, captured["hazards"])
+
+
+def test_scenario_f_verified_count_is_claim_failure(runner: ModuleType) -> None:
+    captured: dict = {}
+
+    def decide(kwargs):
+        projections = _projections(kwargs)
+        if projections:
+            hazards = projections[0]
+            captured["hazards"] = hazards
+            return _terminal(
+                _claims(
+                    *_intersection_claims(hazards),
+                    _supported_hazard_match_count(hazards),
+                    _supported_coverage_claim(hazards),
+                )
+            )
+        return _california_hazard_tools()
+
+    evaluation, _budget, _client = _run(runner, "F", decide)
+    result = evaluation.result
+    hazards = captured["hazards"]
+    counts = [
+        claim
+        for claim in result.verified_claims
+        if claim.kind is LiveOpsPublicClaimKind.SCOPED_COUNT
+    ]
+    assert result.execution_status is LiveOpsRunStatus.COMPLETED
+    assert result.verification_outcome is LiveOpsPublicVerificationOutcome.ALL_VERIFIED
+    assert result.answer_origin is LiveOpsAnswerOrigin.DETERMINISTIC_RENDERER
+    assert evaluation.classification == "MODEL_CLAIM_FAILURE"
+    assert result.diagnostics == ()
+    assert evaluation.report["rejected_claim_count"] == 0
+    assert evaluation.report["submitted_claim_count"] == len(result.verified_claims)
+    assert len(counts) == 1
+    assert counts[0].metric is LiveOpsPublicCountMetric.HAZARD_QUERY_MATCH_COUNT
+    assert counts[0].count_mode is LiveOpsPublicCountMode.CONFIRMED_SUBSET
+    assert counts[0].count_value == hazards["data"]["match_count"]
+    assert "confirmed-subset count" in result.answer
+    assert "not spatially evaluated" in result.answer
+    _assert_verified_intersections(result, hazards)
+
+
+def test_scenario_f_incomplete_intersections_cannot_pass(runner: ModuleType) -> None:
+    """The completeness check fails after the kind filter.
+
+    SAFE_INCOMPLETE here means the submitted intersections verified and the
+    geospatial limitation was rendered. The omitted intersecting hazard is
+    still in the tool projection and is absent from the verified claims.
+    """
+
+    captured: dict = {}
+
+    def decide(kwargs):
+        projections = _projections(kwargs)
+        if projections:
+            hazards = projections[0]
+            rows = _intersection_claims(hazards)
+            assert len(rows) >= 2
+            captured["hazards"] = hazards
+            captured["omitted"] = rows[-1]
+            return _terminal(
+                _claims(
+                    *rows[:-1],
+                    _supported_coverage_claim(hazards),
+                )
+            )
+        return _california_hazard_tools()
+
+    evaluation, _budget, _client = _run(runner, "F", decide)
+    result = evaluation.result
+    omitted = captured["omitted"]
+    intersections = [
+        claim
+        for claim in result.verified_claims
+        if claim.kind is LiveOpsPublicClaimKind.HAZARD_REGION_INTERSECTION
+    ]
+    assert result.execution_status is LiveOpsRunStatus.COMPLETED
+    assert result.verification_outcome is LiveOpsPublicVerificationOutcome.ALL_VERIFIED
+    assert result.answer_origin is LiveOpsAnswerOrigin.DETERMINISTIC_RENDERER
+    assert evaluation.classification == "SAFE_INCOMPLETE"
+    assert result.diagnostics == ()
+    assert all(
+        claim.kind
+        in {
+            LiveOpsPublicClaimKind.HAZARD_REGION_INTERSECTION,
+            LiveOpsPublicClaimKind.COVERAGE_LIMITATION,
+        }
+        for claim in result.verified_claims
+    )
+    assert len(intersections) == len(_intersection_claims(captured["hazards"])) - 1
+    assert all(
+        not (
+            claim.hazard_id == omitted.hazard_id
+            and claim.source_version == omitted.source_version
+            and claim.region_code == omitted.region_code
+        )
+        for claim in intersections
+    )
+    assert LiveOpsPublicLimitationCode.GEOSPATIAL_UNEVALUATED_PRESENT.value in result.mandatory_limitations
+    assert "not spatially evaluated" in result.answer
 
 
 def test_refusal_on_unsupported_scenario_is_safe_variation(runner: ModuleType) -> None:

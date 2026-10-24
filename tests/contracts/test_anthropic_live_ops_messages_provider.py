@@ -455,12 +455,23 @@ def test_instruction_text_is_stable_and_covers_the_catalog():
         "When the user asks both which aircraft have recorded impacts and how many, supported "
         "CONFIRMED_IMPACT claims and a supported SCOPED_COUNT may both be submitted."
     )
+    hazard_region_rule = (
+        "An identification-only hazard-region question asks which hazards intersect a region "
+        "and whether the observed set is complete. It does not ask for a numeric count. "
+        "Submit only supported HAZARD_REGION_INTERSECTION claims and applicable evidence-backed "
+        "COVERAGE_LIMITATION claims. Do not submit SCOPED_COUNT, including EXACT_RETURNED_SET or "
+        "CONFIRMED_SUBSET, unless the user explicitly requests a numeric count, even when the cited "
+        "projection supports that numeric count."
+    )
     for phrase in (
         identification_rule,
+        hazard_region_rule,
         count_rule,
         both_rule,
         "A recorded impact does not prove physical weather penetration.",
         "Do not infer that the observed impacts are geographically exhaustive.",
+        "Never assert geographic completeness when spatial evaluation is incomplete.",
+        "Do not infer that the observed intersections are the full real-world set.",
         "Do not manufacture claims to satisfy a preferred output shape.",
     ):
         assert phrase in prose
@@ -506,6 +517,30 @@ def test_instruction_text_is_stable_and_covers_the_catalog():
     wire = live_ops_terminal_transport_schema()
     assert "CONFIRMED_IMPACT" not in json.dumps(wire)
     assert set(wire["required"]) == {"transport_version", "kind", "decision_json"}
+
+
+def test_hazard_region_identification_omits_unrequested_counts():
+    instruction = resolve_live_ops_instruction(LIVE_OPS_INSTRUCTION_REF)
+    prose, _guidance = instruction.split("\n\nTerminal transport rules:\n", 1)
+    schema_blob = json.dumps(live_ops_terminal_json_schema())
+    hazard_region = (
+        "An identification-only hazard-region question asks which hazards intersect a region "
+        "and whether the observed set is complete."
+    )
+    impact = "An identification-only recorded-impact question asks which aircraft have recorded impacts"
+    explicit_count = "An explicit count question asks how many, asks for a total, or requests an aggregate."
+    assert hazard_region in prose
+    assert "Submit only supported HAZARD_REGION_INTERSECTION claims and applicable evidence-backed COVERAGE_LIMITATION claims." in prose
+    assert (
+        "Do not submit SCOPED_COUNT, including EXACT_RETURNED_SET or CONFIRMED_SUBSET, "
+        "unless the user explicitly requests a numeric count"
+    ) in prose
+    assert "Never assert geographic completeness when spatial evaluation is incomplete." in prose
+    assert prose.index(impact) < prose.index(hazard_region) < prose.index(explicit_count)
+    assert "SCOPED_COUNT remains permitted under the count rules above" in prose
+    assert hazard_region not in schema_blob
+    assert "HAZARD_REGION_INTERSECTION" in schema_blob
+    assert "SCOPED_COUNT" in schema_blob
 
 
 def test_tool_schema_conversion_preserves_names_and_argument_shapes():
