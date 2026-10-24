@@ -94,12 +94,18 @@ def _context(**overrides: object) -> MasterPlanningContext:
     return MasterPlanningContext(**values)  # type: ignore[arg-type]
 
 
-def _step(step_id: str, specialist: MasterSpecialist, capability: AgentCapability, intent: MasterRouteTemporalIntent):
+def _step(
+    step_id: str,
+    specialist: MasterSpecialist,
+    capability: AgentCapability,
+    intent: MasterRouteTemporalIntent,
+    requirement: MasterRequirement = MasterRequirement.REQUIRED,
+):
     return MasterProposedStep(
         step_id=step_id,
         specialist=specialist,
         purpose=MasterPurpose.ANSWER,
-        requirement=MasterRequirement.REQUIRED,
+        requirement=requirement,
         capability=capability,
         temporal_intent=intent,
         historical_start_utc="2026-01-01T00:00:00Z" if specialist is MasterSpecialist.HISTORICAL_ANALYTICS else None,
@@ -110,7 +116,9 @@ def _step(step_id: str, specialist: MasterSpecialist, capability: AgentCapabilit
 def _plan(*steps: MasterProposedStep, **context_overrides: object):
     context = _context(**context_overrides)
     capabilities = tuple(
-        dict.fromkeys(MasterProposedCapability(step.capability, MasterRequirement.REQUIRED) for step in steps)
+        dict.fromkeys(
+            MasterProposedCapability(step.capability, step.requirement) for step in steps
+        )
     )
     decision = authorize_route(
         MasterRouteProposal(user_text=TEXT, capabilities=capabilities, steps=steps),
@@ -459,6 +467,173 @@ def test_explicit_live_ops_unsupported_is_not_guessed_from_comparability():
     assert handoff.state is MasterResponsePolicyState.UNSUPPORTED
     assert handoff.status_text.startswith("The request is unsupported.")
     _suppresses(handoff)
+
+
+def _by_specialist(plan, specialist: MasterSpecialist):
+    return next(step for step in plan.steps if step.invocation.specialist is specialist)
+
+
+def _required_ids(plan) -> set[str]:
+    return {
+        step.invocation.invocation_id
+        for step in plan.steps
+        if step.invocation.requirement is MasterRequirement.REQUIRED
+    }
+
+
+def _represented_ids(evidence) -> set[str]:
+    return {item.admission_input.authorization.invocation_id for item in evidence}
+
+
+def _live_and_historical_plan(historical_requirement: MasterRequirement = MasterRequirement.REQUIRED):
+    return _plan(
+        _step("live-1", MasterSpecialist.LIVE_OPS, LIVE, MasterRouteTemporalIntent.CURRENT),
+        _step(
+            "hist-1",
+            MasterSpecialist.HISTORICAL_ANALYTICS,
+            HISTORY,
+            MasterRouteTemporalIntent.HISTORICAL,
+            historical_requirement,
+        ),
+    )
+
+
+def test_complete_required_live_ops_unavailable_stays_unavailable():
+    context, plan = _plan(_step("live-1", MasterSpecialist.LIVE_OPS, LIVE, MasterRouteTemporalIntent.CURRENT))
+    evidence = (_live(plan.steps[0].invocation, ledger_not_authorized()),)
+    assert _required_ids(plan) == _represented_ids(evidence)
+    handoff = evaluate_master_response_policy(_bundle(context, plan, evidence))
+    assert handoff.state is MasterResponsePolicyState.UNAVAILABLE
+    assert "No count or zero is inferred." in handoff.status_text
+    _suppresses(handoff)
+
+
+def test_complete_required_live_ops_unsupported_stays_unsupported():
+    context, plan = _plan(_step("live-1", MasterSpecialist.LIVE_OPS, LIVE, MasterRouteTemporalIntent.CURRENT))
+    evidence = (_live(plan.steps[0].invocation, unsupported_request()),)
+    assert _required_ids(plan) == _represented_ids(evidence)
+    handoff = evaluate_master_response_policy(_bundle(context, plan, evidence))
+    assert handoff.state is MasterResponsePolicyState.UNSUPPORTED
+    assert handoff.status_text.startswith("The request is unsupported.")
+    _suppresses(handoff)
+
+
+def test_missing_required_specialist_blocks_unavailable():
+    context, plan = _live_and_historical_plan()
+    live = _by_specialist(plan, MasterSpecialist.LIVE_OPS)
+    evidence = (_live(live.invocation, ledger_not_authorized()),)
+    assert _required_ids(plan) - _represented_ids(evidence)
+    handoff = evaluate_master_response_policy(_bundle(context, plan, evidence))
+    assert handoff.state is MasterResponsePolicyState.INSUFFICIENT_EVIDENCE
+    assert handoff.state is not MasterResponsePolicyState.UNAVAILABLE
+    _suppresses(handoff)
+
+
+def test_missing_required_specialist_blocks_unsupported():
+    context, plan = _live_and_historical_plan()
+    live = _by_specialist(plan, MasterSpecialist.LIVE_OPS)
+    evidence = (_live(live.invocation, unsupported_request()),)
+    handoff = evaluate_master_response_policy(_bundle(context, plan, evidence))
+    assert handoff.state is MasterResponsePolicyState.INSUFFICIENT_EVIDENCE
+    assert handoff.state is not MasterResponsePolicyState.UNSUPPORTED
+    _suppresses(handoff)
+
+
+def test_required_plan_without_evidence_is_insufficient():
+    context, plan = _live_and_historical_plan()
+    assert len(_required_ids(plan)) == 2
+    handoff = evaluate_master_response_policy(_bundle(context, plan, ()))
+    assert handoff.state is MasterResponsePolicyState.INSUFFICIENT_EVIDENCE
+    assert "unavailable" not in handoff.status_text.lower()
+    assert "unsupported" not in handoff.status_text.lower()
+    _suppresses(handoff)
+
+
+def test_missing_required_evidence_with_comparison_stays_insufficient():
+    context, plan = _live_and_historical_plan()
+    live = _by_specialist(plan, MasterSpecialist.LIVE_OPS)
+    historical = _by_specialist(plan, MasterSpecialist.HISTORICAL_ANALYTICS)
+    evidence = (_live(live.invocation, ledger_not_authorized()),)
+    request = MasterComparisonRequest(
+        context.master_request_id,
+        live.invocation.invocation_id,
+        historical.invocation.invocation_id,
+        MasterComparisonCategory.QUERY_TIME_VS_OBSERVATION_TIME,
+    )
+    handoff = evaluate_master_response_policy(_bundle(context, plan, evidence, (request,)))
+    assert handoff.state is MasterResponsePolicyState.INSUFFICIENT_EVIDENCE
+    assert MasterResponseLimitation.COMPARABILITY_NOT_OPERATIONAL_AGREEMENT in handoff.limitations
+    _suppresses(handoff)
+
+
+def test_complete_required_coverage_keeps_rejected_and_unresolved_insufficient():
+    context, plan = _live_and_historical_plan()
+    live = _by_specialist(plan, MasterSpecialist.LIVE_OPS)
+    historical = _by_specialist(plan, MasterSpecialist.HISTORICAL_ANALYTICS)
+    rejected = MasterEvidenceCorroborationInput(
+        MasterEvidenceAdmissionInput(historical.invocation, historical_exact_count_run())
+    )
+    rejected_evidence = (_live(live.invocation, ledger_not_authorized()), rejected)
+    assert _required_ids(plan) <= _represented_ids(rejected_evidence)
+    rejected_check = corroborate_master_evidence(rejected_evidence).results
+    rejected_handoff = evaluate_master_response_policy(_bundle(context, plan, rejected_evidence))
+    assert any(item.corroboration_status is MasterCorroborationStatus.ADMISSION_REJECTED for item in rejected_check)
+    assert rejected_handoff.state is MasterResponsePolicyState.INSUFFICIENT_EVIDENCE
+
+    unresolved = (
+        _live(live.invocation, ledger_not_authorized()),
+        _historical(historical.invocation, historical_exact_count_run()),
+    )
+    unresolved_check = corroborate_master_evidence(unresolved).results
+    unresolved_handoff = evaluate_master_response_policy(_bundle(context, plan, unresolved))
+    assert any(item.admission_status.value == "BINDING_UNRESOLVED" for item in unresolved_check)
+    assert unresolved_handoff.state is MasterResponsePolicyState.INSUFFICIENT_EVIDENCE
+    _suppresses(rejected_handoff)
+    _suppresses(unresolved_handoff)
+
+
+def test_complete_required_coverage_with_consistent_evidence_admits_no_claim():
+    context, plan = _plan(
+        _step("hist-1", MasterSpecialist.HISTORICAL_ANALYTICS, HISTORY, MasterRouteTemporalIntent.HISTORICAL)
+    )
+    evidence = (_historical(plan.steps[0].invocation, historical_exact_count_run()),)
+    assert _required_ids(plan) == _represented_ids(evidence)
+    checked = corroborate_master_evidence(evidence).results[0]
+    handoff = evaluate_master_response_policy(_bundle(context, plan, evidence))
+    assert checked.corroboration_status is MasterCorroborationStatus.CONSISTENT_WITH_SUPPLIED_EVIDENCE
+    assert handoff.state is MasterResponsePolicyState.INSUFFICIENT_EVIDENCE
+    assert handoff.source_authenticity.value == "NOT_ESTABLISHED"
+    assert handoff.production_authority.value == "DENIED"
+    assert MasterResponseLimitation.SUPPLIED_EVIDENCE_NOT_AUTHENTICATED in handoff.limitations
+    _suppresses(handoff)
+
+
+def test_omitted_optional_invocation_does_not_fulfill_the_request():
+    context, plan = _live_and_historical_plan(MasterRequirement.OPTIONAL)
+    live = _by_specialist(plan, MasterSpecialist.LIVE_OPS)
+    historical = _by_specialist(plan, MasterSpecialist.HISTORICAL_ANALYTICS)
+    assert live.invocation.requirement is MasterRequirement.REQUIRED
+    assert historical.invocation.requirement is MasterRequirement.OPTIONAL
+    evidence = (_live(live.invocation, ledger_not_authorized()),)
+    assert historical.invocation.invocation_id not in _represented_ids(evidence)
+    assert _required_ids(plan) == _represented_ids(evidence)
+    handoff = evaluate_master_response_policy(_bundle(context, plan, evidence))
+    assert handoff.state is MasterResponsePolicyState.UNAVAILABLE
+    assert handoff.request_coverage.value == "NOT_ESTABLISHED"
+    assert handoff.end_to_end_fulfilled is False
+    _suppresses(handoff)
+
+
+def test_required_coverage_evaluation_is_deterministic():
+    context, plan = _live_and_historical_plan()
+    live = _by_specialist(plan, MasterSpecialist.LIVE_OPS)
+    workflow = _bundle(context, plan, (_live(live.invocation, ledger_not_authorized()),))
+    first = evaluate_master_response_policy(workflow)
+    second = evaluate_master_response_policy(workflow)
+    assert first.state is MasterResponsePolicyState.INSUFFICIENT_EVIDENCE
+    assert first.state is second.state
+    assert first.limitations == second.limitations
+    assert first.status_text == second.status_text
 
 
 def test_repeated_evaluation_is_deterministic():

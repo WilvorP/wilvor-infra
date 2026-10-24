@@ -10,12 +10,19 @@ Precedence, first match wins:
    ``INSUFFICIENT_EVIDENCE``. It is not promoted to unavailable or unsupported.
 4. A comparison whose evidence input is missing is not fabricated and is not
    sent to MA4.3. The response stays ``INSUFFICIENT_EVIDENCE``.
-5. ``UNAVAILABLE`` is used only when every supplied artifact has that native
-   status, none of those checks was rejected, inconsistent, or unresolved,
-   and none was merely consistent with supplied evidence.
-6. ``UNSUPPORTED`` uses the same gate for an explicit native unsupported
+5. A planned invocation whose ``MasterRequirement`` is ``REQUIRED`` and whose
+   invocation id is absent from the evidence inputs is ``INSUFFICIENT_EVIDENCE``.
+   Coverage is the set of represented invocation ids. A duplicate input does
+   not count as another invocation, and a missing result is not fabricated.
+   An ``OPTIONAL`` planned invocation is not required for this check. Omitting
+   it does not establish request coverage or operational fulfillment.
+6. ``UNAVAILABLE`` is used only when every supplied artifact has that native
+   status, every required planned invocation is represented, none of those
+   checks was rejected, inconsistent, or unresolved, and none was merely
+   consistent with supplied evidence.
+7. ``UNSUPPORTED`` uses the same gate for an explicit native unsupported
    status. A comparability eligibility of ``UNSUPPORTED`` does not qualify.
-7. Otherwise the response is ``INSUFFICIENT_EVIDENCE``, including
+8. Otherwise the response is ``INSUFFICIENT_EVIDENCE``, including
    ``CONSISTENT_WITH_SUPPLIED_EVIDENCE`` and ``CONTRACT_CHECKABLE_ONLY``.
 
 Those MA4 findings are not source authentication. Claims stay suppressed.
@@ -29,6 +36,7 @@ from wilvor_ai.decision_specialist_runtime_contracts import (
     DecisionSpecialistRunStatus,
 )
 from wilvor_ai.live_ops_public_contracts import LiveOpsRunStatus
+from wilvor_ai.master_contracts import MasterRequirement
 from wilvor_ai.master_evidence_admission import LiveOpsAdmissionSources, MasterAdmissionStatus
 from wilvor_ai.master_evidence_comparability import (
     MasterComparisonAssessment,
@@ -71,7 +79,12 @@ def evaluate_master_response_policy(
             missing_comparison = True
             continue
         assessments.append(assess_master_evidence_comparability(request, left, right))
-    state = _state(workflow.evidence_inputs, results, missing_comparison)
+    state = _state(
+        workflow.evidence_inputs,
+        results,
+        missing_comparison,
+        _required_invocation_missing(workflow),
+    )
     return response_policy_for(
         workflow,
         state,
@@ -87,16 +100,34 @@ def _corroborate(
     return corroborate_master_evidence(workflow.evidence_inputs).results
 
 
+def _required_invocation_missing(workflow: MasterParallelContractBundle) -> bool:
+    """True when a required plan step has no evidence input.
+
+    Identity is the invocation id. Extra inputs for an id already represented
+    do not cover a different required step. Optional steps are not required.
+    """
+
+    represented = {
+        item.admission_input.authorization.invocation_id for item in workflow.evidence_inputs
+    }
+    return any(
+        step.invocation.requirement is MasterRequirement.REQUIRED
+        and step.invocation.invocation_id not in represented
+        for step in workflow.plan.steps
+    )
+
+
 def _state(
     inputs: tuple[MasterEvidenceCorroborationInput, ...],
     results: tuple[MasterEvidenceCorroboration, ...],
     missing_comparison: bool,
+    missing_required: bool,
 ) -> MasterResponsePolicyState:
     if not results:
         return MasterResponsePolicyState.INSUFFICIENT_EVIDENCE
     if any(_blocks_specific_state(item) for item in results):
         return MasterResponsePolicyState.INSUFFICIENT_EVIDENCE
-    if missing_comparison:
+    if missing_comparison or missing_required:
         return MasterResponsePolicyState.INSUFFICIENT_EVIDENCE
     dispositions = tuple(_disposition(item.admission_input.artifact) for item in inputs)
     if _uniform_native(dispositions, results, "unavailable"):
