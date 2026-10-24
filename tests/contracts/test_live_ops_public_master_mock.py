@@ -7,8 +7,11 @@ verification, and the test does not call tools, providers, or LangGraph.
 from __future__ import annotations
 
 import asyncio
+import os
+import subprocess
 import sys
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -24,6 +27,52 @@ from wilvor_ai.live_ops_public_contracts import (
 
 
 EXAMPLES_PATH = "tests/fixtures/live_ops_public_examples.py"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+SHARED_DIR = REPO_ROOT / "functions" / "shared"
+
+
+def _assert_public_mock_import_does_not_load_langgraph() -> None:
+    """Check this module's imports in a fresh interpreter.
+
+    MA3 may already have loaded LangGraph in the pytest process. That
+    process-wide state is not the Live Ops public mock's import graph.
+    """
+
+    env = os.environ.copy()
+    pythonpath = os.pathsep.join((str(SHARED_DIR), str(REPO_ROOT)))
+    existing = env.get("PYTHONPATH", "")
+    if existing:
+        pythonpath = pythonpath + os.pathsep + existing
+    env["PYTHONPATH"] = pythonpath
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    script = """
+import sys
+try:
+    import tests.contracts.test_live_ops_public_master_mock as mock_module
+    import wilvor_ai.live_ops_public_contracts as public_contracts
+except Exception as exc:
+    raise SystemExit(f"import_failed: {type(exc).__name__}: {exc}") from exc
+loaded = sorted(
+    name
+    for name in sys.modules
+    if name == "langgraph" or name.startswith("langgraph.")
+)
+if loaded:
+    raise SystemExit(
+        "langgraph loaded by Live Ops public mock import: " + ", ".join(loaded)
+    )
+if mock_module.FakeLiveOpsSpecialist is None or public_contracts.LiveOpsRunRequest is None:
+    raise SystemExit("import_failed: public mock symbols were not loaded")
+"""
+    completed = subprocess.run(
+        [sys.executable, "-B", "-c", script],
+        cwd=REPO_ROOT,
+        env=env,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr + completed.stdout
 
 
 class FakeLiveOpsSpecialist:
@@ -46,7 +95,7 @@ class FakeLiveOpsSpecialist:
 
 
 def test_mock_master_keeps_context_out_of_graph_state(load_repo_module):
-    assert "langgraph" not in sys.modules
+    _assert_public_mock_import_does_not_load_langgraph()
     examples = load_repo_module("live_ops_public_examples", EXAMPLES_PATH)
     specialist = FakeLiveOpsSpecialist()
     assert isinstance(specialist, LiveOpsSpecialistPort)
