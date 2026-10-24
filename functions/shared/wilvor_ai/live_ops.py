@@ -14,9 +14,11 @@ from wilvor_ai.contracts import (
     AgentAuthorityMode,
     AgentCapability,
     ToolInputField,
+    ToolInputValueType,
     ToolResult,
 )
 from wilvor_ai import live_ops_mapping as mapping
+from wilvor_ai.tool_schema import ToolSchema, build_tool_schemas
 from wilvor_operational import context
 from wilvor_operational import discovery
 from wilvor_operational import query
@@ -66,10 +68,6 @@ _READ_ONLY = AgentAuthorityMode.READ_ONLY_ADVISORY
 _RETRIEVE = (
     AgentCapability.RETRIEVE_DETERMINISTIC_OPERATIONAL_CONTEXT,
 )
-
-
-def _optional_fields(*names: str) -> tuple[ToolInputField, ...]:
-    return tuple(ToolInputField(name=name, required=False) for name in names)
 
 
 def _required_field(name: str) -> tuple[ToolInputField, ...]:
@@ -257,17 +255,26 @@ def find_aircraft_by_callsign(
     )
 
 
-_HAZARD_FILTER_FIELDS = _optional_fields(
-    "region",
-    "product_type",
-    "hazard_type",
-    "hazard_ids",
+_HAZARD_IDS_FIELD = ToolInputField(
+    name="hazard_ids",
+    required=False,
+    value_type=ToolInputValueType.ARRAY,
+)
+_HAZARD_FILTER_FIELDS = (
+    ToolInputField(name="region", required=False),
+    ToolInputField(name="product_type", required=False),
+    ToolInputField(name="hazard_type", required=False),
+    _HAZARD_IDS_FIELD,
 )
 
 LIVE_OPS_TOOLS = (
     LiveOpsToolSpec(
         name="search_current_hazards",
-        description="Retrieve currently matching hazards, optionally by region or type.",
+        description=(
+            "Retrieve currently matching hazards. Through the Live Ops "
+            "specialist adapter a region or nonempty hazard_ids selector is "
+            "required. The unbound tool does not enforce that restriction."
+        ),
         authority_mode=_READ_ONLY,
         capabilities=_RETRIEVE,
         input_fields=_HAZARD_FILTER_FIELDS,
@@ -284,11 +291,11 @@ LIVE_OPS_TOOLS = (
         description="Retrieve currently matching aircraft-hazard encounters.",
         authority_mode=_READ_ONLY,
         capabilities=_RETRIEVE,
-        input_fields=_optional_fields(
-            "aircraft_id",
-            "callsign",
-            "hazard_id",
-            "hazard_ids",
+        input_fields=(
+            ToolInputField(name="aircraft_id", required=False),
+            ToolInputField(name="callsign", required=False),
+            ToolInputField(name="hazard_id", required=False),
+            _HAZARD_IDS_FIELD,
         ),
     ),
     LiveOpsToolSpec(
@@ -329,10 +336,17 @@ LIVE_OPS_TOOLS = (
 )
 
 
+def live_ops_tool_schemas() -> tuple[ToolSchema, ...]:
+    """Build provider-neutral schemas from the Live Ops catalog only."""
+
+    return build_tool_schemas(LIVE_OPS_TOOLS)
+
+
 __all__ = [
     "LIVE_OPS_TOOLS",
     "LiveOpsCall",
     "LiveOpsToolSpec",
+    "live_ops_tool_schemas",
     "find_aircraft_by_callsign",
     "get_aircraft_operational_context",
     "get_airport_operational_context",
