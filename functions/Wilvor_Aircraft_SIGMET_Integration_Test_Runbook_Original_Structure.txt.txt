@@ -1,3 +1,12 @@
+# ---------------------------------------------------------------------------
+# Historical runbook — not the current specification
+# Canonical pages: docs/ingestion/README.md, docs/ingestion/aircraft.md,
+# docs/ingestion/sigmet.md, docs/ingestion/metar.md, docs/ingestion/taf.md
+# Verified current behavior at 8abd2d5 is documented there.
+# This file is preserved. Do not treat the body as current status.
+# The double-extension file name is retained on purpose.
+# ---------------------------------------------------------------------------
+#
 # ============================================================
 # WILVOR AIRCRAFT + SIGMET DEV RESET + INTEGRATION TEST WORKFLOW
 # ============================================================
