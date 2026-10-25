@@ -1,5 +1,10 @@
 # Historical analytics foundation (Phase 2A.2d)
 
+**Canonical page:** this page | map [`docs/historical/analytics.md`](../../docs/historical/analytics.md)
+**Verified against:** `8abd2d5` on `docs/ws4-historical`
+**Maturity:** CODE, TF, UNIT, INFRA, LIVE
+**Production authorization:** no grant found. `aws_iam_policy.query` is unattached. `MasterRouteExecutionAuthority` is `DENIED`.
+
 This module is the **disabled-by-default** recreatable analytics
 foundation. It currently owns:
 
@@ -399,3 +404,50 @@ CI or an environment with Node:
 cd dashboard
 npm test -- src/config/cloudwatchDashboards.test.ts
 ```
+
+## Implementation status
+
+| Question | Result | Source |
+| --- | --- | --- |
+| Code | CODE for consumers | `functions/shared/wilvor_historical_query/` |
+| Terraform | TF | `modules/historical_analytics/*.tf`; `envs/dev/main.tf` `module.historical_analytics` |
+| Unit tests | UNIT | `tests/unit/historical_facts/test_glue_schema_parity.py`; `tests/unit/historical_query/` |
+| Contract tests | none found for this module | search: `tests/contracts/` for Glue/Athena resources |
+| Infrastructure tests | INFRA | `tests/infrastructure/terraform/test_historical_analytics_contract.py`, `test_historical_analytics_query_iam_contract.py`, `test_historical_analytics_validation.py` |
+| Integration tests | none found | search: `tests/integration/` for `historical` |
+| Live harness | LIVE | `scripts/validate_historical_analytics.ps1`, `scripts/validate_historical_query_runtime.py` |
+| Deployment | UNKNOWN | `not verified` |
+| Production authorization | no grant found | unattached query policy; no Agent API |
+
+## Known limitations
+
+- The query IAM policy is not attached to any principal in this module.
+- Operator SSO live validation does not prove that managed policy.
+- Athena `COUNT(*) = 0` is not `VERIFIED_ZERO`.
+- Custom runtime CloudWatch metrics were not added because there is no deployed Agent API/Lambda to emit them.
+- Whether Glue and Athena currently exist in an account is UNKNOWN.
+
+## Historical record
+
+The Phase 2C paragraph above says the catalog is ready for a future
+specialist and that no model-backed specialist exists yet. After that
+phase note, `HistoricalAnalyticsSpecialist` exists as offline library
+code in `functions/shared/wilvor_ai/historical_specialist.py`. That class
+is not Terraform, not an Agent API, and not a production execution
+grant. `MasterRouteExecutionAuthority` remains `DENIED`. See
+[`docs/historical/ai-boundary.md`](../../docs/historical/ai-boundary.md).
+
+The 2B.6 sentence that operator SSO proved runtime behavior records a
+past operator validation claim in this README. This documentation task
+did not re-run that harness and does not treat it as a current pass.
+
+## Sources
+
+- Source: `modules/historical_analytics/glue.tf`
+- Source: `modules/historical_analytics/athena.tf`
+- Source: `modules/historical_analytics/iam.tf` (`aws_iam_policy.query`)
+- Source: `envs/dev/main.tf` (`enable_historical_analytics = true`)
+- Tests: `tests/infrastructure/terraform/test_historical_analytics_contract.py`
+- Tests: `tests/infrastructure/terraform/test_historical_analytics_query_iam_contract.py`
+- Map: [`docs/historical/analytics.md`](../../docs/historical/analytics.md)
+- Map: [`docs/historical/iam.md`](../../docs/historical/iam.md)

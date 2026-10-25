@@ -1,5 +1,10 @@
 # Historical operational fact contracts
 
+**Canonical page:** this page | map [`docs/historical/fact-identity.md`](../../../docs/historical/fact-identity.md)
+**Verified against:** `8abd2d5` on `docs/ws4-historical`
+**Maturity:** CODE, UNIT
+**Production authorization:** no grant found. This package has no AWS clients and does not authorize collection.
+
 Phase 2A.1a defines versioned historical fact contracts and deterministic
 mappings from already-produced operational data. It does **not** persist
 facts, create coverage, or query history.
@@ -284,3 +289,43 @@ canonical string.
   not implemented.
 
 No AI, Glue, Athena, S3, or Firehose belongs in this package.
+
+## Implementation status
+
+| Question | Result | Source |
+| --- | --- | --- |
+| Code | CODE | `functions/shared/wilvor_historical/{contracts,from_events,time,coverage,query_contracts,query_windows}.py` |
+| Terraform | absent | this package is AWS-free |
+| Unit tests | UNIT | `tests/unit/historical_facts/test_contracts.py`, `test_from_events.py`, `test_time.py`, `test_coverage.py`, `test_query_contracts.py`, `test_query_windows.py` |
+| Contract tests | none found | search: `tests/contracts/` for `EncounterFact` |
+| Infrastructure tests | none found for this package | search: `tests/infrastructure/` for `wilvor_historical` |
+| Integration tests | none found | search: `tests/integration/` for `historical` |
+| Live harness | none found for these contracts | AWS-free package |
+| Deployment | UNKNOWN | contracts do not establish an applied lake |
+| Production authorization | no grant found | no AWS clients |
+
+## Known limitations
+
+- This package does not persist facts or evaluate live coverage stores.
+- Terraform apply time is not coverage start.
+- V1 query contracts do not execute SQL.
+- Physical row counts are not entity counts.
+
+## Historical record
+
+The Later phases list above says a model-backed Historical Analytics
+Specialist is not implemented. After that phase note,
+`HistoricalAnalyticsSpecialist` exists as offline library code in
+`wilvor_ai`. That class is outside this package. `MasterRouteExecutionAuthority`
+remains `DENIED`. See [`docs/historical/ai-boundary.md`](../../../docs/historical/ai-boundary.md).
+
+## Sources
+
+- Source: `functions/shared/wilvor_historical/contracts.py`
+- Source: `functions/shared/wilvor_historical/from_events.py`
+- Source: `functions/shared/wilvor_historical/coverage.py` (`evaluate_collection_window`)
+- Source: `functions/shared/wilvor_historical/query_contracts.py` (`is_verified_zero`)
+- Tests: `tests/unit/historical_facts/test_contracts.py`
+- Tests: `tests/unit/historical_facts/test_query_contracts.py`
+- Map: [`docs/historical/fact-identity.md`](../../../docs/historical/fact-identity.md)
+- Map: [`docs/historical/coverage.md`](../../../docs/historical/coverage.md)

@@ -1,5 +1,10 @@
 # Historical facts transport (Phase 2A.1c)
 
+**Canonical page:** this page | map [`docs/historical/transport.md`](../../docs/historical/transport.md)
+**Verified against:** `8abd2d5` on `docs/ws4-historical`
+**Maturity:** CODE, TF, UNIT, INFRA
+**Production authorization:** no grant found. `enable_historical_facts = true` in `envs/dev/main.tf` is Terraform configuration, not a deployment record.
+
 This module creates the **disabled-by-default** recreatable historical
 transport / monitoring path:
 
@@ -25,12 +30,17 @@ It does **not** create Glue, Athena, or DynamoDB Streams.
 
 ## Enablement
 
-`enable_historical_facts` must remain `false` in env/dev until the
-persistent data plane exists and an approved enable/apply is reviewed.
+The module variable default remains `false` (source: `modules/historical_facts/variables.tf`,
+`enable_historical_facts`). The committed `envs/dev` root assigns
+`enable_historical_facts = true` on `module.historical_facts` and
+`module.operational_api` (source: `envs/dev/main.tf` at `8abd2d5` lines 117
+and 805; tests: `tests/infrastructure/terraform/test_historical_facts_contract.py`,
+`test_dev_historical_facts_collection_is_enabled`). That assignment is TF.
+It does not establish DEPLOYED.
 
-**Do not apply this module as a live collector while the facts bucket can
-be removed by ordinary `dev-down`.** A disabled (`count = 0`) apply of later
-wiring is not historical collection.
+Ordinary `dev-down` refuses `envs/dev-historical-data` and therefore does
+not destroy the persistent facts bucket. A disabled (`count = 0`) apply of
+later wiring is not historical collection.
 
 ## Persistence guarantees
 
@@ -194,3 +204,53 @@ Owned by `modules/historical_facts_data`, not this module.
 catalog only when `enable_historical_facts=true`. While disabled, the API
 returns 404 for that id (not 500). Alarms use `treat_missing_data =
 notBreaching` and have no SNS. There is no zero-ingestion alarm.
+
+## Implementation status
+
+| Question | Result | Source |
+| --- | --- | --- |
+| Code | CODE | `functions/historical_facts/transform/app.py`, `coverage_control/app.py`, `dlq_gap_consumer/app.py` |
+| Terraform | TF | `modules/historical_facts/*.tf`; `envs/dev/main.tf` `module.historical_facts` |
+| Unit tests | UNIT | `tests/unit/historical_facts/` |
+| Contract tests | none found | search: `tests/contracts/` for this module |
+| Infrastructure tests | INFRA | `tests/infrastructure/terraform/test_historical_facts_contract.py` |
+| Integration tests | none found | search: `tests/integration/` for `historical` |
+| Live harness | none found for current S3 delivery | operator scripts do not replace an apply record |
+| Deployment | UNKNOWN | `not verified` |
+| Production authorization | no grant found | TF `enable_historical_facts = true` is not DEPLOYED |
+
+## Known limitations
+
+- Firehose acceptance is never durable historical persistence.
+- Domain 1 misses are not in the SQS DLQ and are not automatically replayed.
+- Domain 3B is a potential gap; a later successful probe does not auto-resolve it.
+- This module does not create Glue, Athena, or DynamoDB Streams.
+- Whether collection currently delivers objects is UNKNOWN.
+
+## Historical record
+
+Earlier text on this page said `enable_historical_facts` must remain `false`
+in env/dev until the persistent data plane exists and an approved
+enable/apply is reviewed. That sentence described an enablement policy
+before the committed `envs/dev` assignment. At `8abd2d5`,
+`envs/dev/main.tf` sets `enable_historical_facts = true` on
+`module.historical_facts` (line 117) and `module.operational_api`
+(line 805).
+
+Earlier text also said: "Do not apply this module as a live collector
+while the facts bucket can be removed by ordinary `dev-down`." Ordinary
+`dev-down` now refuses `envs/dev-historical-data` (source:
+`scripts/dev-down.ps1`; tests:
+`tests/infrastructure/terraform/test_historical_facts_contract.py`,
+`test_dev_down_refuses_data_plane_and_deactivates_when_enabled`). The
+bucket remains `force_destroy = false` on the data-plane root.
+
+## Sources
+
+- Source: `modules/historical_facts/variables.tf` (`enable_historical_facts`)
+- Source: `envs/dev/main.tf` (`module.historical_facts`)
+- Source: `modules/historical_facts/events.tf`
+- Source: `modules/historical_facts/firehose.tf`
+- Tests: `tests/infrastructure/terraform/test_historical_facts_contract.py` (`test_dev_historical_facts_collection_is_enabled`)
+- Map: [`docs/historical/transport.md`](../../docs/historical/transport.md)
+- Map: [`docs/historical/terraform-roots.md`](../../docs/historical/terraform-roots.md)

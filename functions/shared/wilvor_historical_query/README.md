@@ -1,5 +1,10 @@
 # Historical analytics query runtime
 
+**Canonical page:** this page | map [`docs/historical/queries.md`](../../../docs/historical/queries.md)
+**Verified against:** `8abd2d5` on `docs/ws4-historical`
+**Maturity:** CODE, TF, UNIT, INFRA, LIVE
+**Production authorization:** no grant found. There is no attached query execution role. Historical query code is not deployed AI infrastructure.
+
 `wilvor_historical_query` renders deterministic Athena SQL for a closed
 set of historical analytics queries, executes those rendered queries
 through an injected, bounded Athena client, gates them with
@@ -347,3 +352,45 @@ limitation. They do not reinterpret `valid_from_utc` / `valid_to_utc`.
 Phase 2C adapters consume this package. They do not change these
 operations, render SQL, or instantiate AWS clients. A model-backed
 specialist and Agent API are not implemented here.
+
+## Implementation status
+
+| Question | Result | Source |
+| --- | --- | --- |
+| Code | CODE | `functions/shared/wilvor_historical_query/{query_registry,query_sql,executor,operations,coverage_gate,coverage_store,result_parsers}.py` |
+| Terraform | TF for catalog/workgroup/policy consumed by this runtime | `modules/historical_analytics` |
+| Unit tests | UNIT | `tests/unit/historical_query/` |
+| Contract tests | none found for this package | search: `tests/contracts/` for `HistoricalAnalyticsOperations` |
+| Infrastructure tests | INFRA | `tests/infrastructure/terraform/test_historical_analytics_query_iam_contract.py` |
+| Integration tests | none found | search: `tests/integration/` for `historical` |
+| Live harness | LIVE | `scripts/validate_historical_query_runtime.py` |
+| Deployment | UNKNOWN | `not verified` |
+| Production authorization | no grant found | unattached `aws_iam_policy.query`; `MasterRouteExecutionAuthority.DENIED` |
+
+## Known limitations
+
+- This package does not create AWS clients on import. Callers inject them.
+- The executor does not compute `VERIFIED_ZERO`.
+- Operator SSO does not prove the unattached query policy.
+- There is no historical-query HTTP route on the Operational API.
+- Library code plus Terraform catalog is not a deployed Agent API.
+
+## Historical record
+
+The Current status list above says a model-backed Historical Analytics
+Specialist is still not implemented. After that phase note,
+`HistoricalAnalyticsSpecialist` exists as offline library code in
+`functions/shared/wilvor_ai/historical_specialist.py`. That class is not
+implemented in this package, is not Terraform, and is not a production
+execution grant. See [`docs/historical/ai-boundary.md`](../../../docs/historical/ai-boundary.md).
+
+## Sources
+
+- Source: `functions/shared/wilvor_historical_query/query_registry.py` (`InternalQueryId`)
+- Source: `functions/shared/wilvor_historical_query/executor.py` (`AthenaExecutor.execute_fixed`)
+- Source: `functions/shared/wilvor_historical_query/operations.py` (`HistoricalAnalyticsOperations`)
+- Tests: `tests/unit/historical_query/test_query_registry.py`
+- Tests: `tests/unit/historical_query/test_operations.py`
+- Tests: `tests/unit/historical_query/test_athena_executor.py`
+- Map: [`docs/historical/queries.md`](../../../docs/historical/queries.md)
+- Map: [`docs/historical/iam.md`](../../../docs/historical/iam.md)
