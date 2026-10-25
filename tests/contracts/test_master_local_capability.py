@@ -250,6 +250,131 @@ def test_issue_rejects_an_already_expired_instant():
         _issue(registry, expires_at=T1)
     with pytest.raises(ContractValidationError, match="capability_already_expired"):
         _issue(registry, expires_at=T0)
+    handle = _issue(registry, expires_at=T2)
+    assert registry.observed_state(handle) is LocalCapabilityState.ISSUED
+
+
+def _assert_duplicate_pair(registry: LocalCapabilityRegistry, **overrides: object) -> None:
+    with pytest.raises(ContractValidationError, match="duplicate_session_invocation") as raised:
+        _issue(registry, **overrides)
+    assert raised.value.errors == ("duplicate_session_invocation",)
+
+
+def test_sequential_duplicate_issuance_is_rejected():
+    registry, _clock = _registry()
+    handle = _issue(registry)
+    _assert_duplicate_pair(registry)
+    _assert_duplicate_pair(registry, consumer_id="consumer-other")
+    _assert_duplicate_pair(registry, scope=_scope(requirement=MasterRequirement.OPTIONAL))
+    _assert_duplicate_pair(registry, expires_at=T1)
+    assert registry.observed_state(handle) is LocalCapabilityState.ISSUED
+    assert registry.owns(handle) is True
+    transition = _consume(registry, handle)
+    assert transition.outcome is LocalConsumptionOutcome.TRANSITION_RECORDED
+    _assert_closed(transition)
+    assert _consume(registry, handle).reason is LocalRejectionReason.REPLAY
+
+
+def test_concurrent_duplicate_issuance_records_one_handle():
+    for _attempt in range(20):
+        registry, _clock = _registry()
+        barrier = threading.Barrier(2)
+        handles: list[LocalCapabilityHandle] = []
+        errors: list[BaseException] = []
+        gate = threading.Lock()
+
+        def _run() -> None:
+            try:
+                barrier.wait(timeout=10)
+                handle = _issue(registry)
+                with gate:
+                    handles.append(handle)
+            except BaseException as exc:
+                with gate:
+                    errors.append(exc)
+
+        threads = [threading.Thread(target=_run) for _index in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+            assert thread.is_alive() is False
+        assert len(handles) == 1
+        assert len(errors) == 1
+        assert isinstance(errors[0], ContractValidationError)
+        assert errors[0].errors == ("duplicate_session_invocation",)
+        assert registry.owns(handles[0]) is True
+        assert registry.observed_state(handles[0]) is LocalCapabilityState.ISSUED
+        _assert_duplicate_pair(registry, consumer_id="consumer-other", expires_at=T1)
+        description = handles[0].description()
+        assert description.authorizes_execution is False
+        assert description.execution_authority is MasterRouteExecutionAuthority.DENIED
+
+
+def test_spent_capability_cannot_be_reissued():
+    registry, _clock = _registry()
+    consumed = _issue(registry)
+    assert _consume(registry, consumed).outcome is LocalConsumptionOutcome.TRANSITION_RECORDED
+    _assert_duplicate_pair(registry, consumer_id="consumer-other", scope=_scope(purpose=MasterPurpose.DISCOVERY))
+    assert registry.observed_state(consumed) is LocalCapabilityState.CONSUMED
+    failed = _issue(registry, invocation_id="inv-local-failed")
+    assert _consume(registry, failed, invocation_id="inv-local-failed").outcome is (
+        LocalConsumptionOutcome.TRANSITION_RECORDED
+    )
+    failure = registry.record_operation_failure(failed)
+    assert failure.reason is LocalRejectionReason.OPERATION_FAILED
+    _assert_closed(failure)
+    _assert_duplicate_pair(registry, invocation_id="inv-local-failed", expires_at=T1)
+    assert registry.observed_state(failed) is LocalCapabilityState.OPERATION_FAILED
+    assert _consume(registry, failed, invocation_id="inv-local-failed").reason is (
+        LocalRejectionReason.NOT_REACTIVATED
+    )
+
+    expired_registry, expired_clock = _registry()
+    expired = _issue(expired_registry, expires_at=T1)
+    expired_clock.advance_to(T1)
+    expired_result = _consume(expired_registry, expired)
+    assert expired_result.reason is LocalRejectionReason.EXPIRED
+    _assert_closed(expired_result)
+    _assert_duplicate_pair(expired_registry, expires_at=T2)
+    expired_clock.advance_to(T0)
+    assert _consume(expired_registry, expired).reason is LocalRejectionReason.NOT_REACTIVATED
+    assert expired_registry.observed_state(expired) is LocalCapabilityState.EXPIRED
+
+    revoked_registry, _revoked_clock = _registry()
+    revoked = _issue(revoked_registry)
+    revocation = revoked_registry.close_session(SESSION_ID)
+    assert revocation.revoked_count == 1
+    _assert_closed(revocation)
+    assert revoked_registry.observed_state(revoked) is LocalCapabilityState.REVOKED
+    _assert_duplicate_pair(revoked_registry, consumer_id="consumer-other", expires_at=T1)
+    with pytest.raises(ContractValidationError, match="session_closed"):
+        _issue(revoked_registry, invocation_id="inv-local-after-close")
+    assert _consume(revoked_registry, revoked).reason is LocalRejectionReason.REVOKED
+
+
+def test_distinct_invocations_in_one_session_can_be_issued():
+    registry, _clock = _registry()
+    other_registry, _other_clock = _registry()
+    first = _issue(registry)
+    second = _issue(registry, invocation_id="inv-local-2")
+    foreign = _issue(other_registry)
+    assert first is not second
+    assert registry.observed_state(first) is LocalCapabilityState.ISSUED
+    assert registry.observed_state(second) is LocalCapabilityState.ISSUED
+    assert other_registry.owns(foreign) is True
+    assert registry.owns(foreign) is False
+    first_result = _consume(registry, first)
+    second_result = _consume(registry, second, invocation_id="inv-local-2")
+    foreign_result = _consume(other_registry, foreign)
+    assert first_result.outcome is LocalConsumptionOutcome.TRANSITION_RECORDED
+    assert second_result.outcome is LocalConsumptionOutcome.TRANSITION_RECORDED
+    assert foreign_result.outcome is LocalConsumptionOutcome.TRANSITION_RECORDED
+    _assert_closed(first_result)
+    _assert_closed(second_result)
+    _assert_closed(foreign_result)
+    assert _consume(registry, first).reason is LocalRejectionReason.REPLAY
+    assert _consume(registry, second, invocation_id="inv-local-2").reason is LocalRejectionReason.REPLAY
 
 
 def test_session_close_revokes_issued_capabilities():

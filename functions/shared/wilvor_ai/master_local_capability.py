@@ -2,7 +2,8 @@
 
 This module is a private registry for issuance, atomic consumption, expiry,
 and session revocation inside one test process. A recorded transition means
-only that this registry changed its private state.
+only that this registry changed its private state. Each registry issues at
+most one capability for a ``(session_id, invocation_id)`` pair.
 
 It is not a production execution authority. Master execution authority stays
 ``DENIED``. Production authority stays ``DENIED``. Source authenticity stays
@@ -489,9 +490,14 @@ def _non_capability_reason(candidate: object) -> LocalRejectionReason | None:
 class LocalCapabilityRegistry:
     """Private process-local registry.
 
-    ``issue`` creates one opaque capability. ``consume`` performs a single
-    atomic issued-to-consumed transition under a lock. ``close_session``
-    revokes capabilities that are still issued for that local session.
+    ``issue`` creates one opaque capability. The same lock that publishes the
+    record also reserves ``(session_id, invocation_id)``. A second issue for
+    that pair is refused for the life of the registry, including after the
+    first capability is consumed, expired, revoked, or operation-failed.
+    Changing the consumer, scope, or expiry does not create another issuance.
+    ``consume`` performs a single atomic issued-to-consumed transition under
+    that lock. ``close_session`` revokes capabilities that are still issued
+    for that local session.
 
     ``invocation_id``, ``consumer_id``, and ``session_id`` are exact-match
     test labels. They are not authenticated principals. There is no
@@ -506,6 +512,7 @@ class LocalCapabilityRegistry:
         self._lock = threading.Lock()
         self._token = secrets.token_bytes(32)
         self._records: dict[bytes, _RegistryRecord] = {}
+        self._issued_pairs: set[tuple[str, str]] = set()
         self._closed_sessions: set[str] = set()
 
     def issue(
@@ -517,14 +524,20 @@ class LocalCapabilityRegistry:
         session_id: str,
         expires_at: datetime,
     ) -> LocalCapabilityHandle:
-        """Store one issued capability and return its opaque handle."""
+        """Store one issued capability and return its opaque handle.
+
+        The pair check and the record insert stay inside one lock hold.
+        """
 
         checked_scope = _require_scope(scope)
         checked_invocation = _label(invocation_id, "invocation_id")
         checked_consumer = _label(consumer_id, "consumer_id")
         checked_session = _label(session_id, "session_id")
         checked_expiry = _utc_instant(expires_at, "expires_at")
+        pair = (checked_session, checked_invocation)
         with self._lock:
+            if pair in self._issued_pairs:
+                raise ContractValidationError("duplicate_session_invocation")
             if checked_session in self._closed_sessions:
                 raise ContractValidationError("session_closed")
             now = _utc_instant(self._clock.now(), "clock")
@@ -534,6 +547,7 @@ class LocalCapabilityRegistry:
             while handle_token in self._records:
                 handle_token = secrets.token_bytes(32)
             handle = _new_live(self._token, handle_token)
+            self._issued_pairs.add(pair)
             self._records[handle_token] = _RegistryRecord(
                 handle=handle,
                 scope=checked_scope,
