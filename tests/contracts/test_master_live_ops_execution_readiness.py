@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import importlib
 import inspect
-import subprocess
 from dataclasses import replace
-from pathlib import Path
 
 import pytest
 
@@ -101,19 +99,6 @@ TEXT = "Which aircraft are currently affected by hazards?"
 SIGMET_TEXT = "Which current SIGMETs cover California right now?"
 LIVE = AgentCapability.RETRIEVE_DETERMINISTIC_OPERATIONAL_CONTEXT
 HISTORY = AgentCapability.RETRIEVE_HISTORICAL_ANALYTICS
-REPO_ROOT = Path(__file__).resolve().parents[2]
-MODULE = (
-    REPO_ROOT
-    / "functions"
-    / "shared"
-    / "wilvor_ai"
-    / "master_live_ops_execution_readiness.py"
-)
-_ASSIGNED_PATHS = {
-    "functions/shared/wilvor_ai/master_live_ops_execution_readiness.py",
-    "tests/contracts/test_master_live_ops_execution_readiness.py",
-    "tests/contracts/test_master_live_ops_execution_readiness_import_isolation.py",
-}
 
 _REAL_CALLABLES = (
     LiveOpsSpecialist.__init__,
@@ -784,20 +769,3 @@ def test_existing_master_preflight_still_denies_dispatch():
     assert evaluation.report.source_authenticity is MasterSourceAuthenticity.NOT_ESTABLISHED
     assert readiness.dispatch_permitted is False
     assert readiness.executable is False
-
-
-def test_git_file_scope_is_only_the_readiness_files():
-    completed = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=all"],
-        cwd=REPO_ROOT,
-        check=False,
-        capture_output=True,
-        text=True,
-    )
-    assert completed.returncode == 0, completed.stderr
-    paths = set()
-    for line in completed.stdout.splitlines():
-        if not line.strip():
-            continue
-        paths.add(line[3:].replace("\\", "/"))
-    assert paths == _ASSIGNED_PATHS

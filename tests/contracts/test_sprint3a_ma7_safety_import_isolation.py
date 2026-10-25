@@ -1,7 +1,7 @@
 """Import isolation for the Sprint 3A MA7 baseline safety review.
 
-The regression imports the existing Master contracts. It must not import the
-seven Sprint 3A modules that are still being written on other branches, and
+The regression imports the existing Master contracts in the integrated
+repository. It must not import the seven Sprint 3A execution modules, and
 it must not load a specialist runner, a model provider, or AWS.
 """
 
@@ -16,10 +16,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SHARED_DIR = REPO_ROOT / "functions" / "shared"
-AI_DIR = SHARED_DIR / "wilvor_ai"
 REGRESSION = REPO_ROOT / "tests" / "contracts" / "test_sprint3a_ma7_safety_regression.py"
 
-UNFINISHED_MODULES = {
+UNRELATED_EXECUTION_MODULES = {
     "wilvor_ai.master_decision_execution_readiness",
     "wilvor_ai.master_execution_integration",
     "wilvor_ai.master_execution_policy_boundary",
@@ -29,17 +28,7 @@ UNFINISHED_MODULES = {
     "wilvor_ai.master_source_read_trace_boundary",
 }
 
-UNFINISHED_FILES = {
-    "master_decision_execution_readiness.py",
-    "master_execution_integration.py",
-    "master_execution_policy_boundary.py",
-    "master_historical_execution_readiness.py",
-    "master_live_ops_execution_readiness.py",
-    "master_session_origin_boundary.py",
-    "master_source_read_trace_boundary.py",
-}
-
-FORBIDDEN_MODULES = UNFINISHED_MODULES | {
+FORBIDDEN_MODULES = UNRELATED_EXECUTION_MODULES | {
     "anthropic",
     "boto3",
     "botocore",
@@ -63,12 +52,10 @@ def _imported_modules(path: Path) -> set[str]:
     return imported
 
 
-def test_baseline_regression_does_not_import_unfinished_sprint3a_modules():
+def test_baseline_regression_does_not_import_unrelated_execution_modules():
     imported = _imported_modules(REGRESSION)
-    assert UNFINISHED_MODULES.isdisjoint(imported)
+    assert UNRELATED_EXECUTION_MODULES.isdisjoint(imported)
     assert FORBIDDEN_MODULES.isdisjoint(imported)
-    for name in UNFINISHED_FILES:
-        assert not (AI_DIR / name).exists()
     source = REGRESSION.read_text(encoding="utf-8")
     for banned in ("boto3", "botocore", "anthropic", "openai", "terraform"):
         assert banned not in source
