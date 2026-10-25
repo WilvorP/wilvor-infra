@@ -70,6 +70,10 @@ _CLOSED_DEFINITIONS = {
     "MasterPlanningSession",
     "ExecutionGrant",
     "RuntimeContext",
+    "ApplicationPrincipal",
+    "ExecutionPolicy",
+    "ReadResourceScope",
+    "ExecutionDeadline",
 }
 
 

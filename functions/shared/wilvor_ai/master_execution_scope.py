@@ -96,6 +96,9 @@ class MasterExecutionPrerequisite(str, Enum):
     """Proof a later execution review would still need.
 
     Every member stays missing. This module cannot mark one satisfied.
+    The planning-session, principal, policy, read-resource, and deadline
+    categories name missing proof only. They do not create a session, a
+    principal, a policy object, a resource grant, a deadline, or authority.
     PROPOSED gate-resolution and provenance readers may inspect the closed
     set. They are not called here.
     """
@@ -110,6 +113,11 @@ class MasterExecutionPrerequisite(str, Enum):
     POPULATION_AND_GEOGRAPHIC_SCOPE = "POPULATION_AND_GEOGRAPHIC_SCOPE"
     SEPARATELY_AUTHORIZED_DECISION_TARGET = "SEPARATELY_AUTHORIZED_DECISION_TARGET"
     DASHBOARD_INTEGRATION_BOUNDARY = "DASHBOARD_INTEGRATION_BOUNDARY"
+    TRUSTED_PLANNING_SESSION_ORIGIN = "TRUSTED_PLANNING_SESSION_ORIGIN"
+    AUTHENTICATED_APPLICATION_PRINCIPAL = "AUTHENTICATED_APPLICATION_PRINCIPAL"
+    VERIFIED_EXECUTION_POLICY = "VERIFIED_EXECUTION_POLICY"
+    AUTHORIZED_READ_RESOURCE_SCOPE = "AUTHORIZED_READ_RESOURCE_SCOPE"
+    ESTABLISHED_EXECUTION_DEADLINE = "ESTABLISHED_EXECUTION_DEADLINE"
 
 
 class MasterExecutionDenialCategory(str, Enum):
@@ -358,8 +366,10 @@ class MasterExecutionScope:
 
     ``structural_ready_to_execute`` copies the plan flag and is not
     permission. ``missing_prerequisites`` and ``denial_categories`` are the
-    full closed sets. ``execution_permission_granted`` and ``redeemable``
-    cannot be true.
+    full closed sets, including planning-session origin, application
+    principal, execution policy, read-resource scope, and execution deadline.
+    Those names stay unresolved. ``execution_permission_granted`` and
+    ``redeemable`` cannot be true.
     """
 
     planning_context: MasterPlanningContext

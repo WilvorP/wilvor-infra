@@ -61,6 +61,13 @@ _CLOSED_NAMES = (
     "authorize",
     "call_specialist",
 )
+_SECURITY_PREREQUISITES = (
+    MasterExecutionPrerequisite.TRUSTED_PLANNING_SESSION_ORIGIN,
+    MasterExecutionPrerequisite.AUTHENTICATED_APPLICATION_PRINCIPAL,
+    MasterExecutionPrerequisite.VERIFIED_EXECUTION_POLICY,
+    MasterExecutionPrerequisite.AUTHORIZED_READ_RESOURCE_SCOPE,
+    MasterExecutionPrerequisite.ESTABLISHED_EXECUTION_DEADLINE,
+)
 
 
 def _context(**overrides: object) -> MasterPlanningContext:
@@ -204,6 +211,8 @@ def _assert_unauthorized(scope: MasterExecutionScope) -> None:
     )
     assert MasterExecutionDenialCategory.MATCHING_IDENTIFIER_NOT_TRUST in scope.denial_categories
     assert MasterExecutionPrerequisite.REVIEWED_EXECUTION_AUTHORITY in scope.missing_prerequisites
+    for prerequisite in _SECURITY_PREREQUISITES:
+        assert prerequisite in scope.missing_prerequisites
     assert callable(scope) is False
     assert all(not hasattr(scope, name) for name in _CLOSED_NAMES)
     assert all(not hasattr(MasterExecutionScope, name) for name in _CLOSED_NAMES)
@@ -212,6 +221,11 @@ def _assert_unauthorized(scope: MasterExecutionScope) -> None:
     assert "evidence_inputs" not in names
     assert "comparison_requests" not in names
     assert "dispatch" not in names
+    assert "application_principal" not in names
+    assert "execution_policy" not in names
+    assert "read_resource_scope" not in names
+    assert "execution_deadline" not in names
+    assert "planning_session" not in names
 
 
 def test_ready_live_ops_and_blocked_decision_stay_unauthorized():
@@ -466,6 +480,10 @@ def test_authority_promotion_rejected():
         replace(scope, target_authorization_granted=True)
     with pytest.raises(ContractValidationError, match="prerequisite_not_satisfied"):
         replace(scope, missing_prerequisites=())
+    for omitted in _SECURITY_PREREQUISITES:
+        kept = tuple(item for item in MasterExecutionPrerequisite if item is not omitted)
+        with pytest.raises(ContractValidationError, match="prerequisite_not_satisfied"):
+            replace(scope, missing_prerequisites=kept)
     with pytest.raises(ContractValidationError, match="execution_denial_not_cleared"):
         replace(
             scope,
@@ -548,6 +566,26 @@ def test_malformed_objects_and_model_proposal_rejected():
     with pytest.raises(ContractValidationError, match="invalid_schema_version"):
         replace(scope_version := _scope(bundle, "live-1"), schema_version="wilvor.ai.master_execution_scope.v2")
     assert scope_version.schema_version == "wilvor.ai.master_execution_scope.v1"
+
+
+def test_security_prerequisites_remain_missing_after_replace():
+    bundle = _bundle(_live(), _decision())
+    live = _scope(bundle, "live-1")
+    decision = _scope(bundle, "dec-1")
+    replaced_live = replace(live)
+    replaced_decision = replace(decision)
+    assert live.structural_ready_to_execute is True
+    assert decision.structural_ready_to_execute is False
+    for scope in (live, decision, replaced_live, replaced_decision):
+        assert scope.missing_prerequisites == tuple(MasterExecutionPrerequisite)
+        for prerequisite in _SECURITY_PREREQUISITES:
+            assert prerequisite in scope.missing_prerequisites
+        assert scope.execution_permission_granted is False
+        assert scope.execution_authority is MasterRouteExecutionAuthority.DENIED
+        assert scope.production_authority is MasterProductionAuthority.DENIED
+        assert scope.source_authenticity is MasterSourceAuthenticity.NOT_ESTABLISHED
+    assert replaced_live == live
+    assert replaced_decision == decision
 
 
 def test_repeated_scopes_are_deterministic():
