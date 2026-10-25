@@ -1,0 +1,43 @@
+---
+description: Wilvor documentation standards for Markdown docs and READMEs. Applies to documentation edits only and does not govern application, test, Terraform, or infrastructure changes.
+globs: docs/**/*.md,**/README.md,functions/**/*.md,modules/**/*.md,dashboard/**/*.md,tests/**/*.md,scripts/**/*.md
+alwaysApply: false
+---
+
+# Wilvor documentation
+
+Before the first documentation edit in a session, read and follow `docs/DOCUMENTATION_STANDARDS.md`. That file is the canonical standard: headings, links, Mermaid, maturity labels, the page template, the source-reference convention, and file ownership.
+
+## Scope
+
+Apply this rule only to Markdown documentation you are writing or editing.
+
+Do not use this rule to refuse, narrow, or block Python, TypeScript, Terraform, tests, scripts, or infrastructure work. When the task is software implementation, implement it.
+
+When the task is documentation, do not modify Python, TypeScript, Terraform, tests, operational scripts, or infrastructure. Do not run Terraform apply, deployment scripts, AWS-mutating commands, or external live validation.
+
+## Claims and maturity
+
+Read the implementation symbol before stating behavior. Read the test assertion before applying UNIT, CONTRACT, INFRA, or INT. Search the Terraform roots before applying TF.
+
+Use only these labels, and only after that check: CODE, TF, UNIT, CONTRACT, INFRA, INT, LIVE, DEPLOYED, PLANNED, UNKNOWN.
+
+Keep these as separate facts: code existence, test coverage, Terraform configuration, deployment, and production authorization. TF does not establish DEPLOYED. A live harness does not establish a current pass or a production grant. UNKNOWN stays UNKNOWN.
+
+Cite claims with the source-reference convention in the standards file. Repository-relative paths and symbols. Do not invent files, routes, counts, or resources.
+
+## Aviation, review, and evidence
+
+Preserve advisory decision support and qualified human review. Deterministic services remain authoritative. Do not document a clearance, ATC instruction, flight-control instruction, landing instruction, altitude instruction, reroute, or infrastructure mutation as a Wilvor capability.
+
+Re-read `MasterRouteExecutionAuthority` before writing an execution value. At the standards baseline it is `DENIED` only, and production execution is not representable.
+
+Do not upgrade confidence, freshness, tool status, or provenance. Supplied evidence metadata is not an authenticated read. Missing versions, timestamps, and limitations stay missing. Model output is not an operational fact.
+
+## Existing pages and ownership
+
+On a behavior page, include Implementation status and Known limitations. Use the page template for new pages.
+
+Do not delete historical README or review text. Move a superseded current claim under Historical record and cite the replacement.
+
+Edit only files on your workstream list in the standards. Do not edit `docs/DOCUMENTATION_STANDARDS.md` or this rule during parallel documentation work. Do not edit another workstream's files. Link to `functions/shared/wilvor_operational/README.md`; do not rewrite it.

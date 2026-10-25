@@ -9,7 +9,6 @@ __pycache__/
 *.tfstate.*
 crash.log
 .secrets/
-docs/
 *.json
 
 functions/**/package/
