@@ -22,12 +22,14 @@ from wilvor_ai.master_gate_resolution import (
     MASTER_GATE_RESOLUTION_LIMITATIONS,
     PROPOSED_INTERFACES,
     MasterDependencyCandidate,
+    MasterDependencyEdgeInspection,
     MasterDependencyOrigin,
     MasterDependencyVerdict,
     MasterDependencyVerdictReason,
     MasterDependentEffect,
     MasterGateCandidateObservation,
     MasterGateEffectiveState,
+    MasterGateFinding,
     MasterGateResolutionLimitation,
     MasterGateResolutionReason,
     MasterPlanningOmissionNote,
@@ -77,7 +79,7 @@ EXPECTED_VERDICT_ROWS = (
     _row(SpecialistStatus.UNAVAILABLE, MasterDependencyVerdict.UNAVAILABLE, MasterDependencyVerdictReason.NATIVE_UNAVAILABLE),
     _row(SpecialistStatus.INVALID_REQUEST, MasterDependencyVerdict.FAILED, MasterDependencyVerdictReason.NATIVE_FAILED),
     _row(SpecialistStatus.PROVIDER_FAILED, MasterDependencyVerdict.PROVIDER_FAILED, MasterDependencyVerdictReason.NATIVE_PROVIDER_FAILED),
-    _row(SpecialistRunStatus.PROPOSED_CLAIMS, MasterDependencyVerdict.COMPLETED_WITH_INSUFFICIENT_EVIDENCE, MasterDependencyVerdictReason.PROPOSED_CLAIMS_ARE_NOT_TRUSTED_COMPLETION),
+    _row(SpecialistRunStatus.PROPOSED_CLAIMS, MasterDependencyVerdict.INTERMEDIATE, MasterDependencyVerdictReason.HISTORICAL_PROPOSED_CLAIMS_NOT_FINALIZED),
     _row(SpecialistRunStatus.UNSUPPORTED, MasterDependencyVerdict.UNSUPPORTED, MasterDependencyVerdictReason.NATIVE_UNSUPPORTED),
     _row(SpecialistRunStatus.INVALID_REQUEST, MasterDependencyVerdict.FAILED, MasterDependencyVerdictReason.NATIVE_FAILED),
     _row(SpecialistRunStatus.UNAVAILABLE, MasterDependencyVerdict.UNAVAILABLE, MasterDependencyVerdictReason.NATIVE_UNAVAILABLE),
@@ -96,7 +98,7 @@ EXPECTED_VERDICT_ROWS = (
     _row(LiveOpsRunStatus.PROVIDER_FAILED, MasterDependencyVerdict.PROVIDER_FAILED, MasterDependencyVerdictReason.NATIVE_PROVIDER_FAILED),
     _row(LiveOpsRunStatus.PROVIDER_TIMEOUT, MasterDependencyVerdict.TIMED_OUT, MasterDependencyVerdictReason.NATIVE_TIMED_OUT),
     _row(LiveOpsRunStatus.RUNTIME_TIMEOUT, MasterDependencyVerdict.TIMED_OUT, MasterDependencyVerdictReason.NATIVE_TIMED_OUT),
-    _row(LiveOpsRunStatus.BUDGET_EXHAUSTED, MasterDependencyVerdict.FAILED, MasterDependencyVerdictReason.NATIVE_FAILED),
+    _row(LiveOpsRunStatus.BUDGET_EXHAUSTED, MasterDependencyVerdict.PARTIAL, MasterDependencyVerdictReason.NATIVE_BUDGET_EXHAUSTED),
     _row(LiveOpsRunStatus.CANCELLED, MasterDependencyVerdict.CANCELLED, MasterDependencyVerdictReason.NATIVE_CANCELLED),
     _row(LiveOpsRunStatus.UNAVAILABLE, MasterDependencyVerdict.UNAVAILABLE, MasterDependencyVerdictReason.NATIVE_UNAVAILABLE),
 )
@@ -343,9 +345,18 @@ def test_timeout_cancelled_and_budget_stay_distinct():
     assert runtime.verdict is MasterDependencyVerdict.TIMED_OUT
     assert timeout.native_status is LiveOpsRunStatus.PROVIDER_TIMEOUT
     assert runtime.native_status is LiveOpsRunStatus.RUNTIME_TIMEOUT
-    assert budget.verdict is MasterDependencyVerdict.FAILED
+    assert budget.verdict is MasterDependencyVerdict.PARTIAL
+    assert budget.reason is MasterDependencyVerdictReason.NATIVE_BUDGET_EXHAUSTED
+    assert budget.native_status is LiveOpsRunStatus.BUDGET_EXHAUSTED
+    assert budget.effect is MasterDependentEffect.REQUIRED_PARTIAL
+    assert budget.runtime_failure is False
+    assert budget.verdict is not MasterDependencyVerdict.FAILED
     assert budget.verdict is not MasterDependencyVerdict.TIMED_OUT
     assert budget.verdict is not MasterDependencyVerdict.PROVIDER_FAILED
+    optional_budget = dependency_verdict(LiveOpsRunStatus.BUDGET_EXHAUSTED, MasterRequirement.OPTIONAL)
+    assert optional_budget.effect is MasterDependentEffect.OPTIONAL_PARTIAL
+    assert optional_budget.native_status is LiveOpsRunStatus.BUDGET_EXHAUSTED
+    assert optional_budget.runtime_failure is False
     assert cancelled.verdict is MasterDependencyVerdict.CANCELLED
     assert cancelled.effect is MasterDependentEffect.OPTIONAL_TERMINAL_FAILURE
 
@@ -676,19 +687,25 @@ def test_partial_and_failed_dependencies_stay_distinct_for_a_required_dependent(
     failed = _edge(inspection, "dec-1", "live-1")
     partial = _edge(inspection, "dec-1", "hist-1")
     assert failed.verdict is MasterDependencyVerdict.FAILED
-    assert failed.effect is MasterDependentEffect.REQUIRED_TERMINAL_FAILURE
+    assert failed.native_status is LiveOpsRunStatus.TOOL_FAILED
+    assert failed.effect is MasterDependentEffect.REQUIRED_PENDING_TRUSTED_EVIDENCE
+    assert failed.authoritative_terminal is False
+    assert failed.trusted_execution_evidence is False
     assert partial.verdict is MasterDependencyVerdict.PARTIAL
+    assert partial.native_status is SpecialistStatus.PARTIAL
     assert partial.effect is MasterDependentEffect.REQUIRED_PARTIAL
     assert partial.verdict is not failed.verdict
     finding = _finding(inspection, "dec-1", MasterRouteGate.DEPENDENCY_BLOCKED)
-    assert finding.effective_state is MasterGateEffectiveState.TERMINAL_FAILURE
-    assert finding.reason is MasterGateResolutionReason.DEPENDENCY_TERMINAL_FAILURE
+    assert finding.effective_state is MasterGateEffectiveState.UNRESOLVED
+    assert finding.reason is MasterGateResolutionReason.DEPENDENCY_PENDING_WITHOUT_TRUSTED_EXECUTION_EVIDENCE
+    assert finding.dependency_terminal is False
     assert finding.original_gate is MasterRouteGate.DEPENDENCY_BLOCKED
     assert MasterRouteGate.DEPENDENCY_BLOCKED in _by_id(plan)["dec-1"].gates
     identity = _finding(inspection, "dec-1", MasterRouteGate.TRUSTED_IDENTITY_VALIDATION_PENDING)
     assert identity.effective_state is MasterGateEffectiveState.UNRESOLVED
     assert inspection.dispatch_permitted is False
     assert inspection.authoritative_satisfaction is False
+    assert MasterGateEffectiveState.TERMINAL_FAILURE not in {item.effective_state for item in inspection.findings}
 
 
 def test_optional_terminal_dependency_is_not_a_required_failure():
@@ -702,8 +719,10 @@ def test_optional_terminal_dependency_is_not_a_required_failure():
     )
     edge = _edge(inspection, "hist-1", "live-1")
     assert edge.dependent_requirement is MasterRequirement.OPTIONAL
-    assert edge.effect is MasterDependentEffect.OPTIONAL_TERMINAL_FAILURE
     assert edge.verdict is MasterDependencyVerdict.PROVIDER_FAILED
+    assert edge.native_status is LiveOpsRunStatus.PROVIDER_FAILED
+    assert edge.effect is MasterDependentEffect.OPTIONAL_PENDING_TRUSTED_EVIDENCE
+    assert edge.authoritative_terminal is False
     finding = _finding(inspection, "hist-1", MasterRouteGate.DEPENDENCY_BLOCKED)
     assert finding.effective_state is MasterGateEffectiveState.UNRESOLVED
     assert finding.dependency_terminal is False
@@ -830,6 +849,157 @@ def test_gate_observation_cannot_add_a_gate_to_the_plan():
     assert [item.original_gate for item in inspection.findings] == [MasterRouteGate.NOT_REQUIRED]
     assert inspection.observed_candidates[0].applied is False
     assert inspection.authoritative_satisfaction is False
+
+
+@pytest.mark.parametrize("requirement", [MasterRequirement.REQUIRED, MasterRequirement.OPTIONAL])
+def test_budget_exhaustion_is_partial_and_keeps_its_native_status(requirement: MasterRequirement):
+    result = dependency_verdict(LiveOpsRunStatus.BUDGET_EXHAUSTED, requirement)
+    assert result.verdict is MasterDependencyVerdict.PARTIAL
+    assert result.reason is MasterDependencyVerdictReason.NATIVE_BUDGET_EXHAUSTED
+    assert result.native_status is LiveOpsRunStatus.BUDGET_EXHAUSTED
+    assert result.evidence_sufficient is False
+    assert result.runtime_failure is False
+    assert result.verdict is not MasterDependencyVerdict.FAILED
+    if requirement is MasterRequirement.REQUIRED:
+        plan = _plan(_live("live-1"), _history("hist-1", depends_on=("live-1",)))
+        expected_effect = MasterDependentEffect.REQUIRED_PARTIAL
+    else:
+        plan = _plan(
+            _live("live-1"),
+            _history("hist-1", depends_on=("live-1",), requirement=MasterRequirement.OPTIONAL),
+        )
+        expected_effect = MasterDependentEffect.OPTIONAL_PARTIAL
+    before = plan.to_dict()
+    inspection = inspect_route_gates(
+        plan,
+        observations=(_candidate(plan, "live-1", LiveOpsRunStatus.BUDGET_EXHAUSTED),),
+    )
+    edge = _edge(inspection, "hist-1", "live-1")
+    assert edge.effect is expected_effect
+    assert edge.verdict is MasterDependencyVerdict.PARTIAL
+    assert edge.native_status is LiveOpsRunStatus.BUDGET_EXHAUSTED
+    assert edge.authoritative_terminal is False
+    finding = _finding(inspection, "hist-1", MasterRouteGate.DEPENDENCY_BLOCKED)
+    assert finding.effective_state is MasterGateEffectiveState.UNRESOLVED
+    assert finding.dependency_terminal is False
+    assert plan.to_dict() == before
+    assert inspection.dispatch_permitted is False
+    assert inspection.authoritative_satisfaction is False
+    assert inspection.execution_authority is MasterRouteExecutionAuthority.DENIED
+
+
+@pytest.mark.parametrize("requirement", [MasterRequirement.REQUIRED, MasterRequirement.OPTIONAL])
+def test_proposed_claims_stay_intermediate_until_historical_finalization(requirement: MasterRequirement):
+    result = dependency_verdict(SpecialistRunStatus.PROPOSED_CLAIMS, requirement)
+    finalized = dependency_verdict(SpecialistStatus.ANSWERED, requirement)
+    assert result.verdict is MasterDependencyVerdict.INTERMEDIATE
+    assert result.reason is MasterDependencyVerdictReason.HISTORICAL_PROPOSED_CLAIMS_NOT_FINALIZED
+    assert result.native_status is SpecialistRunStatus.PROPOSED_CLAIMS
+    assert result.evidence_sufficient is False
+    assert result.runtime_failure is False
+    assert result.verdict is not MasterDependencyVerdict.COMPLETED
+    assert result.verdict is not MasterDependencyVerdict.COMPLETED_WITH_INSUFFICIENT_EVIDENCE
+    assert finalized.verdict is MasterDependencyVerdict.COMPLETED_WITH_INSUFFICIENT_EVIDENCE
+    assert result.effect is not finalized.effect
+    if requirement is MasterRequirement.REQUIRED:
+        plan = _plan(_history("hist-1"), _decision("dec-1", depends_on=("hist-1",)))
+        expected_effect = MasterDependentEffect.REQUIRED_INTERMEDIATE
+    else:
+        plan = _plan(
+            _history("hist-1"),
+            _decision("dec-1", depends_on=("hist-1",), requirement=MasterRequirement.OPTIONAL),
+        )
+        expected_effect = MasterDependentEffect.OPTIONAL_INTERMEDIATE
+    before = plan.to_dict()
+    inspection = inspect_route_gates(
+        plan,
+        observations=(_candidate(plan, "hist-1", SpecialistRunStatus.PROPOSED_CLAIMS),),
+    )
+    edge = _edge(inspection, "dec-1", "hist-1")
+    assert edge.effect is expected_effect
+    assert edge.verdict is MasterDependencyVerdict.INTERMEDIATE
+    assert edge.native_status is SpecialistRunStatus.PROPOSED_CLAIMS
+    finding = _finding(inspection, "dec-1", MasterRouteGate.DEPENDENCY_BLOCKED)
+    assert finding.effective_state is MasterGateEffectiveState.UNRESOLVED
+    assert finding.missing_trusted_evidence is True
+    assert plan.to_dict() == before
+    assert inspection.dispatch_permitted is False
+    assert inspection.authoritative_satisfaction is False
+
+
+@pytest.mark.parametrize(
+    "status",
+    [
+        LiveOpsRunStatus.TOOL_FAILED,
+        LiveOpsRunStatus.PROVIDER_FAILED,
+        LiveOpsRunStatus.CANCELLED,
+        LiveOpsRunStatus.UNAVAILABLE,
+        LiveOpsRunStatus.UNSUPPORTED,
+        LiveOpsRunStatus.PROVIDER_TIMEOUT,
+        LiveOpsRunStatus.RUNTIME_TIMEOUT,
+    ],
+)
+@pytest.mark.parametrize("requirement", [MasterRequirement.REQUIRED, MasterRequirement.OPTIONAL])
+def test_untrusted_terminal_candidate_does_not_terminate_the_gate(
+    status: LiveOpsRunStatus,
+    requirement: MasterRequirement,
+):
+    claimed = dependency_verdict(status, requirement)
+    assert claimed.effect in {
+        MasterDependentEffect.REQUIRED_TERMINAL_FAILURE,
+        MasterDependentEffect.OPTIONAL_TERMINAL_FAILURE,
+    }
+    if requirement is MasterRequirement.REQUIRED:
+        plan = _plan(_live("live-1"), _history("hist-1", depends_on=("live-1",)))
+        pending = MasterDependentEffect.REQUIRED_PENDING_TRUSTED_EVIDENCE
+    else:
+        plan = _plan(
+            _live("live-1"),
+            _history("hist-1", depends_on=("live-1",), requirement=MasterRequirement.OPTIONAL),
+        )
+        pending = MasterDependentEffect.OPTIONAL_PENDING_TRUSTED_EVIDENCE
+    original_gates = _by_id(plan)["hist-1"].gates
+    inspection = inspect_route_gates(plan, observations=(_candidate(plan, "live-1", status),))
+    edge = _edge(inspection, "hist-1", "live-1")
+    assert edge.native_status is status
+    assert edge.verdict is claimed.verdict
+    assert edge.effect is pending
+    assert edge.effect is not claimed.effect
+    assert edge.authoritative_terminal is False
+    assert edge.trusted_execution_evidence is False
+    finding = _finding(inspection, "hist-1", MasterRouteGate.DEPENDENCY_BLOCKED)
+    assert finding.effective_state is MasterGateEffectiveState.UNRESOLVED
+    assert finding.reason is MasterGateResolutionReason.DEPENDENCY_PENDING_WITHOUT_TRUSTED_EXECUTION_EVIDENCE
+    assert finding.dependency_terminal is False
+    assert _by_id(plan)["hist-1"].gates is original_gates
+    assert inspection.dispatch_permitted is False
+    assert inspection.authoritative_satisfaction is False
+    assert inspection.execution_authority is MasterRouteExecutionAuthority.DENIED
+
+
+def test_terminal_gate_and_authoritative_edge_cannot_be_constructed():
+    plan = _plan(_live("live-1"), _history("hist-1", depends_on=("live-1",)))
+    step = _by_id(plan)["hist-1"]
+    with pytest.raises(ContractValidationError, match="untrusted_observation_not_terminal"):
+        MasterGateFinding(
+            step_id=step.step_id,
+            invocation_id=step.invocation.invocation_id,
+            original_gate=MasterRouteGate.DEPENDENCY_BLOCKED,
+            effective_state=MasterGateEffectiveState.TERMINAL_FAILURE,
+            reason=MasterGateResolutionReason.DEPENDENCY_TERMINAL_FAILURE,
+            missing_trusted_evidence=True,
+            dependency_terminal=True,
+        )
+    with pytest.raises(ContractValidationError, match="untrusted_observation_not_terminal"):
+        MasterDependencyEdgeInspection(
+            dependent_step_id="hist-1",
+            dependency_step_id="live-1",
+            dependent_requirement=MasterRequirement.REQUIRED,
+            origin=MasterDependencyOrigin.PLANNED_EDGE,
+            effect=MasterDependentEffect.REQUIRED_PENDING_TRUSTED_EVIDENCE,
+            reason=MasterDependencyVerdictReason.NO_RUNTIME_OBSERVATION,
+            authoritative_terminal=True,
+        )
 
 
 def test_public_surface_has_no_execution_entrypoint():

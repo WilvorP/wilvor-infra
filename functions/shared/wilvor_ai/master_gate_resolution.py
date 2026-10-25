@@ -1,10 +1,9 @@
 """Offline Master gate inspection and runtime dependency classification.
 
 This module reads an existing Master route plan. It records the original
-gates, untrusted candidate observations, missing trusted evidence, the
-effective unresolved state, and terminal dependency failures. It does not
-modify the plan, call a specialist, construct a planning session, or issue a
-dispatch permit.
+gates, untrusted candidate observations, missing trusted evidence, and the
+effective unresolved state. It does not modify the plan, call a specialist,
+construct a planning session, or issue a dispatch permit.
 
 Execution authority stays ``DENIED``. Production authority stays ``DENIED``.
 Source authenticity stays ``NOT_ESTABLISHED``. A model, a planning object, a
@@ -12,11 +11,14 @@ binder, or caller-supplied evidence cannot authorize execution. Public
 dataclass fields and matching string ids are not proof of trust.
 
 No trusted gate-evidence writer exists in this sprint. Caller-constructed
-observations cannot produce an authoritative SATISFIED resolution. Native
-``COMPLETED`` and Historical ``ANSWERED`` are not sufficient evidence on
-their own. Decision identity and currentness stay pending. Region validation
-stays pending without authoritative geometry. An unresolved temporal scope
-stays pending. A dependency stays pending without trusted execution evidence.
+observations cannot produce an authoritative SATISFIED resolution or an
+authoritative terminal gate. Native ``COMPLETED`` and Historical ``ANSWERED``
+are not sufficient evidence on their own. Historical ``PROPOSED_CLAIMS`` is
+an intermediate run, not a completed Historical outcome. Live Ops budget
+exhaustion is an incomplete partial outcome and keeps its native status.
+Decision identity and currentness stay pending. Region validation stays
+pending without authoritative geometry. An unresolved temporal scope stays
+pending. A dependency stays pending without trusted execution evidence.
 ``APPLICATION_TARGET_CANDIDATE_PRESENT`` stays an unresolved execution-policy
 classification.
 
@@ -88,6 +90,7 @@ class MasterDependencyVerdict(str, Enum):
     COMPLETED = "COMPLETED"
     COMPLETED_WITH_INSUFFICIENT_EVIDENCE = "COMPLETED_WITH_INSUFFICIENT_EVIDENCE"
     PARTIAL = "PARTIAL"
+    INTERMEDIATE = "INTERMEDIATE"
     FAILED = "FAILED"
     PROVIDER_FAILED = "PROVIDER_FAILED"
     TIMED_OUT = "TIMED_OUT"
@@ -101,8 +104,9 @@ class MasterDependencyVerdictReason(str, Enum):
 
     NATIVE_SUCCESS_WITHOUT_TRUSTED_EVIDENCE = "NATIVE_SUCCESS_WITHOUT_TRUSTED_EVIDENCE"
     HISTORICAL_ANSWERED_WITHOUT_TRUSTED_EVIDENCE = "HISTORICAL_ANSWERED_WITHOUT_TRUSTED_EVIDENCE"
-    PROPOSED_CLAIMS_ARE_NOT_TRUSTED_COMPLETION = "PROPOSED_CLAIMS_ARE_NOT_TRUSTED_COMPLETION"
+    HISTORICAL_PROPOSED_CLAIMS_NOT_FINALIZED = "HISTORICAL_PROPOSED_CLAIMS_NOT_FINALIZED"
     NATIVE_PARTIAL = "NATIVE_PARTIAL"
+    NATIVE_BUDGET_EXHAUSTED = "NATIVE_BUDGET_EXHAUSTED"
     NATIVE_FAILED = "NATIVE_FAILED"
     NATIVE_PROVIDER_FAILED = "NATIVE_PROVIDER_FAILED"
     NATIVE_TIMED_OUT = "NATIVE_TIMED_OUT"
@@ -122,6 +126,8 @@ class MasterDependentEffect(str, Enum):
     OPTIONAL_INSUFFICIENT_EVIDENCE = "OPTIONAL_INSUFFICIENT_EVIDENCE"
     REQUIRED_PARTIAL = "REQUIRED_PARTIAL"
     OPTIONAL_PARTIAL = "OPTIONAL_PARTIAL"
+    REQUIRED_INTERMEDIATE = "REQUIRED_INTERMEDIATE"
+    OPTIONAL_INTERMEDIATE = "OPTIONAL_INTERMEDIATE"
     REQUIRED_TERMINAL_FAILURE = "REQUIRED_TERMINAL_FAILURE"
     OPTIONAL_TERMINAL_FAILURE = "OPTIONAL_TERMINAL_FAILURE"
     PLANNING_OMISSION_NOT_RUNTIME_FAILURE = "PLANNING_OMISSION_NOT_RUNTIME_FAILURE"
@@ -219,6 +225,9 @@ class MasterGateResolutionLimitation(str, Enum):
     PRODUCTION_AUTHORITY_REMAINS_DENIED = "PRODUCTION_AUTHORITY_REMAINS_DENIED"
     SOURCE_AUTHENTICITY_REMAINS_NOT_ESTABLISHED = "SOURCE_AUTHENTICITY_REMAINS_NOT_ESTABLISHED"
     STRUCTURAL_READINESS_IS_NOT_A_DISPATCH_PERMIT = "STRUCTURAL_READINESS_IS_NOT_A_DISPATCH_PERMIT"
+    BUDGET_EXHAUSTION_IS_INCOMPLETE = "BUDGET_EXHAUSTION_IS_INCOMPLETE"
+    HISTORICAL_PROPOSED_CLAIMS_ARE_NOT_FINAL = "HISTORICAL_PROPOSED_CLAIMS_ARE_NOT_FINAL"
+    UNTRUSTED_CANDIDATE_CANNOT_TERMINATE_A_GATE = "UNTRUSTED_CANDIDATE_CANNOT_TERMINATE_A_GATE"
 
 
 MASTER_GATE_RESOLUTION_LIMITATIONS = tuple(MasterGateResolutionLimitation)
@@ -241,11 +250,15 @@ _ANSWERED = (
     MasterDependencyVerdict.COMPLETED_WITH_INSUFFICIENT_EVIDENCE,
     MasterDependencyVerdictReason.HISTORICAL_ANSWERED_WITHOUT_TRUSTED_EVIDENCE,
 )
-_PROPOSED = (
-    MasterDependencyVerdict.COMPLETED_WITH_INSUFFICIENT_EVIDENCE,
-    MasterDependencyVerdictReason.PROPOSED_CLAIMS_ARE_NOT_TRUSTED_COMPLETION,
+_INTERMEDIATE = (
+    MasterDependencyVerdict.INTERMEDIATE,
+    MasterDependencyVerdictReason.HISTORICAL_PROPOSED_CLAIMS_NOT_FINALIZED,
 )
 _PARTIAL = (MasterDependencyVerdict.PARTIAL, MasterDependencyVerdictReason.NATIVE_PARTIAL)
+_BUDGET_EXHAUSTED = (
+    MasterDependencyVerdict.PARTIAL,
+    MasterDependencyVerdictReason.NATIVE_BUDGET_EXHAUSTED,
+)
 _FAILED = (MasterDependencyVerdict.FAILED, MasterDependencyVerdictReason.NATIVE_FAILED)
 _PROVIDER_FAILED = (
     MasterDependencyVerdict.PROVIDER_FAILED,
@@ -279,7 +292,7 @@ _VERDICTS = {
     _status_key(SpecialistStatus.UNAVAILABLE): _UNAVAILABLE,
     _status_key(SpecialistStatus.INVALID_REQUEST): _FAILED,
     _status_key(SpecialistStatus.PROVIDER_FAILED): _PROVIDER_FAILED,
-    _status_key(SpecialistRunStatus.PROPOSED_CLAIMS): _PROPOSED,
+    _status_key(SpecialistRunStatus.PROPOSED_CLAIMS): _INTERMEDIATE,
     _status_key(SpecialistRunStatus.UNSUPPORTED): _UNSUPPORTED,
     _status_key(SpecialistRunStatus.INVALID_REQUEST): _FAILED,
     _status_key(SpecialistRunStatus.UNAVAILABLE): _UNAVAILABLE,
@@ -298,7 +311,7 @@ _VERDICTS = {
     _status_key(LiveOpsRunStatus.PROVIDER_FAILED): _PROVIDER_FAILED,
     _status_key(LiveOpsRunStatus.PROVIDER_TIMEOUT): _TIMED_OUT,
     _status_key(LiveOpsRunStatus.RUNTIME_TIMEOUT): _TIMED_OUT,
-    _status_key(LiveOpsRunStatus.BUDGET_EXHAUSTED): _FAILED,
+    _status_key(LiveOpsRunStatus.BUDGET_EXHAUSTED): _BUDGET_EXHAUSTED,
     _status_key(LiveOpsRunStatus.CANCELLED): _CANCELLED,
     _status_key(LiveOpsRunStatus.UNAVAILABLE): _UNAVAILABLE,
 }
@@ -407,6 +420,10 @@ def _effect(requirement: MasterRequirement, verdict: MasterDependencyVerdict) ->
         if required:
             return MasterDependentEffect.REQUIRED_PARTIAL
         return MasterDependentEffect.OPTIONAL_PARTIAL
+    if verdict is MasterDependencyVerdict.INTERMEDIATE:
+        if required:
+            return MasterDependentEffect.REQUIRED_INTERMEDIATE
+        return MasterDependentEffect.OPTIONAL_INTERMEDIATE
     if verdict in _TERMINAL_VERDICTS:
         if required:
             return MasterDependentEffect.REQUIRED_TERMINAL_FAILURE
@@ -471,6 +488,16 @@ def _classify(
     )
 
 
+def _gate_effect(classified: "MasterDependencyVerdictResult") -> MasterDependentEffect:
+    """Keep a caller claim diagnostic without making it an authoritative terminal effect."""
+
+    if classified.effect is MasterDependentEffect.REQUIRED_TERMINAL_FAILURE:
+        return MasterDependentEffect.REQUIRED_PENDING_TRUSTED_EVIDENCE
+    if classified.effect is MasterDependentEffect.OPTIONAL_TERMINAL_FAILURE:
+        return MasterDependentEffect.OPTIONAL_PENDING_TRUSTED_EVIDENCE
+    return classified.effect
+
+
 def _resolve_gate(
     gate: MasterRouteGate,
     dependency_terminal: bool,
@@ -479,20 +506,14 @@ def _resolve_gate(
         raise ContractValidationError("invalid_gate")
     if dependency_terminal is not True and dependency_terminal is not False:
         raise ContractValidationError("invalid_dependency_terminal")
+    if dependency_terminal:
+        raise ContractValidationError("untrusted_observation_not_terminal")
     if gate is MasterRouteGate.DEPENDENCY_BLOCKED:
-        if dependency_terminal:
-            return (
-                MasterGateEffectiveState.TERMINAL_FAILURE,
-                MasterGateResolutionReason.DEPENDENCY_TERMINAL_FAILURE,
-                True,
-            )
         return (
             MasterGateEffectiveState.UNRESOLVED,
             MasterGateResolutionReason.DEPENDENCY_PENDING_WITHOUT_TRUSTED_EXECUTION_EVIDENCE,
             True,
         )
-    if dependency_terminal:
-        raise ContractValidationError("inconsistent_gate_resolution")
     try:
         return _FIXED_GATES[gate]
     except KeyError as exc:
@@ -581,6 +602,9 @@ def dependency_verdict(
     Required and optional dependents produce different effects. A planning-time
     omission is not a runtime failure. Native ``COMPLETED`` and Historical
     ``ANSWERED`` map to insufficient evidence, not to ``COMPLETED``.
+    Historical ``PROPOSED_CLAIMS`` stays intermediate until finalization.
+    Live Ops budget exhaustion stays partial and keeps its native status.
+    Classifying a native failure here does not authenticate that failure.
     """
 
     _false(evidence_sufficient, "trusted_gate_evidence_not_available")
@@ -741,6 +765,8 @@ class MasterGateFinding:
             raise ContractValidationError("invalid_candidate_application")
         _false(self.candidate_trusted, "candidate_evidence_not_trusted")
         _false(self.authoritative_satisfaction, "authoritative_satisfaction_not_available")
+        if self.dependency_terminal is not False or self.effective_state is MasterGateEffectiveState.TERMINAL_FAILURE:
+            raise ContractValidationError("untrusted_observation_not_terminal")
         state, reason, missing = _resolve_gate(self.original_gate, self.dependency_terminal)
         if (
             self.effective_state is not state
@@ -780,12 +806,14 @@ class MasterDependencyEdgeInspection:
     evidence_sufficient: bool = False
     trusted_execution_evidence: bool = False
     identity_matched: bool = False
+    authoritative_terminal: bool = False
 
     def __post_init__(self) -> None:
         _token(self.dependent_step_id, "dependent_step_id")
         _token(self.dependency_step_id, "dependency_step_id")
         _false(self.evidence_sufficient, "trusted_gate_evidence_not_available")
         _false(self.trusted_execution_evidence, "trusted_gate_evidence_not_available")
+        _false(self.authoritative_terminal, "untrusted_observation_not_terminal")
         if not isinstance(self.identity_matched, bool):
             raise ContractValidationError("invalid_candidate_application")
         expected = dependency_verdict(self.native_status, self.dependent_requirement)
@@ -793,9 +821,9 @@ class MasterDependencyEdgeInspection:
             raise ContractValidationError("inconsistent_dependency_verdict")
         if (
             self.verdict is not expected.verdict
-            or self.effect is not expected.effect
             or self.reason is not expected.reason
             or self.origin is not expected.classification
+            or self.effect is not _gate_effect(expected)
         ):
             raise ContractValidationError("inconsistent_dependency_verdict")
 
@@ -814,6 +842,7 @@ class MasterDependencyEdgeInspection:
             "evidence_sufficient": False,
             "trusted_execution_evidence": False,
             "identity_matched": self.identity_matched,
+            "authoritative_terminal": False,
         }
 
 
@@ -944,18 +973,25 @@ class MasterGateInspection:
         ]
         if actual_edges != expected_edges:
             raise ContractValidationError("planned_dependencies_not_preserved")
-        terminal_steps = {
-            item.dependent_step_id
-            for item in self.dependency_edges
-            if item.effect is MasterDependentEffect.REQUIRED_TERMINAL_FAILURE
-        }
         for finding in self.findings:
+            if finding.dependency_terminal or finding.effective_state is MasterGateEffectiveState.TERMINAL_FAILURE:
+                raise ContractValidationError("untrusted_observation_not_terminal")
             if finding.original_gate is MasterRouteGate.DEPENDENCY_BLOCKED:
-                if finding.dependency_terminal is not (finding.step_id in terminal_steps):
+                if finding.effective_state is not MasterGateEffectiveState.UNRESOLVED:
                     raise ContractValidationError("inconsistent_gate_resolution")
-            elif finding.dependency_terminal:
-                raise ContractValidationError("inconsistent_gate_resolution")
+                if (
+                    finding.reason
+                    is not MasterGateResolutionReason.DEPENDENCY_PENDING_WITHOUT_TRUSTED_EXECUTION_EVIDENCE
+                ):
+                    raise ContractValidationError("inconsistent_gate_resolution")
         for edge in self.dependency_edges:
+            if edge.authoritative_terminal or edge.trusted_execution_evidence:
+                raise ContractValidationError("untrusted_observation_not_terminal")
+            if edge.effect in {
+                MasterDependentEffect.REQUIRED_TERMINAL_FAILURE,
+                MasterDependentEffect.OPTIONAL_TERMINAL_FAILURE,
+            }:
+                raise ContractValidationError("untrusted_observation_not_terminal")
             dependent = by_id[edge.dependent_step_id]
             if edge.dependent_requirement is not dependent.invocation.requirement:
                 raise ContractValidationError("dependent_requirement_mismatch")
@@ -1090,11 +1126,12 @@ def _edge(
         dependency_step_id=dependency_id,
         dependent_requirement=dependent.invocation.requirement,
         origin=classified.classification,
-        effect=classified.effect,
+        effect=_gate_effect(classified),
         reason=classified.reason,
         verdict=classified.verdict,
         native_status=native_status,
         identity_matched=native_status is not None,
+        authoritative_terminal=False,
     )
 
 
@@ -1151,10 +1188,9 @@ def inspect_route_gates(
 ) -> MasterGateInspection:
     """Inspect one plan. The returned record does not replace or modify it.
 
-    Caller observations stay untrusted. Gates that need a trusted writer stay
-    unresolved, except a required dependency whose observed runtime outcome is
-    a terminal failure. That failure is not satisfaction and it does not edit
-    the original gate list.
+    Caller observations stay untrusted. A claimed native failure is retained
+    for diagnosis and does not make the planned dependency gate terminal.
+    Gates that need a trusted writer stay unresolved.
     """
 
     if not isinstance(plan, MasterRoutePlan):
@@ -1175,11 +1211,6 @@ def inspect_route_gates(
     matched, dependency_records = _dependency_candidates(observation_tuple, by_id)
     matched_gates, gate_records = _gate_candidates(gate_tuple, by_id)
     edges = tuple(_edge(step, dependency_id, matched) for step in plan.steps for dependency_id in step.depends_on)
-    terminal_steps = {
-        edge.dependent_step_id
-        for edge in edges
-        if edge.effect is MasterDependentEffect.REQUIRED_TERMINAL_FAILURE
-    }
     foreign_dependencies = {
         item.step_id
         for item in dependency_records
@@ -1194,10 +1225,7 @@ def inspect_route_gates(
     for step in plan.steps:
         dependency_ids = set(step.depends_on)
         for gate in step.gates:
-            dependency_terminal = (
-                gate is MasterRouteGate.DEPENDENCY_BLOCKED and step.step_id in terminal_steps
-            )
-            state, reason, missing = _resolve_gate(gate, dependency_terminal)
+            state, reason, missing = _resolve_gate(gate, False)
             if gate is MasterRouteGate.DEPENDENCY_BLOCKED:
                 candidate_observed = any(edge.identity_matched for edge in edges if edge.dependent_step_id == step.step_id)
                 foreign_candidate = any(dependency_id in foreign_dependencies for dependency_id in dependency_ids)
@@ -1214,7 +1242,7 @@ def inspect_route_gates(
                     missing_trusted_evidence=missing,
                     candidate_observed=candidate_observed,
                     foreign_candidate=foreign_candidate,
-                    dependency_terminal=dependency_terminal,
+                    dependency_terminal=False,
                 )
             )
     inspection = MasterGateInspection(
