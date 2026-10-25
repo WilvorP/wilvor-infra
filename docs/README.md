@@ -2,7 +2,7 @@
 
 This page is an index. It states no behavior. Canonical pages own the claims.
 
-**Verified against:** `8abd2d5` on `docs/ws1-platform-foundations`
+**Verified against:** `956444d` on `docs/wilvor-documentation`
 
 ## How to use this tree
 
@@ -12,39 +12,32 @@ This page is an index. It states no behavior. Canonical pages own the claims.
 
 During documentation work, leave Python, TypeScript, Terraform, tests, operational scripts, and infrastructure unchanged.
 
-## Platform (WS1)
+## Published documentation
 
-| Page | Topic |
-| --- | --- |
-| [Architecture](overview/architecture.md) | Operational, historical, and AI planes; data flow |
-| [Repository structure](overview/repository-structure.md) | Directory map and technology stack |
-| [Advisory boundaries](overview/advisory-boundaries.md) | Decision-support limits and human review |
-| [Onboarding](operations/onboarding.md) | Local toolchain and developer entry points |
-| [Lifecycle](operations/lifecycle.md) | Terraform roots, PowerShell scripts, validation tools |
-| [Testing overview](testing/overview.md) | Unit, contract, infrastructure, integration, live, smoke, replay |
+| Area | Start here | Topic |
+| --- | --- | --- |
+| Architecture | [Architecture](overview/architecture.md) | Operational, historical, and AI planes; data flow |
+| Repository structure | [Repository structure](overview/repository-structure.md) | Directory map and technology stack |
+| Advisory boundaries | [Advisory boundaries](overview/advisory-boundaries.md) | Decision-support limits and human review |
+| Operations | [Onboarding](operations/onboarding.md), [Lifecycle](operations/lifecycle.md) | Local toolchain, Terraform roots, PowerShell scripts |
+| Testing | [Testing overview](testing/overview.md) | Unit, contract, infrastructure, integration, live, smoke, replay |
+| Ingestion | [Ingestion index](ingestion/README.md), [Overview](ingestion/overview.md) | Aircraft, SIGMET, METAR, TAF, station and runway loaders |
+| Processing | [Operational processing](processing/README.md) | Projection, encounter, risk, airport, recommendations, alerts |
+| DynamoDB | [Operational tables](data/dynamodb.md) | Keys, TTL, producers, readers, current-set |
+| API | [API index](api/README.md), [Operational API](api/operational-api.md) | HTTP routes, contracts, CORS, current-set reads |
+| Dashboard | [Dashboard pointer](dashboard/README.md) | Pointer to the Live Operations Console README |
+| Historical analytics | [Historical index](historical/README.md) | Facts, transport, Glue/Athena, queries, coverage |
+| AI | [AI index](ai/README.md) | Specialists, Master Agent, tools, evidence, tests |
 
 Suite READMEs colocated with tests:
 
 - [tests/README.md](../tests/README.md)
 - [tests/integration/README.md](../tests/integration/README.md)
 - [tests/infrastructure/README.md](../tests/infrastructure/README.md)
+- [tests/contracts/README.md](../tests/contracts/README.md)
 - [scripts/README.md](../scripts/README.md)
 
-## Other workstreams
-
-These paths are owned by other documentation workstreams. This index names them; it does not link to unpublished pages.
-
-| Area | Path | Owner |
-| --- | --- | --- |
-| Ingestion and reference data | `docs/ingestion/**` | WS2 |
-| Processing pipelines | `docs/processing/**` | WS3 |
-| DynamoDB data model | `docs/data/dynamodb.md` | WS3 |
-| Operational API | `docs/api/**` | WS3 |
-| Dashboard pointer | `docs/dashboard/**` | WS3 |
-| Historical facts and analytics | `docs/historical/**` | WS4 |
-| AI Operations Copilot | `docs/ai/**` | WS5 |
-
-Existing canonical package and module pages this tree already links from overview pages:
+## Colocated package and module pages
 
 - [dashboard/README.md](../dashboard/README.md)
 - [functions/shared/wilvor_operational/README.md](../functions/shared/wilvor_operational/README.md)

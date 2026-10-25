@@ -89,7 +89,7 @@ External URLs configured in `envs/dev/main.tf`:
 - FAA APT zip: `https://nfdc.faa.gov/webContent/28DaySub/extra/09_Jul_2026_APT_CSV.zip`
 - Runway loader airports: `KSFO`, `KOAK`, `KSJC`
 
-Ingestion module internals belong with WS2 (`docs/ingestion/**` when published). Unit READMEs already exist for aircraft, SIGMET, METAR, and TAF under `tests/unit/`.
+Ingestion module internals: [`docs/ingestion/README.md`](../ingestion/README.md). Unit READMEs already exist for aircraft, SIGMET, METAR, and TAF under `tests/unit/`.
 
 ```mermaid
 flowchart LR
@@ -152,7 +152,7 @@ flowchart LR
   rec --> alerts
 ```
 
-Caption: selected processing chain at `8abd2d5`, not every EventBridge rule. Solid edges are handler paths read in application source. The dotted edge is Terraform only: `modules/projection/processor.tf` (`aws_cloudwatch_event_rule.hazard_materialized`) targets the projection Lambda, and `lambda_handler` ignores any `detail-type` other than `aircraft.state.updated` (source: `functions/projection/processor/app.py`). Encounter handles `hazard.materialized` (source: `functions/encounter/processor/app.py`, `handle_hazard_materialized`). Omitted from this view: `airport_status` on `metar.updated` / `taf.materialized`; `recommendations` on `airport.assessment.completed`; `active_alerts` on `risk.resolved` and `encounter.resolved`; `risk` on `encounter.resolved`. Processor algorithms belong with WS3 (`docs/processing/**` when published).
+Caption: selected processing chain at `8abd2d5`, not every EventBridge rule. Solid edges are handler paths read in application source. The dotted edge is Terraform only: `modules/projection/processor.tf` (`aws_cloudwatch_event_rule.hazard_materialized`) targets the projection Lambda, and `lambda_handler` ignores any `detail-type` other than `aircraft.state.updated` (source: `functions/projection/processor/app.py`). Encounter handles `hazard.materialized` (source: `functions/encounter/processor/app.py`, `handle_hazard_materialized`). Omitted from this view: `airport_status` on `metar.updated` / `taf.materialized`; `recommendations` on `airport.assessment.completed`; `active_alerts` on `risk.resolved` and `encounter.resolved`; `risk` on `encounter.resolved`. Processor algorithms: [`docs/processing/README.md`](../processing/README.md).
 
 ## DynamoDB operational state
 
@@ -173,7 +173,7 @@ Operational API table environment keys in `envs/dev/main.tf` (`module.operationa
 - `RECOMMENDATIONS_TABLE_NAME`
 - `ACTIVE_ALERTS_TABLE_NAME`
 
-Additional operational tables exist in Terraform and are not in that API map, including `hazard_cells`, `impact_cells`, `hazard_station_candidates`, `aircraft_projection_cells`, `station_reference`, and `runway_reference`. Key design and current-set rules belong with WS3 (`docs/data/dynamodb.md` when published) and [`functions/shared/wilvor_operational/README.md`](../../functions/shared/wilvor_operational/README.md).
+Additional operational tables exist in Terraform and are not in that API map, including `hazard_cells`, `impact_cells`, `hazard_station_candidates`, `aircraft_projection_cells`, `station_reference`, and `runway_reference`. Key design and current-set rules: [`docs/data/dynamodb.md`](../data/dynamodb.md) and [`functions/shared/wilvor_operational/README.md`](../../functions/shared/wilvor_operational/README.md).
 
 ## Historical storage and analytics
 
@@ -213,7 +213,7 @@ flowchart LR
 
 Caption: historical path at `8abd2d5`. Every edge is dotted Terraform configuration. No application handler on this page was read as executing these hops. The bucket resource is in `envs/dev-historical-data`, not in `modules/historical_facts`. Whether either root is applied is UNKNOWN. Sources: `modules/historical_facts/events.tf`; `envs/dev-historical-data/main.tf`; `modules/historical_analytics`.
 
-WS4 owns `docs/historical/**` when published.
+Historical documentation: [`docs/historical/README.md`](../historical/README.md).
 
 ## Operational API
 
@@ -250,7 +250,7 @@ GET /alerts/active
 
 The Operational API Lambda source tree has no `wilvor_ai` import. Current-set filtering uses `wilvor_operational` through the API repository (source: `functions/shared/wilvor_operational/README.md`). Unit coverage includes `tests/unit/operational_api/test_current_alerts.py` (`test_active_alerts_list_returns_current_set_only`).
 
-WS3 owns `docs/api/**` when published.
+Operational API documentation: [`docs/api/operational-api.md`](../api/operational-api.md).
 
 ## React dashboard
 
@@ -277,11 +277,11 @@ Caption: console read path at `8abd2d5`. Sources: `dashboard/README.md`; `module
 
 The React app is not deployed by Terraform in this repository. CloudWatch dashboard resources in modules are pipeline health dashboards, not this UI.
 
-WS3 owns `docs/dashboard/**` when published; until then `dashboard/README.md` remains canonical.
+Console documentation remains canonical in [`dashboard/README.md`](../../dashboard/README.md). Pointer: [`docs/dashboard/README.md`](../dashboard/README.md).
 
 ## AI components
 
-Canonical package page: [`functions/shared/wilvor_ai/README.md`](../../functions/shared/wilvor_ai/README.md). WS5 owns `docs/ai/**` when published.
+Canonical package page: [`functions/shared/wilvor_ai/README.md`](../../functions/shared/wilvor_ai/README.md). AI documentation: [`docs/ai/README.md`](../ai/README.md).
 
 What exists as CODE:
 
@@ -323,7 +323,6 @@ Caption: shape required while `MasterRouteExecutionAuthority` has only `DENIED`.
 - Timed ingestion schedules are disabled in `envs/dev`.
 - Projection Terraform subscribes to `hazard.materialized`, but `functions/projection/processor/app.py` `lambda_handler` ignores that detail-type and processes `aircraft.state.updated` only.
 - Comments in `envs/dev/main.tf` still say some event triggers should stay disabled until manual verification; the assigned flags are `true`. Current status follows the assignments.
-- `modules/historical_facts/README.md` still says `enable_historical_facts` must remain `false` in env/dev. Committed `envs/dev/main.tf` assigns `true`. WS4 owns that module README. This page follows the Terraform assignment.
 - `test_root_contract.py` `EXPECTED_MODULES` lists `aircraft_foundation`, `weather_events`, `sigmet`, `metar`, and `taf` only. Later modules are asserted by other Terraform contract tests, not that set.
 - No combined integration test exists (`tests/integration/combined/` is `.gitkeep` only).
 - The Operational API has no authorizer in Terraform.
@@ -332,6 +331,8 @@ Caption: shape required while `MasterRouteExecutionAuthority` has only `DENIED`.
 ## Historical record
 
 An earlier revision of this page drew a solid `hazard.materialized` → `projection_processor` edge from the Terraform rule alone. Current text follows the handler: that EventBridge target is TF configuration; the Lambda ignores the event.
+
+An earlier revision of this page recorded that [`modules/historical_facts/README.md`](../../modules/historical_facts/README.md) still required `enable_historical_facts` to remain `false` in env/dev. That README now records the module variable default as `false` and the committed `envs/dev/main.tf` assignment as `true`. This page follows the Terraform assignment.
 
 The root README before this documentation program was the heading `# wilvor-infra` only.
 

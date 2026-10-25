@@ -58,7 +58,7 @@ python -m pytest tests/unit -q -p no:cacheprovider
 
 ## Contract
 
-`tests/contracts/` contains 117 `test_*.py` modules at this commit, including Master routing, live-ops, historical specialist, decision tools, and import-isolation suites. `tests/contracts/README.md` is owned by WS5 and is not created here.
+`tests/contracts/` contains 117 `test_*.py` modules at this commit, including Master routing, live-ops, historical specialist, decision tools, and import-isolation suites. Index: [`tests/contracts/README.md`](../../tests/contracts/README.md).
 
 Example assertion: `tests/contracts/test_master_routing.py` `test_live_ops_only_is_bounded_and_not_executable_authority` requires `MasterRouteExecutionAuthority.DENIED` even when the plan outcome is `AUTHORIZED_PLAN`.
 

@@ -7,7 +7,7 @@
 
 ## Purpose
 
-This page records the boundary between deterministic historical query code (WS4) and the Historical Analytics Specialist library (WS5). It does not document specialist orchestration as deployed AI infrastructure. Specialist internals stay on `docs/ai/**` (WS5) and [`functions/shared/wilvor_ai/README.md`](../../functions/shared/wilvor_ai/README.md).
+This page records the boundary between deterministic historical query code and the Historical Analytics Specialist library. It does not document specialist orchestration as deployed AI infrastructure. Specialist internals stay on [`docs/ai/historical-analytics-specialist.md`](../ai/historical-analytics-specialist.md) and [`functions/shared/wilvor_ai/README.md`](../../functions/shared/wilvor_ai/README.md).
 
 ## Implementation status
 
@@ -91,7 +91,7 @@ Caption: shape required while `MasterRouteExecutionAuthority` has only `DENIED`.
 
 ## Known limitations
 
-- WS5 owns `docs/ai/**` and `functions/shared/wilvor_ai/README.md`. This page links; it does not copy specialist catalogs or Master safety matrices.
+- Specialist catalogs and Master safety matrices stay on [`docs/ai/README.md`](../ai/README.md) and [`functions/shared/wilvor_ai/README.md`](../../functions/shared/wilvor_ai/README.md). This page links; it does not copy them.
 - Authenticated source-read provenance is not available on the Master audit path. `AUTHENTICATED_SOURCE_READ_AVAILABLE` is false in `functions/shared/wilvor_ai/master_provenance_trace.py`.
 - `AgentAuthorityMode` contains `READ_ONLY_ADVISORY` only. Advisory mode is not source-read authority.
 

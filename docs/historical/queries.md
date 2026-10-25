@@ -80,7 +80,7 @@ Every `StartQueryExecution` sets `ResultReuseByAgeConfiguration.Enabled = false`
 
 Athena API poll states include `CANCELLED`. EventBridge query-state filters use AWS spelling `CANCELED`. Those spellings are distinct.
 
-The Operational API route list has no historical-query HTTP route (source: `modules/operational_api/api.tf`, `local.route_keys`; noted on WS1 architecture when published).
+The Operational API route list has no historical-query HTTP route (source: `modules/operational_api/api.tf`, `local.route_keys`; also noted in [`docs/overview/architecture.md`](../overview/architecture.md)).
 
 ```mermaid
 flowchart LR

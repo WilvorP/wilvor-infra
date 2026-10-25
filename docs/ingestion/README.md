@@ -6,7 +6,7 @@
 
 This index maps Wilvor ingestion and reference-data documentation. It does not state pipeline behavior. Canonical behavior pages are listed below. Maturity labels are defined only in [`docs/DOCUMENTATION_STANDARDS.md`](../DOCUMENTATION_STANDARDS.md).
 
-Platform entry, lifecycle, and testing indexes belong to WS1 (`docs/README.md`, `docs/overview/`, `docs/operations/`, `docs/testing/`). Downstream processing, DynamoDB data-model narrative, Operational API, and dashboard pages belong to WS3 (`docs/processing/`, `docs/data/dynamodb.md`, `docs/api/`, `docs/dashboard/`). Historical facts and analytics belong to WS4 (`docs/historical/`). AI Operations Copilot belongs to WS5 (`docs/ai/`).
+Related published pages: [documentation index](../README.md), [architecture](../overview/architecture.md), [lifecycle](../operations/lifecycle.md), [testing overview](../testing/overview.md), [operational processing](../processing/README.md), [DynamoDB](../data/dynamodb.md), [Operational API](../api/operational-api.md), [dashboard pointer](../dashboard/README.md), [historical index](../historical/README.md), [AI index](../ai/README.md).
 
 ## Pages on this workstream
 

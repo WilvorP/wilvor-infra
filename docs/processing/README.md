@@ -102,7 +102,7 @@ Risk scoring is an advisory MVP model (source: `functions/risk/processor/app.py`
 
 ## Interfaces
 
-Upstream producers used by this chain, owned by WS2 (`docs/ingestion/**` when published):
+Upstream producers used by this chain. Canonical ingestion pages: [Aircraft](../ingestion/aircraft.md), [SIGMET](../ingestion/sigmet.md), [METAR](../ingestion/metar.md), [TAF](../ingestion/taf.md). Index: [`docs/ingestion/README.md`](../ingestion/README.md).
 
 | Event | source | Producer |
 | --- | --- | --- |

@@ -49,13 +49,13 @@ Architecture diagrams and data-flow evidence: [`docs/overview/architecture.md`](
 
 ## Major engineering components
 
-- **Ingestion.** OpenSky aircraft poller; NOAA Aviation Weather SIGMET, METAR, and TAF pollers; station-reference and runway-metadata loaders. Timed poller schedules are set `false` in `envs/dev/main.tf`. METAR and TAF also subscribe to `hazard.stations.ready` (source: `modules/metar/poller.tf`, `modules/taf/poller.tf`).
-- **Processing.** Projection, encounter, risk, airport status, airport assessment, recommendations, and active-alert Lambdas on the default EventBridge bus. Event triggers are set `true` in `envs/dev/main.tf`.
-- **Operational state.** DynamoDB tables owned by the Terraform modules under `modules/`. Table semantics belong with WS3 (`docs/data/dynamodb.md` when published).
-- **Operational API.** API Gateway HTTP API, GET/OPTIONS only, Lambda `app.lambda_handler` (source: `modules/operational_api/api.tf`; `functions/operational_api/app.py`). Route detail belongs with WS3 (`docs/api/**` when published).
-- **Dashboard.** React Live Operations Console in `dashboard/`. Canonical console documentation: [`dashboard/README.md`](dashboard/README.md).
-- **Historical facts and analytics.** Separate data-plane root `envs/dev-historical-data`; transport and analytics modules in `envs/dev`. Canonical module pages: [`modules/historical_facts/README.md`](modules/historical_facts/README.md), [`modules/historical_facts_data/README.md`](modules/historical_facts_data/README.md), [`modules/historical_analytics/README.md`](modules/historical_analytics/README.md).
-- **AI Operations Copilot.** Library code under `functions/shared/wilvor_ai`. Canonical package page: [`functions/shared/wilvor_ai/README.md`](functions/shared/wilvor_ai/README.md). WS5 owns `docs/ai/**` when published.
+- **Ingestion.** OpenSky aircraft poller; NOAA Aviation Weather SIGMET, METAR, and TAF pollers; station-reference and runway-metadata loaders. Timed poller schedules are set `false` in `envs/dev/main.tf`. METAR and TAF also subscribe to `hazard.stations.ready` (source: `modules/metar/poller.tf`, `modules/taf/poller.tf`). Documentation: [`docs/ingestion/README.md`](docs/ingestion/README.md).
+- **Processing.** Projection, encounter, risk, airport status, airport assessment, recommendations, and active-alert Lambdas on the default EventBridge bus. Event triggers are set `true` in `envs/dev/main.tf`. Documentation: [`docs/processing/README.md`](docs/processing/README.md).
+- **Operational state.** DynamoDB tables owned by the Terraform modules under `modules/`. Table semantics: [`docs/data/dynamodb.md`](docs/data/dynamodb.md).
+- **Operational API.** API Gateway HTTP API, GET/OPTIONS only, Lambda `app.lambda_handler` (source: `modules/operational_api/api.tf`; `functions/operational_api/app.py`). Route detail: [`docs/api/operational-api.md`](docs/api/operational-api.md).
+- **Dashboard.** React Live Operations Console in `dashboard/`. Canonical console documentation: [`dashboard/README.md`](dashboard/README.md). Pointer: [`docs/dashboard/README.md`](docs/dashboard/README.md).
+- **Historical facts and analytics.** Separate data-plane root `envs/dev-historical-data`; transport and analytics modules in `envs/dev`. Documentation: [`docs/historical/README.md`](docs/historical/README.md). Canonical module pages: [`modules/historical_facts/README.md`](modules/historical_facts/README.md), [`modules/historical_facts_data/README.md`](modules/historical_facts_data/README.md), [`modules/historical_analytics/README.md`](modules/historical_analytics/README.md).
+- **AI Operations Copilot.** Library code under `functions/shared/wilvor_ai`. Canonical package page: [`functions/shared/wilvor_ai/README.md`](functions/shared/wilvor_ai/README.md). Documentation: [`docs/ai/README.md`](docs/ai/README.md).
 
 ## Operational, historical, and AI infrastructure
 

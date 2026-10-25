@@ -7,7 +7,7 @@
 
 ## Purpose
 
-This page maps Wilvor ingestion pipelines and airport/runway reference loaders as they exist in repository source. Per-pipeline behavior, tables, events, and test evidence live on the linked canonical pages. Downstream processing after ingestion is owned by WS3 (`docs/processing/`). Historical Firehose transport after `hazard.materialized` is owned by WS4 (`docs/historical/`, [`modules/historical_facts/README.md`](../../modules/historical_facts/README.md)).
+This page maps Wilvor ingestion pipelines and airport/runway reference loaders as they exist in repository source. Per-pipeline behavior, tables, events, and test evidence live on the linked canonical pages. Downstream processing after ingestion: [`docs/processing/README.md`](../processing/README.md). Historical Firehose transport after `hazard.materialized`: [`docs/historical/README.md`](../historical/README.md), [`modules/historical_facts/README.md`](../../modules/historical_facts/README.md).
 
 ## Implementation status
 
@@ -134,7 +134,7 @@ Terraform roots that instantiate these modules: `envs/dev/main.tf` only, at `8ab
 - Poller and loader schedules are configured `false` in `envs/dev`. Freshness of NOAA and OpenSky data in that root depends on manual invoke or the event-driven METAR/TAF path, not on an enabled rate rule in that file.
 - `envs/dev-historical-data` does not instantiate ingestion modules.
 - Integration tests under `tests/integration/{aircraft,sigmet,metar,taf}` were read and assert older schema names than current CODE (`aircraft_current_state.v1` / `icao24`, `internal.sigmet.v1`, `metar_latest.v1`). They are not evidence that the v4/v2 contracts currently pass in a deployed environment. METAR's log-event predicate also expects `product_type` and `change_type`; current `metar.updated` uses `reason` instead. See [METAR](metar.md#known-limitations).
-- `tests/integration/README.md` still names `Weather.changed` for SIGMET, METAR, and TAF. That file is owned by WS1 and was not edited here.
+- [`tests/integration/README.md`](../../tests/integration/README.md) documents current SIGMET, METAR, and TAF producer DetailTypes. Those integration tests still call `wait_for_weather_event` against `weather_changed_log_group_name`; the helper timeout text is `Weather.changed` (source: `tests/helpers/integration_support.py`, `wait_for_weather_event`).
 - No `scripts/validate_*` harness was found for these ingestion pipelines.
 - Tests under `tests/infrastructure/terraform/` assert repository Terraform. Tests under `tests/infrastructure/aws/` require an authenticated AWS account and `terraform output`. The AWS layer is not a Terraform-source test and does not establish DEPLOYED.
 - Deployment of any of these resources in an AWS account is UNKNOWN.
@@ -142,7 +142,9 @@ Terraform roots that instantiate these modules: `envs/dev/main.tf` only, at `8ab
 
 ## Historical record
 
-No superseded statement is stored on this page. Legacy operator files that still describe `Weather.changed` as the SIGMET/METAR/TAF product event are listed in [Ingestion and reference data](README.md#historical-runbooks).
+A previous known-limitation bullet said [`tests/integration/README.md`](../../tests/integration/README.md) still named `Weather.changed` as current SIGMET, METAR, and TAF producer behavior. That README now documents current DetailTypes and keeps the older wording under its Historical record.
+
+Legacy operator files that still describe `Weather.changed` as the SIGMET/METAR/TAF product event are listed in [Ingestion and reference data](README.md#historical-runbooks).
 
 ## Sources
 

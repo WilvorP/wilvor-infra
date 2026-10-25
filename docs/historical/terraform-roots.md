@@ -84,7 +84,7 @@ A committed `true` is TF. It is not evidence that either root has been applied.
 
 `scripts/dev-down.ps1` throws if `-TerraformDirectory` matches `dev-historical-data`. When `enable_historical_facts` output is true and a coverage Lambda name is set, that script invokes coverage `DEACTIVATE` and requires a durable deactivation object before destroying `envs/dev` (source: `scripts/dev-down.ps1`).
 
-Operator lifecycle detail for those scripts is owned by WS1 (`docs/operations/lifecycle.md` when published).
+Operator lifecycle detail for those scripts: [`docs/operations/lifecycle.md`](../operations/lifecycle.md).
 
 ## Interfaces
 

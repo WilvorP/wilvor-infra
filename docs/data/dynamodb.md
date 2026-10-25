@@ -7,7 +7,7 @@
 
 ## Purpose
 
-This page inventories DynamoDB tables used by operational processing and the Operational API. Physical keys, GSIs, TTL, and streams come from Terraform. Producer and reader relationships come from Lambda IAM and Python access. Current-set membership is defined only in [`functions/shared/wilvor_operational/README.md`](../../functions/shared/wilvor_operational/README.md) and `current_set.py`. Ingestion writer internals belong to WS2 (`docs/ingestion/**` when published).
+This page inventories DynamoDB tables used by operational processing and the Operational API. Physical keys, GSIs, TTL, and streams come from Terraform. Producer and reader relationships come from Lambda IAM and Python access. Current-set membership is defined only in [`functions/shared/wilvor_operational/README.md`](../../functions/shared/wilvor_operational/README.md) and `current_set.py`. Ingestion writer internals: [`docs/ingestion/README.md`](../ingestion/README.md).
 
 ## Implementation status
 

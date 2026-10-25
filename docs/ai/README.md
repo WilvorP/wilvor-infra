@@ -13,15 +13,15 @@ This page is a link-only index. It states no behavior. Canonical pages under `do
 | Evidence verification and safety | [Evidence and safety](evidence-and-safety.md) |
 | Contract tests, live harnesses, and maturity | [Tests and maturity](tests-and-maturity.md) |
 
-Related pages owned by other workstreams are not linked until those files exist:
+Related published pages:
 
-- `docs/overview/` — WS1
-- `docs/testing/` — WS1
-- `docs/api/` — WS3
-- `docs/dashboard/` — WS3
-- `docs/historical/` — WS4
+- Architecture: [Architecture](../overview/architecture.md)
+- Testing: [Testing overview](../testing/overview.md)
+- Operational API: [Operational API](../api/operational-api.md)
+- Dashboard: [Dashboard pointer](../dashboard/README.md)
+- Historical facts and analytics: [Historical index](../historical/README.md)
 
-Existing colocated specifications that those workstreams may keep:
+Existing colocated specifications:
 
 - [`dashboard/README.md`](../../dashboard/README.md)
 - [`functions/shared/wilvor_operational/README.md`](../../functions/shared/wilvor_operational/README.md)

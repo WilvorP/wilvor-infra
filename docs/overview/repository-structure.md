@@ -54,10 +54,10 @@ Shared packages under `functions/shared/`:
 | `wilvor_ai` | [`functions/shared/wilvor_ai/README.md`](../../functions/shared/wilvor_ai/README.md) |
 | `wilvor_historical` | [`functions/shared/wilvor_historical/README.md`](../../functions/shared/wilvor_historical/README.md) |
 | `wilvor_historical_query` | [`functions/shared/wilvor_historical_query/README.md`](../../functions/shared/wilvor_historical_query/README.md) |
-| `wilvor_aircraft` | colocated package; ingestion docs belong with WS2 |
-| `wilvor_weather` | colocated package; ingestion docs belong with WS2 |
+| `wilvor_aircraft` | [`functions/shared/wilvor_aircraft/README.md`](../../functions/shared/wilvor_aircraft/README.md); [Aircraft](../ingestion/aircraft.md) |
+| `wilvor_weather` | [`functions/shared/wilvor_weather/README.md`](../../functions/shared/wilvor_weather/README.md); [Ingestion overview](../ingestion/overview.md) |
 
-Legacy runbooks under `functions/` (bodies owned by WS2; names only here):
+Legacy runbooks under `functions/` (bodies preserved; listed from [Ingestion and reference data](../ingestion/README.md#historical-runbooks)):
 
 - `functions/local_runner_documentation.txt`
 - `functions/metar_pipeline_runbook.txt`
@@ -69,7 +69,7 @@ Legacy runbooks under `functions/` (bodies owned by WS2; names only here):
 
 `modules/` at `8abd2d5`: `aircraft_foundation`, `weather_events`, `sigmet`, `metar`, `taf`, `station_reference`, `runway_metadata`, `airport_status`, `projection`, `encounter`, `risk`, `airport_assessment`, `recommendations`, `active_alerts`, `operational_api`, `historical_facts`, `historical_facts_data`, `historical_analytics`.
 
-Module READMEs that already exist: historical facts, historical facts data, historical analytics. Other module READMEs are owned by WS2 or WS3.
+Each listed module has a colocated `README.md`. Ingestion module pointers: [`docs/ingestion/README.md`](../ingestion/README.md). Processing and API module pointers: [`docs/processing/README.md`](../processing/README.md), [`docs/api/README.md`](../api/README.md). Historical module pointers: [`docs/historical/README.md`](../historical/README.md).
 
 ## Tests and scripts
 

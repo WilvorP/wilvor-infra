@@ -39,12 +39,12 @@ Whether `envs/dev` or `envs/dev-historical-data` is applied in an AWS account is
 | [`functions/shared/wilvor_historical/README.md`](../../functions/shared/wilvor_historical/README.md) | Fact and query contracts |
 | [`functions/shared/wilvor_historical_query/README.md`](../../functions/shared/wilvor_historical_query/README.md) | Query runtime |
 
-## Other workstreams
+## Related documentation
 
-These paths are owned by other documentation workstreams. This index names them; it does not link to unpublished pages.
-
-| Area | Path | Owner |
-| --- | --- | --- |
-| Platform architecture and lifecycle | `docs/overview/**`, `docs/operations/**` | WS1 |
-| AI Operations Copilot, including the Historical Analytics Specialist | `docs/ai/**` | WS5 |
-| AI package README (existing) | [`functions/shared/wilvor_ai/README.md`](../../functions/shared/wilvor_ai/README.md) | WS5 |
+| Area | Page |
+| --- | --- |
+| Platform architecture | [Architecture](../overview/architecture.md) |
+| Lifecycle | [Lifecycle](../operations/lifecycle.md) |
+| AI Operations Copilot | [AI index](../ai/README.md) |
+| Historical Analytics Specialist | [Historical Analytics Specialist](../ai/historical-analytics-specialist.md) |
+| AI package README | [`functions/shared/wilvor_ai/README.md`](../../functions/shared/wilvor_ai/README.md) |

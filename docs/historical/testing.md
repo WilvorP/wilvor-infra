@@ -61,7 +61,7 @@ Terraform contract tests read HCL. They do not apply. They do not inspect AWS.
 | --- | --- | --- |
 | `scripts/validate_historical_analytics.ps1` | Fixed SQL templates from `modules/historical_analytics/validation` | no `-Sql` / `-Query`; dry-run makes no AWS calls; Athena empty is `SQL_EMPTY`, not `VERIFIED_ZERO` |
 | `scripts/validate_historical_query_runtime.py` | Closed operations, coverage inspect, snapshot, `iam-proof` | no raw SQL flags; dry-run makes zero AWS calls; live uses operator SSO and does not prove the unattached query policy |
-| `scripts/validate_historical_specialist_anthropic_live.py` | Historical specialist Anthropic harness | no AWS, no Athena, no Bedrock per `scripts/README.md`; WS5 owns specialist documentation |
+| `scripts/validate_historical_specialist_anthropic_live.py` | Historical specialist Anthropic harness | no AWS, no Athena, no Bedrock per `scripts/README.md`; specialist page: [`docs/ai/historical-analytics-specialist.md`](../ai/historical-analytics-specialist.md) |
 
 A harness file is the LIVE label. A passing run is a separate statement and needs a stored artifact path. This documentation task did not run those harnesses and did not read live artifacts as a current result.
 
@@ -83,7 +83,7 @@ Frontend catalog test `dashboard/src/config/cloudwatchDashboards.test.ts` is men
 - Pass counts were not collected for this page.
 - Whether an operator live harness would pass if run today is UNKNOWN.
 - Stored live JSON artifacts, if present under `test-results/`, are historical evidence of a past run and are not rewritten as a new pass (source: `functions/shared/wilvor_ai/README.md`).
-- WS1 owns `docs/testing/**` and `tests/README.md`. This page does not replace those indexes.
+- This page does not replace [`docs/testing/overview.md`](../testing/overview.md) or [`tests/README.md`](../../tests/README.md).
 
 ## Historical record
 

@@ -76,7 +76,7 @@ Caption: log-capture configuration at `8abd2d5`. Dotted edges are Terraform-only
 
 ## Historical record
 
-Runbooks and `tests/integration/README.md` (WS1) describe this log group as the SIGMET/METAR/TAF verification sink for `Weather.changed`. That was the older product event. Current producer DetailTypes are listed in [Overview](overview.md#event-catalog-from-ingestion-producers).
+Legacy operator runbooks under `functions/` described this log group as the SIGMET/METAR/TAF verification sink for `Weather.changed`. That was the older product event. [`tests/integration/README.md`](../../tests/integration/README.md) now documents current producer DetailTypes and keeps the `Weather.changed` wording under its Historical record. Current producer DetailTypes are listed in [Overview](overview.md#event-catalog-from-ingestion-producers).
 
 ## Sources
 

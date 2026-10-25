@@ -7,7 +7,7 @@
 
 ## Purpose
 
-This module materializes a per-airport weather snapshot from station reference, latest METAR, and latest TAF. It is a parallel weather branch, not a step on the encounter → risk chain. Pipeline placement: [`docs/processing/README.md`](../../docs/processing/README.md). Table keys: [`docs/data/dynamodb.md`](../../docs/data/dynamodb.md). Ingestion producers belong to WS2 (`docs/ingestion/**` when published).
+This module materializes a per-airport weather snapshot from station reference, latest METAR, and latest TAF. It is a parallel weather branch, not a step on the encounter → risk chain. Pipeline placement: [`docs/processing/README.md`](../../docs/processing/README.md). Table keys: [`docs/data/dynamodb.md`](../../docs/data/dynamodb.md). Ingestion producers: [METAR](../../docs/ingestion/metar.md), [TAF](../../docs/ingestion/taf.md), [Station reference](../../docs/ingestion/station-reference.md).
 
 ## Implementation status
 

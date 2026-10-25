@@ -125,7 +125,7 @@ Offline tests of harness modules:
 - `tests/unit/scripts/test_validate_historical_specialist_anthropic_live.py`
 - `tests/unit/scripts/test_validate_decision_specialist_anthropic_live.py`
 
-`scripts/validate_historical_query_runtime.py` and `scripts/validate_historical_analytics.ps1` are historical-query operator scripts, not Master Agent or specialist-dispatch harnesses. WS4 owns the historical-query README.
+`scripts/validate_historical_query_runtime.py` and `scripts/validate_historical_analytics.ps1` are historical-query operator scripts, not Master Agent or specialist-dispatch harnesses. Canonical query runtime page: [`functions/shared/wilvor_historical_query/README.md`](../../functions/shared/wilvor_historical_query/README.md).
 
 Package README text records a prior direct-Anthropic Historical Tier-1 run and a targeted v2 retest, including a gitignored path `test-results/live-anthropic/20260930T000804Z-targeted.json`. Those stored artifacts are historical evidence of a past run. They were not present in this worktree (`test-results/` is gitignored; search found no live report JSON). They are not a current live pass. Machine reports keep `phase_3a_complete = false` (source: `functions/shared/wilvor_ai/README.md`; `scripts/validate_historical_specialist_anthropic_live.py`).
 
