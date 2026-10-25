@@ -186,12 +186,20 @@ A successful destroy should return no resources.
 `dev-down.ps1` and `dev-reset.ps1` refuse `envs/dev-historical-data`. The
 persistent historical facts bucket is not part of daily teardown.
 
-When `enable_historical_facts` is **false** (the committed default),
-`dev-down` uses the existing destroy path with no special behavior.
-
-When collection is enabled, `dev-down` invokes coverage_control
+When `enable_historical_facts` is **true** (the committed assignment in
+`envs/dev/main.tf` at `8abd2d5`, on `module.historical_facts` and
+`module.operational_api`), `dev-down` invokes coverage_control
 `DEACTIVATE`, requires a durable `COLLECTION_DEACTIVATION` object in
 `metadata/`, and **aborts** destroy if that write cannot be confirmed.
+
+When collection is disabled (`enable_historical_facts` false), `dev-down`
+uses the existing destroy path with no special behavior. That false value
+is not the committed `envs/dev/main.tf` assignment at this commit.
+
+Current-status source: `envs/dev/main.tf` (`enable_historical_facts = true`).
+Tests: `tests/infrastructure/terraform/test_historical_facts_contract.py`
+(`test_dev_historical_facts_collection_is_enabled`).
+TF does not establish DEPLOYED.
 
 There is **no** `historical-data-down.ps1`. `aws s3 rm --recursive` is not
 sufficient on this versioned `force_destroy=false` bucket. Break-glass
@@ -626,15 +634,37 @@ Do not print or echo `ANTHROPIC_API_KEY`.
 
 ---
 
-# Planned testing additions
+# Testing additions status
 
-The lifecycle scripts are Phase 1 of the infrastructure testing framework.
+The lifecycle scripts were Phase 1 of the infrastructure testing framework.
+The six items below were written as future work. Current repository status
+at `8abd2d5`:
 
-The next phases will add:
+1. Unit tests exist under `tests/unit/` (ingestion, processors, operational
+   API, historical, shared, harness CLIs). Runner: `scripts/run-unit-tests.ps1`.
+2. Terraform and AWS infrastructure assertions exist under
+   `tests/infrastructure/`. Runner: `scripts/run-infrastructure-tests.ps1`.
+3. Deterministic aircraft, SIGMET, METAR, and TAF integration tests exist
+   under `tests/integration/`. Runner: `scripts/run-integration-tests.ps1`.
+4. Live external API smoke tests under `tests/smoke/live/` are still absent
+   (`.gitkeep` only). Operator harnesses live under `scripts/validate_*.py`
+   and `scripts/poll-all-once.ps1`; those are LIVE harnesses, not pytest smoke.
+5. A single top-level test orchestrator is still absent. Three `run-*-tests.ps1`
+   scripts plus direct pytest remain.
+6. JUnit XML is written under gitignored `test-results/`. A Markdown test-report
+   generator is still absent from `scripts/`.
 
-1. Unit tests for validators, parsers, normalizers, and handlers.
-2. Terraform and AWS infrastructure assertions.
-3. Deterministic aircraft, SIGMET, METAR, and TAF integration tests.
-4. Live external API smoke tests.
-5. A top-level test orchestrator.
-6. Machine-readable and Markdown test reports.
+This section does not claim that any suite currently passes.
+
+## Historical record
+
+The previous heading on this section was "Planned testing additions" and listed
+items 1–6 as work the next phases will add. Items 1–3 exist in the tree at
+`8abd2d5`. Items 4–6 remain incomplete as stated above.
+
+The previous `enable_historical_facts` paragraph on this page said the
+committed default was **false**. That sentence is superseded by
+`envs/dev/main.tf` at `8abd2d5` (`enable_historical_facts = true` in
+`module.historical_facts` and `module.operational_api`).
+`modules/historical_facts/README.md` still contains the older false-in-env/dev
+guidance; that module README is owned by WS4.
