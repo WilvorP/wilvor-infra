@@ -18,6 +18,21 @@ proposed audit records stay ``UNRESOLVED`` or ``UNSATISFIED``. Matching
 source versions, timestamps, or request identifiers do not establish the
 origin of a read. Public dataclass fields are not proof of trust.
 
+Clock roles stay distinct. Source-event time, query time, observation time,
+evaluation time, requested evaluation time, tool as-of time, and completeness
+evaluated-as-of time are different clocks. Different values across those
+roles are not ``INCONSISTENT_TIMESTAMPS``. That limitation is assigned only
+when one versioned source record states two source-event times. The identity
+used for that comparison is already on the evidence: its ``source``, the
+record's ``record_id``, and its ``source_version``. A missing version or
+event time is left missing and is not compared.
+
+Source-version strings from different records or datasets are not required
+to be equal. ``SOURCE_VERSIONS_DISAGREE`` is assigned only when one evidence
+``source``, ``record_id``, and source-event instant identify one record and
+the present version strings differ. A present version otherwise stays
+``SOURCE_VERSION_NOT_INTEGRITY_PROOF`` without a claimed contradiction.
+
 Source authenticity stays ``NOT_ESTABLISHED``. Production authority stays
 ``DENIED``. Master execution authority stays ``DENIED``. A model object, a
 planning authorization, a binder, or supplied evidence cannot grant
@@ -444,6 +459,16 @@ def _closed_status(material: bool) -> ProvenanceRequirementStatus:
     return ProvenanceRequirementStatus.UNRESOLVED
 
 
+@dataclass(frozen=True)
+class _RecordedSource:
+    """One caller-supplied source row. Missing fields stay missing."""
+
+    dataset: str
+    record_id: str
+    source_version: str | None
+    event_timestamp_utc: str | None
+
+
 def _parse_utc(value: str) -> datetime:
     text = value[:-1] + "+00:00" if value.endswith("Z") else value
     return datetime.fromisoformat(text)
@@ -453,9 +478,51 @@ def _clocks(*values: str | None) -> tuple[str, ...]:
     return tuple(value for value in values if value is not None)
 
 
-def _timestamps_disagree(values: tuple[str, ...]) -> bool:
-    instants = {_parse_utc(value) for value in values}
-    return len(instants) > 1
+def _recorded_sources(evidence_items: tuple[Evidence, ...]) -> tuple[_RecordedSource, ...]:
+    return tuple(
+        _RecordedSource(
+            dataset=evidence.source,
+            record_id=record.record_id,
+            source_version=record.source_version,
+            event_timestamp_utc=record.event_timestamp_utc,
+        )
+        for evidence in evidence_items
+        for record in evidence.source_records
+    )
+
+
+def _version_conflict(records: tuple[_RecordedSource, ...]) -> bool:
+    """Two present versions for one dataset, record, and source-event instant.
+
+    Records that omit a version or an event time are not given stand-in
+    values, and records from different datasets are not compared.
+    """
+
+    grouped: dict[tuple[str, str, datetime], set[str]] = {}
+    for record in records:
+        if record.source_version is None or record.event_timestamp_utc is None:
+            continue
+        key = (record.dataset, record.record_id, _parse_utc(record.event_timestamp_utc))
+        grouped.setdefault(key, set()).add(record.source_version)
+    return any(len(versions) > 1 for versions in grouped.values())
+
+
+def _event_time_conflict(records: tuple[_RecordedSource, ...]) -> bool:
+    """Two source-event times for one dataset, record, and source version.
+
+    This is the only timestamp contradiction this module assigns. Query time,
+    observation time, evaluation time, requested evaluation time, tool as-of
+    time, and completeness evaluated-as-of time are other roles and are not
+    compared here. A missing version or event time is not invented.
+    """
+
+    grouped: dict[tuple[str, str, str], set[datetime]] = {}
+    for record in records:
+        if record.source_version is None or record.event_timestamp_utc is None:
+            continue
+        key = (record.dataset, record.record_id, record.source_version)
+        grouped.setdefault(key, set()).add(_parse_utc(record.event_timestamp_utc))
+    return any(len(instants) > 1 for instants in grouped.values())
 
 
 def _authorization_or_none(
@@ -540,32 +607,59 @@ def _zero_limitations(
     return tuple(limits)
 
 
-def _version_assessment(
-    versions: tuple[str | None, ...],
+def _version_limits(
+    *,
+    present: bool,
+    missing: bool,
+    conflict: bool,
 ) -> tuple[ProvenanceRequirementStatus, tuple[ProvenanceAuditLimitation, ...]]:
-    present = tuple(version for version in versions if version is not None)
-    missing = not present or any(version is None for version in versions)
     limits: list[ProvenanceAuditLimitation] = []
     if missing:
         limits.append(ProvenanceAuditLimitation.MISSING_SOURCE_VERSION)
     if present:
+        # A version string is caller-supplied text. Agreement is not integrity.
         limits.append(ProvenanceAuditLimitation.SOURCE_VERSION_NOT_INTEGRITY_PROOF)
         limits.append(ProvenanceAuditLimitation.PUBLIC_FIELDS_NOT_TRUST)
-        if len(set(present)) > 1:
-            limits.append(ProvenanceAuditLimitation.SOURCE_VERSIONS_DISAGREE)
-    # A version string, or several that agree, is still not the origin of a read.
-    material = bool(present)
-    return _closed_status(material), tuple(limits)
+    if conflict:
+        limits.append(ProvenanceAuditLimitation.SOURCE_VERSIONS_DISAGREE)
+    return _closed_status(present), tuple(limits)
+
+
+def _version_assessment(
+    records: tuple[_RecordedSource, ...],
+) -> tuple[ProvenanceRequirementStatus, tuple[ProvenanceAuditLimitation, ...]]:
+    if not records:
+        return _version_limits(present=False, missing=True, conflict=False)
+    present_versions = tuple(
+        record.source_version for record in records if record.source_version is not None
+    )
+    return _version_limits(
+        present=bool(present_versions),
+        missing=not present_versions or any(record.source_version is None for record in records),
+        conflict=_version_conflict(records),
+    )
+
+
+def _lone_version_assessment(
+    source_version: str | None,
+) -> tuple[ProvenanceRequirementStatus, tuple[ProvenanceAuditLimitation, ...]]:
+    """One proposed version label. It has no second record to contradict."""
+
+    if source_version is None:
+        return _version_limits(present=False, missing=True, conflict=False)
+    return _version_limits(present=True, missing=False, conflict=False)
 
 
 def _time_assessment(
-    timestamps: tuple[str, ...],
+    *,
+    clocks_present: bool,
+    contradictory: bool,
     freshness: tuple[FreshnessStatus, ...],
 ) -> tuple[ProvenanceRequirementStatus, tuple[ProvenanceAuditLimitation, ...]]:
     limits: list[ProvenanceAuditLimitation] = []
-    if _timestamps_disagree(timestamps):
+    if contradictory:
         limits.append(ProvenanceAuditLimitation.INCONSISTENT_TIMESTAMPS)
-    if timestamps:
+    if clocks_present:
         limits.append(ProvenanceAuditLimitation.TIMESTAMPS_NOT_OBSERVATION_PROOF)
         limits.append(ProvenanceAuditLimitation.PUBLIC_FIELDS_NOT_TRUST)
     if any(item is FreshnessStatus.STALE for item in freshness):
@@ -573,6 +667,40 @@ def _time_assessment(
     if freshness:
         limits.append(ProvenanceAuditLimitation.FRESHNESS_NOT_AUTHENTICATED)
     return _closed_status(bool(limits)), tuple(limits)
+
+
+def _proposed_clocks_present(
+    event: ProposedDispatcherExecutionEvent,
+    authorization: MasterInvocationAuthorization | None,
+) -> bool:
+    requested = None if authorization is None else authorization.requested_evaluation_time_utc
+    return any(
+        value is not None
+        for value in (
+            event.observation_time_utc,
+            event.evaluation_time_utc,
+            _completeness_clock(event.completeness),
+            requested,
+        )
+    )
+
+
+def _evidence_clocks_present(
+    evidence_items: tuple[Evidence, ...],
+    *,
+    extra_timestamps: tuple[str, ...],
+    authorization: MasterInvocationAuthorization | None,
+) -> bool:
+    if extra_timestamps:
+        return True
+    if authorization is not None and authorization.requested_evaluation_time_utc is not None:
+        return True
+    for evidence in evidence_items:
+        if evidence.query_timestamp_utc or _completeness_clock(evidence.completeness) is not None:
+            return True
+        if any(record.event_timestamp_utc is not None for record in evidence.source_records):
+            return True
+    return False
 
 
 def _partial_completeness(completeness: SourceCompleteness | None) -> bool:
@@ -610,16 +738,6 @@ def _completeness_clock(completeness: SourceCompleteness | None) -> str | None:
     if completeness is None:
         return None
     return completeness.evaluated_as_of_utc
-
-
-def _evaluation_clock(
-    evaluation_time_utc: str | None,
-    authorization: MasterInvocationAuthorization | None,
-) -> tuple[str, ...]:
-    clocks = _clocks(evaluation_time_utc)
-    if evaluation_time_utc is not None and authorization is not None:
-        clocks = _clocks(evaluation_time_utc, authorization.requested_evaluation_time_utc)
-    return clocks
 
 
 def _has_execution_trace(evidence_items: tuple[Evidence, ...]) -> bool:
@@ -661,14 +779,11 @@ def _classify_proposed_event(
         tool_call_id=event.tool_call_id,
         exact_zero=False,
     )
-    version_status, version_limits = _version_assessment((event.source_version,))
+    version_status, version_limits = _lone_version_assessment(event.source_version)
     time_status, time_limits = _time_assessment(
-        _clocks(
-            event.observation_time_utc,
-            *_evaluation_clock(event.evaluation_time_utc, authorization),
-            _completeness_clock(event.completeness),
-        ),
-        _clocks_freshness(event.freshness_status),
+        clocks_present=_proposed_clocks_present(event, authorization),
+        contradictory=False,
+        freshness=_clocks_freshness(event.freshness_status),
     )
     population = [ProvenanceAuditLimitation.POPULATION_SCOPE_NOT_ESTABLISHED]
     if event.population_scope is ProposedPopulationScope.PARTIAL:
@@ -781,28 +896,20 @@ def _classify_evidence_group(
         correlation_id=correlation_id,
         descriptive_only=True,
     )
-    versions = tuple(
-        record.source_version
-        for evidence in evidence_items
-        for record in evidence.source_records
-    )
-    if not versions:
-        versions = (None,)
+    recorded = _recorded_sources(evidence_items)
     freshness = tuple(evidence.freshness_status for evidence in evidence_items)
     if tool_status is ToolResultStatus.STALE:
         freshness = (*freshness, FreshnessStatus.STALE)
-    timestamps = extra_timestamps
-    for evidence in evidence_items:
-        timestamps = _clocks(
-            *timestamps,
-            evidence.query_timestamp_utc,
-            *(record.event_timestamp_utc for record in evidence.source_records),
-            _completeness_clock(evidence.completeness),
-        )
-    if authorization is not None and authorization.requested_evaluation_time_utc is not None:
-        timestamps = _clocks(*timestamps, authorization.requested_evaluation_time_utc)
-    version_status, version_limits = _version_assessment(versions)
-    time_status, time_limits = _time_assessment(timestamps, freshness)
+    version_status, version_limits = _version_assessment(recorded)
+    time_status, time_limits = _time_assessment(
+        clocks_present=_evidence_clocks_present(
+            evidence_items,
+            extra_timestamps=extra_timestamps,
+            authorization=authorization,
+        ),
+        contradictory=_event_time_conflict(recorded),
+        freshness=freshness,
+    )
     population: list[ProvenanceAuditLimitation] = []
     for evidence in evidence_items:
         population.extend(_population_from_evidence(evidence))

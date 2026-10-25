@@ -345,57 +345,202 @@ def test_missing_source_version_does_not_establish_integrity():
     _assert_closed(descriptive)
 
 
-def test_matching_or_disagreeing_source_versions_do_not_establish_origin():
-    agreed = classify_master_provenance(
-        _evidence(
-            source_records=(
-                _record("rec-1", "v1", T),
-                _record("rec-2", "v1", T),
-            )
+def _version_finding(classification: MasterProvenanceClassification):
+    return classification.finding(MasterProvenanceRequirement.SOURCE_VERSION_INTEGRITY)
+
+
+def _clock_finding(classification: MasterProvenanceClassification):
+    return classification.finding(MasterProvenanceRequirement.OBSERVATION_EVALUATION_TIME)
+
+
+def test_distinct_clock_roles_are_not_timestamp_contradictions():
+    """Event, query, observation, evaluation, and requested evaluation stay distinct."""
+
+    event_and_query = classify_master_provenance(
+        _tool_result(
+            _evidence(
+                query_timestamp_utc=T,
+                source_records=(_record(event_timestamp_utc=LATER),),
+                completeness=SourceCompleteness(evaluated_as_of_utc="2026-01-15T04:00:00Z"),
+            ),
+            as_of_utc="2026-01-15T05:00:00Z",
+        ),
+        authorization=_authorization(requested_evaluation_time_utc="2026-01-15T06:00:00Z"),
+    )
+    clocks = _clock_finding(event_and_query)
+    assert clocks.status is ProvenanceRequirementStatus.UNSATISFIED
+    assert ProvenanceAuditLimitation.INCONSISTENT_TIMESTAMPS not in clocks.limitations
+    assert ProvenanceAuditLimitation.TIMESTAMPS_NOT_OBSERVATION_PROOF in clocks.limitations
+    assert ProvenanceAuditLimitation.FRESHNESS_NOT_AUTHENTICATED in clocks.limitations
+    _assert_closed(event_and_query)
+
+    observation_and_evaluation = classify_master_provenance(
+        _event(
+            observation_time_utc=T,
+            evaluation_time_utc=LATER,
+            completeness=SourceCompleteness(evaluated_as_of_utc="2026-01-15T04:00:00Z"),
+        ),
+        authorization=_authorization(requested_evaluation_time_utc="2026-01-15T06:00:00Z"),
+    )
+    proposed_clocks = _clock_finding(observation_and_evaluation)
+    assert proposed_clocks.status is ProvenanceRequirementStatus.UNSATISFIED
+    assert ProvenanceAuditLimitation.INCONSISTENT_TIMESTAMPS not in proposed_clocks.limitations
+    assert ProvenanceAuditLimitation.TIMESTAMPS_NOT_OBSERVATION_PROOF in proposed_clocks.limitations
+    assert ProvenanceAuditLimitation.FRESHNESS_NOT_AUTHENTICATED in proposed_clocks.limitations
+    _assert_closed(observation_and_evaluation)
+
+    stale_roles = classify_master_provenance(
+        _event(
+            observation_time_utc=T,
+            evaluation_time_utc=LATER,
+            freshness_status=FreshnessStatus.STALE,
+            population_scope=ProposedPopulationScope.UNSPECIFIED,
+            completeness=None,
         )
     )
-    agreed_version = agreed.finding(MasterProvenanceRequirement.SOURCE_VERSION_INTEGRITY)
-    assert agreed_version.status is ProvenanceRequirementStatus.UNSATISFIED
-    assert ProvenanceAuditLimitation.SOURCE_VERSION_NOT_INTEGRITY_PROOF in agreed_version.limitations
-    assert ProvenanceAuditLimitation.SOURCE_VERSIONS_DISAGREE not in agreed_version.limitations
-    _assert_closed(agreed)
+    stale_clocks = _clock_finding(stale_roles)
+    assert ProvenanceAuditLimitation.STALE_DATA in stale_clocks.limitations
+    assert ProvenanceAuditLimitation.INCONSISTENT_TIMESTAMPS not in stale_clocks.limitations
+    assert ProvenanceAuditLimitation.FRESHNESS_NOT_AUTHENTICATED in stale_clocks.limitations
+    _assert_closed(stale_roles)
 
-    disagreed = classify_master_provenance(
-        _evidence(
-            source_records=(
-                _record("rec-1", "v1", T),
-                _record("rec-2", "v2", T),
-            )
+    missing_clocks = classify_master_provenance(
+        _event(
+            observation_time_utc=None,
+            evaluation_time_utc=None,
+            freshness_status=None,
+            completeness=None,
+            population_scope=ProposedPopulationScope.UNSPECIFIED,
         )
     )
-    disagreed_version = disagreed.finding(MasterProvenanceRequirement.SOURCE_VERSION_INTEGRITY)
-    assert disagreed_version.status is ProvenanceRequirementStatus.UNSATISFIED
-    assert ProvenanceAuditLimitation.SOURCE_VERSIONS_DISAGREE in disagreed_version.limitations
-    assert disagreed.source_authenticity is MasterSourceAuthenticity.NOT_ESTABLISHED
+    absent = _clock_finding(missing_clocks)
+    assert absent.status is ProvenanceRequirementStatus.UNRESOLVED
+    assert ProvenanceAuditLimitation.INCONSISTENT_TIMESTAMPS not in absent.limitations
+    assert ProvenanceAuditLimitation.TIMESTAMPS_NOT_OBSERVATION_PROOF not in absent.limitations
+    assert ProvenanceAuditLimitation.STALE_DATA not in absent.limitations
+    _assert_closed(missing_clocks)
 
 
-def test_inconsistent_timestamps_do_not_establish_observation():
-    proposed = classify_master_provenance(
-        _event(observation_time_utc=T, evaluation_time_utc=LATER),
-        authorization=_authorization(),
+def test_contradictory_source_event_times_stay_unauthenticated():
+    same_version = (
+        _record("rec-1", "v1", T),
+        _record("rec-1", "v1", LATER),
     )
-    clocks = proposed.finding(MasterProvenanceRequirement.OBSERVATION_EVALUATION_TIME)
+    contradictory = classify_master_provenance(
+        _evidence(query_timestamp_utc="2026-01-15T07:00:00Z", source_records=same_version)
+    )
+    clocks = _clock_finding(contradictory)
     assert clocks.status is ProvenanceRequirementStatus.UNSATISFIED
     assert ProvenanceAuditLimitation.INCONSISTENT_TIMESTAMPS in clocks.limitations
     assert ProvenanceAuditLimitation.TIMESTAMPS_NOT_OBSERVATION_PROOF in clocks.limitations
-    _assert_closed(proposed)
+    _assert_closed(contradictory)
 
-    evidence = classify_master_provenance(
+    equivalent_spellings = classify_master_provenance(
         _evidence(
-            query_timestamp_utc=T,
-            source_records=(_record(event_timestamp_utc=LATER),),
-            completeness=SourceCompleteness(evaluated_as_of_utc="2026-01-15T04:00:00Z"),
+            source_records=(
+                _record("rec-1", "v1", T),
+                _record("rec-1", "v1", "2026-01-15T00:00:00+00:00"),
+            )
         )
     )
-    evidence_clocks = evidence.finding(MasterProvenanceRequirement.OBSERVATION_EVALUATION_TIME)
-    assert evidence_clocks.status is ProvenanceRequirementStatus.UNSATISFIED
-    assert ProvenanceAuditLimitation.INCONSISTENT_TIMESTAMPS in evidence_clocks.limitations
-    assert evidence.execution_authority is MasterRouteExecutionAuthority.DENIED
+    assert (
+        ProvenanceAuditLimitation.INCONSISTENT_TIMESTAMPS
+        not in _clock_finding(equivalent_spellings).limitations
+    )
+    _assert_closed(equivalent_spellings)
+
+    missing_version = classify_master_provenance(
+        _evidence(
+            source_records=(
+                _record("rec-1", None, T),
+                _record("rec-1", None, LATER),
+            )
+        )
+    )
+    assert ProvenanceAuditLimitation.INCONSISTENT_TIMESTAMPS not in _clock_finding(missing_version).limitations
+    assert ProvenanceAuditLimitation.MISSING_SOURCE_VERSION in _version_finding(missing_version).limitations
+    _assert_closed(missing_version)
+
+
+def test_source_versions_conflict_only_for_one_recorded_identity():
+    different_records = classify_master_provenance(
+        _evidence(
+            source_records=(
+                _record("rec-1", "v1", T),
+                _record("rec-2", "v2", LATER),
+            )
+        )
+    )
+    different_finding = _version_finding(different_records)
+    assert different_finding.status is ProvenanceRequirementStatus.UNSATISFIED
+    assert ProvenanceAuditLimitation.SOURCE_VERSION_NOT_INTEGRITY_PROOF in different_finding.limitations
+    assert ProvenanceAuditLimitation.SOURCE_VERSIONS_DISAGREE not in different_finding.limitations
+    _assert_closed(different_records)
+
+    same_record_different_events = classify_master_provenance(
+        _evidence(
+            source_records=(
+                _record("rec-1", "v1", T),
+                _record("rec-1", "v2", LATER),
+            )
+        )
+    )
+    assert (
+        ProvenanceAuditLimitation.SOURCE_VERSIONS_DISAGREE
+        not in _version_finding(same_record_different_events).limitations
+    )
+    assert (
+        ProvenanceAuditLimitation.SOURCE_VERSION_NOT_INTEGRITY_PROOF
+        in _version_finding(same_record_different_events).limitations
+    )
+    _assert_closed(same_record_different_events)
+
+    missing_event_time = classify_master_provenance(
+        _evidence(
+            source_records=(
+                _record("rec-1", "v1", None),
+                _record("rec-1", "v2", None),
+            )
+        )
+    )
+    assert ProvenanceAuditLimitation.SOURCE_VERSIONS_DISAGREE not in _version_finding(missing_event_time).limitations
+    assert (
+        ProvenanceAuditLimitation.SOURCE_VERSION_NOT_INTEGRITY_PROOF
+        in _version_finding(missing_event_time).limitations
+    )
+    _assert_closed(missing_event_time)
+
+    alpha = _evidence(source="alpha", source_records=(_record("rec-1", "v1", T),))
+    beta = _evidence(source="beta", source_records=(_record("rec-1", "v2", T),))
+    separate_datasets = classify_master_provenance(
+        ToolResult(
+            tool_name="describe_hazard",
+            tool_call_id="tool-call-1",
+            status=ToolResultStatus.SUCCESS,
+            temporal_scope=TemporalScope.CURRENT,
+            data={"aircraft_id": "ABC123"},
+            evidence=(alpha, beta),
+            as_of_utc=T,
+            limitations=(),
+            correlation_id="corr-1",
+        )
+    )
+    assert ProvenanceAuditLimitation.SOURCE_VERSIONS_DISAGREE not in _version_finding(separate_datasets).limitations
+    _assert_closed(separate_datasets)
+
+    conflict = classify_master_provenance(
+        _evidence(
+            source_records=(
+                _record("rec-1", "v1", T),
+                _record("rec-1", "v2", "2026-01-15T00:00:00+00:00"),
+            )
+        )
+    )
+    conflict_finding = _version_finding(conflict)
+    assert conflict_finding.status is ProvenanceRequirementStatus.UNSATISFIED
+    assert ProvenanceAuditLimitation.SOURCE_VERSIONS_DISAGREE in conflict_finding.limitations
+    assert ProvenanceAuditLimitation.SOURCE_VERSION_NOT_INTEGRITY_PROOF in conflict_finding.limitations
+    _assert_closed(conflict)
 
 
 def test_partial_population_scope_stays_unsatisfied():
