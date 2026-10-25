@@ -40,8 +40,10 @@ Existing interfaces this assessment does not rewrite:
   result as a trace. Consumption is the existing ``permit_consumption_ref``.
   That reference stays ``PERMIT_REFERENCE_NOT_CONSUMPTION`` and does not
   permit dispatch.
-- An empty row set, ``rows_returned`` of zero, ``NOT_FOUND``, and an exact
-  cardinality of zero do not construct a ``VerifiedZeroClaim``.
+- Missing source records, a caller-reported zero, ``NOT_FOUND``, and an
+  exact cardinality of zero are separate untrusted indications. None of
+  them is authenticated complete-population absence, and none constructs a
+  ``VerifiedZeroClaim``. ``ToolResult.data`` is not read as a count.
 """
 
 from __future__ import annotations
@@ -93,6 +95,7 @@ MATCHING_SOURCE_VERSION_AUTHENTICATES_READ = False
 MATCHING_REQUEST_ID_AUTHENTICATES_READ = False
 CAPABILITY_CONSUMPTION_IS_DISPATCH_PERMISSION = False
 EMPTY_ROWS_CREATE_VERIFIED_ZERO = False
+COMPLETE_POPULATION_ABSENCE_AVAILABLE = False
 
 # Same partial vocabulary the provenance audit already uses. Not a new status.
 _PARTIAL_COMPLETENESS = frozenset({"PARTIAL", "INCOMPLETE", "LIMITED", "TRUNCATED"})
@@ -320,22 +323,146 @@ def _tool_call_id(
     return subject.tool_call_id
 
 
-def _rows_absent(subject: ToolResult | Evidence | ProposedDispatcherExecutionEvent) -> bool:
-    if isinstance(subject, ToolResult) and subject.status is ToolResultStatus.NOT_FOUND:
-        return True
-    for evidence in _evidence_of(subject):
-        if not evidence.source_records:
-            return True
-        cardinality = evidence.match_cardinality
+class UntrustedAbsenceKind(str, Enum):
+    """One caller-supplied population signal. None is an authenticated zero.
+
+    ``MISSING_SOURCE_RECORDS`` means that evidence item carried no source
+    records. It is missing metadata, not a report that the requested
+    population has zero rows. ``SOURCE_RECORDS_PRESENT`` keeps a populated
+    item visible when another item lacks records. ``CALLER_REPORTED_QUERY_ROWS``
+    copies one query execution's ``rows_returned``, including zero. A zero on
+    one execution does not describe the others. Exact cardinality zero,
+    ``NOT_FOUND``, and a ``VerifiedZeroClaim`` stay caller-reported.
+    Authenticated complete-population absence is not a member.
+    """
+
+    MISSING_SOURCE_RECORDS = "MISSING_SOURCE_RECORDS"
+    SOURCE_RECORDS_PRESENT = "SOURCE_RECORDS_PRESENT"
+    CALLER_REPORTED_EXACT_ZERO = "CALLER_REPORTED_EXACT_ZERO"
+    CALLER_REPORTED_QUERY_ROWS = "CALLER_REPORTED_QUERY_ROWS"
+    CALLER_REPORTED_NOT_FOUND = "CALLER_REPORTED_NOT_FOUND"
+    CALLER_REPORTED_VERIFIED_ZERO_CLAIM = "CALLER_REPORTED_VERIFIED_ZERO_CLAIM"
+
+
+def _nonnegative(value: object, field_name: str, *, required: bool) -> None:
+    if value is None:
+        if required:
+            raise ContractValidationError(f"invalid_{field_name}")
+        return
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ContractValidationError(f"invalid_{field_name}")
+
+
+@dataclass(frozen=True)
+class UntrustedAbsenceIndication:
+    """One untrusted population signal. It does not establish absence.
+
+    The evidence and query indexes bind the signal to the item that supplied
+    it. A missing-record signal on one item does not cover another item, and
+    a zero ``rows_returned`` does not cover another query. ``rows_returned``
+    is copied from the caller-supplied query trace. ``None`` means that trace
+    omitted a count and is not treated as zero. ``ToolResult.data`` is not a
+    source for this object. Both establishment flags stay false: this module
+    cannot authenticate complete-population absence or a verified zero.
+    """
+
+    kind: UntrustedAbsenceKind
+    evidence_index: int | None = None
+    query_index: int | None = None
+    rows_returned: int | None = None
+    establishes_complete_population_absence: bool = False
+    establishes_verified_zero: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.kind, UntrustedAbsenceKind):
+            raise ContractValidationError("invalid_untrusted_absence_indication")
         if (
-            cardinality is not None
-            and cardinality.is_exact is True
-            and cardinality.exact_count == 0
+            self.establishes_complete_population_absence is not False
+            or self.establishes_verified_zero is not False
         ):
-            return True
-        if any(item.rows_returned == 0 for item in evidence.query_executions):
-            return True
-    return False
+            raise ContractValidationError("complete_population_absence_not_available")
+        record_kinds = (
+            UntrustedAbsenceKind.MISSING_SOURCE_RECORDS,
+            UntrustedAbsenceKind.SOURCE_RECORDS_PRESENT,
+            UntrustedAbsenceKind.CALLER_REPORTED_EXACT_ZERO,
+        )
+        if self.kind in record_kinds:
+            _nonnegative(self.evidence_index, "evidence_index", required=True)
+            _nonnegative(self.query_index, "query_index", required=False)
+            if self.query_index is not None or self.rows_returned is not None:
+                raise ContractValidationError("invalid_untrusted_absence_indication")
+            return
+        if self.kind is UntrustedAbsenceKind.CALLER_REPORTED_QUERY_ROWS:
+            _nonnegative(self.evidence_index, "evidence_index", required=True)
+            _nonnegative(self.query_index, "query_index", required=True)
+            _nonnegative(self.rows_returned, "rows_returned", required=False)
+            return
+        if self.kind in (
+            UntrustedAbsenceKind.CALLER_REPORTED_NOT_FOUND,
+            UntrustedAbsenceKind.CALLER_REPORTED_VERIFIED_ZERO_CLAIM,
+        ):
+            if (
+                self.evidence_index is not None
+                or self.query_index is not None
+                or self.rows_returned is not None
+            ):
+                raise ContractValidationError("invalid_untrusted_absence_indication")
+            return
+        raise ContractValidationError("invalid_untrusted_absence_indication")
+
+
+def _exact_zero(evidence: Evidence) -> bool:
+    cardinality = evidence.match_cardinality
+    return (
+        cardinality is not None
+        and cardinality.is_exact is True
+        and cardinality.exact_count == 0
+    )
+
+
+def _untrusted_absence_indication(
+    subject: ToolResult | Evidence | ProposedDispatcherExecutionEvent,
+    verified_zero_claim: VerifiedZeroClaim | None,
+) -> tuple[UntrustedAbsenceIndication, ...]:
+    """Copy per-item signals. Do not reduce them to one population result."""
+
+    indications: list[UntrustedAbsenceIndication] = []
+    for evidence_index, evidence in enumerate(_evidence_of(subject)):
+        record_kind = (
+            UntrustedAbsenceKind.SOURCE_RECORDS_PRESENT
+            if evidence.source_records
+            else UntrustedAbsenceKind.MISSING_SOURCE_RECORDS
+        )
+        indications.append(
+            UntrustedAbsenceIndication(kind=record_kind, evidence_index=evidence_index)
+        )
+        if _exact_zero(evidence):
+            indications.append(
+                UntrustedAbsenceIndication(
+                    kind=UntrustedAbsenceKind.CALLER_REPORTED_EXACT_ZERO,
+                    evidence_index=evidence_index,
+                )
+            )
+        for query_index, query in enumerate(evidence.query_executions):
+            indications.append(
+                UntrustedAbsenceIndication(
+                    kind=UntrustedAbsenceKind.CALLER_REPORTED_QUERY_ROWS,
+                    evidence_index=evidence_index,
+                    query_index=query_index,
+                    rows_returned=query.rows_returned,
+                )
+            )
+    if isinstance(subject, ToolResult) and subject.status is ToolResultStatus.NOT_FOUND:
+        indications.append(
+            UntrustedAbsenceIndication(kind=UntrustedAbsenceKind.CALLER_REPORTED_NOT_FOUND)
+        )
+    if _claim_for(subject, verified_zero_claim) is not None:
+        indications.append(
+            UntrustedAbsenceIndication(
+                kind=UntrustedAbsenceKind.CALLER_REPORTED_VERIFIED_ZERO_CLAIM
+            )
+        )
+    return tuple(indications)
 
 
 def _proposed(
@@ -557,14 +684,18 @@ class MasterSourceReadTraceAssessment:
     """Proposed trace metadata compared with an empty trusted-runtime record.
 
     ``classification`` is the existing provenance audit. None of the seven
-    requirements is established. The assessment is never true in a Boolean
-    context, so it cannot be used as an execution gate.
+    requirements is established. ``untrusted_absence_indication`` keeps each
+    caller-supplied population signal on the evidence item or query that
+    produced it. Missing source records are not a zero-row result, and the
+    tuple is not an overall absence. Complete-population absence stays
+    unavailable. The assessment is never true in a Boolean context, so it
+    cannot be used as an execution gate.
     """
 
     classification: MasterProvenanceClassification
     obligations: tuple[SourceReadTraceObligationFinding, ...]
     proposed_identity_conflict: bool
-    rows_absent: bool
+    untrusted_absence_indication: tuple[UntrustedAbsenceIndication, ...]
     observed_trusted_runtime_events: tuple[object, ...] = ()
     trusted_dispatcher_implemented: bool = False
     trusted_runtime_observation_available: bool = False
@@ -576,6 +707,7 @@ class MasterSourceReadTraceAssessment:
     empty_result_creates_verified_zero: bool = False
     verified_zero_claim_minted: bool = False
     verified_zero_established: bool = False
+    complete_population_absence_available: bool = False
     source_authenticity: MasterSourceAuthenticity = MasterSourceAuthenticity.NOT_ESTABLISHED
     production_authority: MasterProductionAuthority = MasterProductionAuthority.DENIED
     execution_authority: MasterRouteExecutionAuthority = MasterRouteExecutionAuthority.DENIED
@@ -620,8 +752,13 @@ class MasterSourceReadTraceAssessment:
             raise ContractValidationError("invalid_source_read_trace_obligations")
         if self.observed_trusted_runtime_events != ():
             raise ContractValidationError("trusted_runtime_observation_not_available")
-        if not isinstance(self.proposed_identity_conflict, bool) or not isinstance(self.rows_absent, bool):
+        if not isinstance(self.proposed_identity_conflict, bool):
             raise ContractValidationError("invalid_source_read_trace_assessment")
+        if not isinstance(self.untrusted_absence_indication, tuple) or any(
+            not isinstance(item, UntrustedAbsenceIndication)
+            for item in self.untrusted_absence_indication
+        ):
+            raise ContractValidationError("invalid_untrusted_absence_indication")
         closed_flags = (
             self.trusted_dispatcher_implemented,
             self.trusted_runtime_observation_available,
@@ -633,6 +770,7 @@ class MasterSourceReadTraceAssessment:
             self.empty_result_creates_verified_zero,
             self.verified_zero_claim_minted,
             self.verified_zero_established,
+            self.complete_population_absence_available,
         )
         if any(item is not False for item in closed_flags):
             raise ContractValidationError("source_authenticity_not_established")
@@ -728,5 +866,8 @@ def assess_source_read_trace(
             verified_zero_claim=verified_zero_claim,
             classification=classification,
         ),
-        rows_absent=_rows_absent(subject),
+        untrusted_absence_indication=_untrusted_absence_indication(
+            subject,
+            verified_zero_claim,
+        ),
     )

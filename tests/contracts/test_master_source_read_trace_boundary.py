@@ -55,6 +55,7 @@ from wilvor_ai.master_routing import (
 from wilvor_ai.master_source_read_trace_boundary import (
     CALLER_SUPPLIED_TRACE_AUTHENTICATES_READ,
     CAPABILITY_CONSUMPTION_IS_DISPATCH_PERMISSION,
+    COMPLETE_POPULATION_ABSENCE_AVAILABLE,
     EMPTY_ROWS_CREATE_VERIFIED_ZERO,
     MATCHING_REQUEST_ID_AUTHENTICATES_READ,
     MATCHING_SOURCE_VERSION_AUTHENTICATES_READ,
@@ -64,6 +65,8 @@ from wilvor_ai.master_source_read_trace_boundary import (
     MasterSourceReadTraceAssessment,
     SourceReadTraceObligation,
     SourceReadTracePresence,
+    UntrustedAbsenceIndication,
+    UntrustedAbsenceKind,
     assess_source_read_trace,
 )
 from wilvor_ai.specialist_contracts import VerifiedZeroClaim
@@ -199,6 +202,11 @@ def _assert_closed(assessment: MasterSourceReadTraceAssessment) -> None:
     assert assessment.empty_result_creates_verified_zero is False
     assert assessment.verified_zero_claim_minted is False
     assert assessment.verified_zero_established is False
+    assert assessment.complete_population_absence_available is False
+    assert "rows_absent" not in MasterSourceReadTraceAssessment.__dataclass_fields__
+    for indication in assessment.untrusted_absence_indication:
+        assert indication.establishes_complete_population_absence is False
+        assert indication.establishes_verified_zero is False
     assert assessment.source_authenticity is MasterSourceAuthenticity.NOT_ESTABLISHED
     assert assessment.production_authority is MasterProductionAuthority.DENIED
     assert assessment.execution_authority is MasterRouteExecutionAuthority.DENIED
@@ -241,6 +249,11 @@ def test_trace_boundary_constants_stay_closed():
     assert MATCHING_REQUEST_ID_AUTHENTICATES_READ is False
     assert CAPABILITY_CONSUMPTION_IS_DISPATCH_PERMISSION is False
     assert EMPTY_ROWS_CREATE_VERIFIED_ZERO is False
+    assert COMPLETE_POPULATION_ABSENCE_AVAILABLE is False
+    assert UntrustedAbsenceKind.MISSING_SOURCE_RECORDS.value != "CALLER_REPORTED_QUERY_ROWS"
+    assert "AUTHENTICATED_COMPLETE_POPULATION_ABSENCE" not in {
+        item.value for item in UntrustedAbsenceKind
+    }
     assert set(SourceReadTracePresence) == {
         SourceReadTracePresence.NOT_PROPOSED,
         SourceReadTracePresence.PROPOSED_UNOBSERVED,
@@ -561,7 +574,15 @@ def test_empty_rows_do_not_mint_a_verified_zero_claim():
     result = _tool_result(evidence, data={"rows": []})
     assessment = assess_source_read_trace(result)
     _assert_closed(assessment)
-    assert assessment.rows_absent is True
+    assert assessment.untrusted_absence_indication == (
+        UntrustedAbsenceIndication(
+            kind=UntrustedAbsenceKind.MISSING_SOURCE_RECORDS,
+            evidence_index=0,
+        ),
+    )
+    assert UntrustedAbsenceKind.CALLER_REPORTED_EXACT_ZERO not in {
+        item.kind for item in assessment.untrusted_absence_indication
+    }
     population = assessment.classification.finding(
         MasterProvenanceRequirement.POPULATION_SCOPE_COMPLETENESS
     )
@@ -585,7 +606,9 @@ def test_not_found_does_not_become_verified_zero():
     )
     assessment = assess_source_read_trace(result)
     _assert_closed(assessment)
-    assert assessment.rows_absent is True
+    assert assessment.untrusted_absence_indication == (
+        UntrustedAbsenceIndication(kind=UntrustedAbsenceKind.CALLER_REPORTED_NOT_FOUND),
+    )
     assert (
         _presence(assessment, SourceReadTraceObligation.SOURCE_RESPONSE_IDENTITY)
         is SourceReadTracePresence.NOT_PROPOSED
@@ -599,10 +622,20 @@ def test_not_found_does_not_become_verified_zero():
 def test_exact_zero_cardinality_is_not_an_established_zero():
     evidence = _evidence(
         match_cardinality=MatchCardinality(exact_count=0, is_exact=True),
+        completeness=SourceCompleteness(status="COMPLETE", evaluated_as_of_utc=T),
     )
     assessment = assess_source_read_trace(_tool_result(evidence, data={"rows": []}))
     _assert_closed(assessment)
-    assert assessment.rows_absent is True
+    assert assessment.untrusted_absence_indication == (
+        UntrustedAbsenceIndication(
+            kind=UntrustedAbsenceKind.SOURCE_RECORDS_PRESENT,
+            evidence_index=0,
+        ),
+        UntrustedAbsenceIndication(
+            kind=UntrustedAbsenceKind.CALLER_REPORTED_EXACT_ZERO,
+            evidence_index=0,
+        ),
+    )
     assert assessment.proposed_identity_conflict is True
     population = assessment.classification.finding(
         MasterProvenanceRequirement.POPULATION_SCOPE_COMPLETENESS
@@ -642,7 +675,18 @@ def test_invented_query_execution_is_not_an_observed_source_event():
     )
     assessment = assess_source_read_trace(_tool_result(evidence))
     _assert_closed(assessment)
-    assert assessment.rows_absent is True
+    assert assessment.untrusted_absence_indication == (
+        UntrustedAbsenceIndication(
+            kind=UntrustedAbsenceKind.SOURCE_RECORDS_PRESENT,
+            evidence_index=0,
+        ),
+        UntrustedAbsenceIndication(
+            kind=UntrustedAbsenceKind.CALLER_REPORTED_QUERY_ROWS,
+            evidence_index=0,
+            query_index=0,
+            rows_returned=0,
+        ),
+    )
     assert assessment.proposed_identity_conflict is True
     source_read = assessment.classification.finding(
         MasterProvenanceRequirement.SOURCE_READ_PROVENANCE
@@ -730,7 +774,7 @@ def test_failure_dispositions_propose_an_error_without_authorizing_a_read():
             _presence(assessment, SourceReadTraceObligation.ERROR_OUTCOME)
             is SourceReadTracePresence.PROPOSED_UNOBSERVED
         )
-        assert assessment.rows_absent is False
+        assert assessment.untrusted_absence_indication == ()
 
 
 def test_executed_disposition_on_not_found_conflicts_and_does_not_verify_zero():
@@ -747,7 +791,9 @@ def test_executed_disposition_on_not_found_conflicts_and_does_not_verify_zero():
     assessment = assess_source_read_trace(result, disposition=MasterDisposition.EXECUTED)
     _assert_closed(assessment)
     assert assessment.proposed_identity_conflict is True
-    assert assessment.rows_absent is True
+    assert assessment.untrusted_absence_indication == (
+        UntrustedAbsenceIndication(kind=UntrustedAbsenceKind.CALLER_REPORTED_NOT_FOUND),
+    )
     assert assessment.verified_zero_established is False
 
 
@@ -834,7 +880,12 @@ def test_mismatched_verified_zero_tool_call_conflicts():
     )
     _assert_closed(assessment)
     assert assessment.proposed_identity_conflict is True
-    assert assessment.rows_absent is True
+    assert UntrustedAbsenceKind.CALLER_REPORTED_VERIFIED_ZERO_CLAIM in {
+        item.kind for item in assessment.untrusted_absence_indication
+    }
+    assert UntrustedAbsenceKind.MISSING_SOURCE_RECORDS in {
+        item.kind for item in assessment.untrusted_absence_indication
+    }
 
 
 def test_authority_promotion_is_rejected():
@@ -855,6 +906,8 @@ def test_authority_promotion_is_rejected():
         replace(assessment, observed_trusted_runtime_events=("runtime-event",))
     with pytest.raises(ContractValidationError, match="source_authenticity_not_established"):
         replace(assessment, verified_zero_established=True)
+    with pytest.raises(ContractValidationError, match="source_authenticity_not_established"):
+        replace(assessment, complete_population_absence_available=True)
 
 
 def test_unsupported_trace_attachments_are_rejected():
@@ -869,6 +922,137 @@ def test_unsupported_trace_attachments_are_rejected():
         assess_source_read_trace(
             event,
             verified_zero_claim=VerifiedZeroClaim(tool_call_id="tool-call-1"),
+        )
+
+
+def test_success_with_populated_data_and_missing_records_is_not_a_zero():
+    evidence = _evidence(source_records=())
+    result = _tool_result(
+        evidence,
+        data={"aircraft_ids": ["ABC123", "DEF456"], "count": 2},
+    )
+    assessment = assess_source_read_trace(result)
+    _assert_closed(assessment)
+    assert assessment.untrusted_absence_indication == (
+        UntrustedAbsenceIndication(
+            kind=UntrustedAbsenceKind.MISSING_SOURCE_RECORDS,
+            evidence_index=0,
+        ),
+    )
+    assert assessment.proposed_identity_conflict is False
+
+
+def test_mixed_evidence_preserves_each_source_record_diagnostic():
+    empty = _evidence(source_records=())
+    populated = _evidence()
+    result = replace(
+        _tool_result(empty, data={"rows": [1]}),
+        evidence=(empty, populated),
+    )
+    assessment = assess_source_read_trace(result)
+    _assert_closed(assessment)
+    assert assessment.untrusted_absence_indication == (
+        UntrustedAbsenceIndication(
+            kind=UntrustedAbsenceKind.MISSING_SOURCE_RECORDS,
+            evidence_index=0,
+        ),
+        UntrustedAbsenceIndication(
+            kind=UntrustedAbsenceKind.SOURCE_RECORDS_PRESENT,
+            evidence_index=1,
+        ),
+    )
+    assert assessment.proposed_identity_conflict is False
+
+
+def test_disagreeing_query_row_counts_stay_on_their_own_executions():
+    evidence = _evidence(
+        query_executions=(
+            QueryExecutionTrace(query_id="query-1", execution_id="exec-1", rows_returned=0),
+            QueryExecutionTrace(query_id="query-2", execution_id="exec-2", rows_returned=4),
+        ),
+    )
+    assessment = assess_source_read_trace(_tool_result(evidence, data={"rows": [1, 2, 3, 4]}))
+    _assert_closed(assessment)
+    assert assessment.untrusted_absence_indication == (
+        UntrustedAbsenceIndication(
+            kind=UntrustedAbsenceKind.SOURCE_RECORDS_PRESENT,
+            evidence_index=0,
+        ),
+        UntrustedAbsenceIndication(
+            kind=UntrustedAbsenceKind.CALLER_REPORTED_QUERY_ROWS,
+            evidence_index=0,
+            query_index=0,
+            rows_returned=0,
+        ),
+        UntrustedAbsenceIndication(
+            kind=UntrustedAbsenceKind.CALLER_REPORTED_QUERY_ROWS,
+            evidence_index=0,
+            query_index=1,
+            rows_returned=4,
+        ),
+    )
+    population = assessment.classification.finding(
+        MasterProvenanceRequirement.POPULATION_SCOPE_COMPLETENESS
+    )
+    assert ProvenanceAuditLimitation.FABRICATED_VERIFIED_ZERO not in population.limitations
+
+
+def test_empty_evidence_metadata_has_no_authenticated_population_coverage():
+    evidence = _evidence(source_records=(), completeness=None, match_cardinality=None)
+    assessment = assess_source_read_trace(_tool_result(evidence, data={}))
+    _assert_closed(assessment)
+    assert assessment.untrusted_absence_indication == (
+        UntrustedAbsenceIndication(
+            kind=UntrustedAbsenceKind.MISSING_SOURCE_RECORDS,
+            evidence_index=0,
+        ),
+    )
+    assert (
+        _presence(assessment, SourceReadTraceObligation.POPULATION_COMPLETENESS)
+        is SourceReadTracePresence.NOT_PROPOSED
+    )
+    population = assessment.classification.finding(
+        MasterProvenanceRequirement.POPULATION_SCOPE_COMPLETENESS
+    )
+    assert population.status in CLOSED
+    assert ProvenanceAuditLimitation.FABRICATED_VERIFIED_ZERO not in population.limitations
+
+
+def test_fabricated_verified_zero_claim_stays_unauthenticated():
+    evidence = _evidence(source_records=())
+    assessment = assess_source_read_trace(
+        _tool_result(evidence, data={}),
+        verified_zero_claim=VerifiedZeroClaim(tool_call_id="tool-call-1"),
+    )
+    _assert_closed(assessment)
+    assert assessment.untrusted_absence_indication == (
+        UntrustedAbsenceIndication(
+            kind=UntrustedAbsenceKind.MISSING_SOURCE_RECORDS,
+            evidence_index=0,
+        ),
+        UntrustedAbsenceIndication(
+            kind=UntrustedAbsenceKind.CALLER_REPORTED_VERIFIED_ZERO_CLAIM,
+        ),
+    )
+    source_read = assessment.classification.finding(
+        MasterProvenanceRequirement.SOURCE_READ_PROVENANCE
+    )
+    assert ProvenanceAuditLimitation.FABRICATED_VERIFIED_ZERO in source_read.limitations
+    assert source_read.status is ProvenanceRequirementStatus.UNSATISFIED
+
+
+def test_absence_indication_cannot_establish_population_absence():
+    with pytest.raises(ContractValidationError, match="complete_population_absence_not_available"):
+        UntrustedAbsenceIndication(
+            kind=UntrustedAbsenceKind.MISSING_SOURCE_RECORDS,
+            evidence_index=0,
+            establishes_complete_population_absence=True,
+        )
+    with pytest.raises(ContractValidationError, match="complete_population_absence_not_available"):
+        UntrustedAbsenceIndication(
+            kind=UntrustedAbsenceKind.CALLER_REPORTED_EXACT_ZERO,
+            evidence_index=0,
+            establishes_verified_zero=True,
         )
 
 
