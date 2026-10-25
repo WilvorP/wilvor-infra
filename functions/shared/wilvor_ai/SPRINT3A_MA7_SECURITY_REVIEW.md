@@ -121,3 +121,83 @@ Created, and left uncommitted:
 - `tests/contracts/test_sprint3a_ma7_safety_import_isolation.py`
 
 No existing Wilvor source module or test file was modified. No other Sprint 3A stage was started.
+
+## Current baseline addendum — 2026-10-25 at `8abd2d5`
+
+**Verified against:** `8abd2d5` on `docs/ws5-ai-copilot` (`docs/wilvor-documentation` baseline)
+**Production authorization:** `MasterRouteExecutionAuthority.DENIED`; `MasterProductionAuthority.DENIED`; `MasterSourceAuthenticity.NOT_ESTABLISHED`; `MasterRequestCoverage.NOT_ESTABLISHED`
+
+This addendum does not rewrite the baseline review of `7073b3a` on
+`sprint3a-ma7-safety`. The original findings, threat matrix, and dated
+pytest counts (12 passed; 418 passed at that HEAD) remain historical
+evidence of that review. They are not a current suite result.
+
+### What changed in the tree
+
+The seven Sprint 3A modules named as absent from the `7073b3a` worktree
+now exist:
+
+- `functions/shared/wilvor_ai/master_execution_integration.py`
+- `functions/shared/wilvor_ai/master_session_origin_boundary.py`
+- `functions/shared/wilvor_ai/master_execution_policy_boundary.py`
+- `functions/shared/wilvor_ai/master_live_ops_execution_readiness.py`
+- `functions/shared/wilvor_ai/master_historical_execution_readiness.py`
+- `functions/shared/wilvor_ai/master_decision_execution_readiness.py`
+- `functions/shared/wilvor_ai/master_source_read_trace_boundary.py`
+
+MA5 and MA6 modules named in the baseline inspection table also exist
+(`master_response_policy.py`, `master_execution_preflight.py`, and the
+other MA6 files listed there). `test_ma7_master_safety_matrix.py` still
+says "MA5 and MA6 modules are absent on this branch". That docstring is
+stale relative to this tree. The test file is not owned by this
+documentation workstream and was not edited.
+
+### Authority — unchanged
+
+Master execution authority remains `DENIED`. Production authority remains
+`DENIED`. Source authenticity remains `NOT_ESTABLISHED`. Request coverage
+remains `NOT_ESTABLISHED`. No constructor in these modules grants
+production specialist dispatch. `run_synthetic_master_workflow` remains
+test-only and was not called for this addendum.
+
+The ten baseline invariants in the original table still describe the
+intended fail-closed posture. Their regression tests remain in
+`tests/contracts/test_sprint3a_ma7_safety_regression.py`.
+
+### Threat-matrix tests
+
+The original "tests to add after integration" used exact function names
+such as `test_handoff_of_ready_live_step_keeps_dispatch_denied`. Those
+exact identifiers were not found at `8abd2d5` (search: `tests/` for those
+`def test_*` names). Contract tests that cover the same modules and
+denials do exist, for example:
+
+- `tests/contracts/test_master_execution_integration.py` (`test_structural_readiness_does_not_grant_execution_permission`)
+- `tests/contracts/test_master_session_origin_boundary.py` (`test_copied_session_identifier_is_not_membership_or_a_principal`)
+- `tests/contracts/test_master_live_ops_execution_readiness.py` (`test_structural_readiness_is_not_source_read_or_dispatch_permission`)
+- `tests/contracts/test_master_source_read_trace_boundary.py` (`test_permit_reference_is_not_capability_consumption_or_dispatch`)
+
+Those files are CONTRACT coverage of the modules. They are not a claim
+that every named threat-matrix test was added under the original title.
+
+### Surfaces that remain absent
+
+Search at `8abd2d5`:
+
+- Agent API / `"/ai"` in `functions/operational_api` — absent
+- Dashboard `/ai` in `dashboard/src/routes/routeDefinitions.ts` — absent
+- Terraform `wilvor_ai` / `bedrock` / `agent_api` under `envs/dev`,
+  `envs/dev-historical-data`, and `modules/**/*.tf` — absent except an
+  unattached historical-analytics IAM policy described as for a future
+  Agent API (`modules/historical_analytics/iam.tf`)
+
+No model provider or AWS API was invoked for this addendum. Current
+pytest pass counts are UNKNOWN.
+
+### Known limitations
+
+- This addendum is documentation. It does not certify production
+  readiness or source authentication.
+- Uncovered safety risks in the original review remain properties to
+  re-read when a later module claims a grant.
+- Mapping pages: `docs/ai/master-agent.md`, `docs/ai/evidence-and-safety.md`.

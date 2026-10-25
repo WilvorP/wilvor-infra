@@ -1,14 +1,58 @@
 # Wilvor AI Operations Copilot Phase 0
 
+**Canonical page:** this file for colocated phase history; mapping pages live under `docs/ai/`
+**Verified against:** `8abd2d5` on `docs/ws5-ai-copilot`
+**Maturity:** CODE, CONTRACT, LIVE
+**Production authorization:** `MasterRouteExecutionAuthority.DENIED`; `MasterProductionAuthority.DENIED`; no Agent API grant found
+
 Phase 0 defines dependency-free data contracts and the V1 authority boundary
 for future AI Operations Copilot components. It does not implement an AI
 runtime or retrieve operational data.
 
 Wilvor's deterministic services remain authoritative for aircraft state,
 projections, hazards, encounters, risk, airport assessments, recommendations,
-alerts, geometry, trajectories, and state transitions. Future AI components
+alerts, geometry, trajectories, and state transitions. AI components
 may explain and summarize verified deterministic results; they must not
 replace those calculations or convert missing evidence into assumed facts.
+
+Current mapping pages: [Architecture](../../../docs/ai/architecture.md),
+[Live Operations Specialist](../../../docs/ai/live-operations-specialist.md),
+[Historical Analytics Specialist](../../../docs/ai/historical-analytics-specialist.md),
+[Decision Specialist](../../../docs/ai/decision-specialist.md),
+[Tools](../../../docs/ai/tools.md), [Master Agent](../../../docs/ai/master-agent.md),
+[Evidence and safety](../../../docs/ai/evidence-and-safety.md), and
+[Tests and maturity](../../../docs/ai/tests-and-maturity.md). This README
+keeps phase history. Current implementation status is the table below, not
+later sentences that still describe Master Agent or Live Ops as unimplemented.
+
+## Implementation status
+
+| Question | Result | Source |
+| --- | --- | --- |
+| Phase 0 contracts | CODE, CONTRACT | `functions/shared/wilvor_ai/contracts.py` (`V1_AUTHORITY`) |
+| Live Operations Specialist | CODE, CONTRACT, LIVE | `functions/shared/wilvor_ai/live_ops_specialist.py` (`LiveOpsSpecialist`) |
+| Historical Analytics Specialist | CODE, CONTRACT, LIVE | `functions/shared/wilvor_ai/historical_specialist.py` (`HistoricalAnalyticsSpecialist`) |
+| Decision Specialist | CODE, CONTRACT, LIVE | `functions/shared/wilvor_ai/decision_specialist.py` (`DecisionSpecialist`) |
+| Master Agent offline contracts | CODE, CONTRACT | `functions/shared/wilvor_ai/master_*.py` |
+| Terraform AI / Bedrock / Agent API | TF absent at `8abd2d5` (search: `envs/dev`, `envs/dev-historical-data`, `modules/**/*.tf` for `wilvor_ai`, `bedrock`, `agent_api`) | named search |
+| Agent API / dashboard `/ai` | absent at `8abd2d5` | `functions/operational_api`; `dashboard/src/routes/routeDefinitions.ts` |
+| Current live-harness pass | UNKNOWN | this file's stored live JSON notes are historical evidence |
+| Deployment | UNKNOWN | not verified |
+| Production authorization | `DENIED` | `functions/shared/wilvor_ai/master_routing.py` (`MasterRouteExecutionAuthority`) |
+
+## Known limitations
+
+- Master execution authority stays `DENIED`. Production authority stays
+  `DENIED`. Source authenticity stays `NOT_ESTABLISHED`. Request coverage
+  stays `NOT_ESTABLISHED`. Offline Master contracts do not authorize
+  production specialist dispatch.
+- `AgentAuthorityMode` contains `READ_ONLY_ADVISORY` only. Advisory mode is
+  not source-read authority.
+- An Agent API, `/ai` Operational API route, dashboard `/ai` page, and
+  Terraform `wilvor_ai` wiring were not found at `8abd2d5`.
+- LIVE records harness files under `scripts/validate_*anthropic_live.py`.
+  A current live pass is UNKNOWN. Stored live JSON artifacts are historical
+  evidence and are not rewritten when harness accounting later changes.
 
 ## Contract package
 
@@ -31,17 +75,18 @@ is not a compatibility guarantee.
 
 ## Temporal scope
 
-`TemporalScope` has three values:
+`TemporalScope` currently has four values (source: `functions/shared/wilvor_ai/contracts.py`, `TemporalScope`):
 
 - `CURRENT`: evidence for current operational state.
 - `HISTORICAL`: evidence for a historical period or historical analytics.
 - `HYBRID`: a result that actually combines current and historical evidence.
+- `PERSISTED`: persisted evaluation evidence, used by Decision airport-candidate tools. It is not current suitability and is not `HYBRID`.
 
 Scope describes the result or evidence represented, not the scope of the
 originating user request. In a future hybrid workflow, a live operational tool
 result remains `CURRENT` and a historical analytics tool result remains
 `HISTORICAL`. A later final response may combine their evidence and declare
-`HYBRID`.
+`HYBRID`. Do not describe CURRENT plus PERSISTED as `HYBRID`.
 
 Only a `ToolResult` that itself declares `HYBRID` must contain both CURRENT
 and HISTORICAL evidence. Phase 0 performs no temporal classification, routing,
@@ -280,8 +325,9 @@ first-class exact-zero / `EVALUABLE` proof. Completeness is not freshness.
 First-class `Evidence` is the provenance surface. AWS clients, SQL, query
 ids, workgroups, and current/geography fallback are not exposed.
 
-Consumers import `wilvor_ai.historical_analytics` explicitly. A
-model-backed specialist and Agent API are not implemented.
+Consumers import `wilvor_ai.historical_analytics` explicitly. At the end
+of Phase 2C a model-backed specialist was not yet in this module. Later
+sections record `HistoricalAnalyticsSpecialist`. Agent API remains absent.
 
 ## Deliberately not implemented
 
@@ -322,7 +368,10 @@ implemented yet:
 - hybrid current + historical synthesis
 
 Later sections add the Historical Analytics Specialist and its offline
-providers. Master Agent and Agent API remain future work.
+providers. Master Agent offline contracts (MA1–MA7) now exist in
+`master_*.py`; production execution stays `DENIED`. Agent API remains
+absent. See Historical record for the earlier "remain future work"
+wording.
 
 ## Phase 3A-preflight provider-neutral specialist contracts
 
@@ -764,11 +813,12 @@ Non-blocking follow-up (do not reopen Phase 3A):
 
 Phase 3A completion does not complete the AI Operations Copilot. Phase 3A
 itself did not include a Decision Tool runtime or a Decision Expert. Those
-are complete in the sections below. Still not implemented: Live Ops Expert,
-Master Agent / LangGraph orchestration, multi-specialist evidence
-verification, visualization builder, dedicated Agent API, `/ai`
-frontend integration, broader evaluation, and latency/cost
-optimization. Historical Analytics Specialist is one specialist
+are complete in the sections below. Live Operations Specialist,
+Decision Specialist, and Master Agent offline contracts also exist in
+this tree. Still absent: dedicated Agent API, `/ai` frontend integration,
+Terraform AI wiring, production Master execution, visualization builder,
+broader evaluation, and latency/cost optimization. Master execution
+authority stays `DENIED`. Historical Analytics Specialist is one specialist
 foundation. DT1 defines the decision evidence contract. DT2 adds the
 read-only current decision context operation and, at that phase, does not
 add a model catalog.
@@ -851,7 +901,8 @@ by `wilvor_operational`. Persisted airport evidence is not asserted to be
 current. The raw `ToolResult` remains the verifier and audit authority.
 The adapter fails closed when request and result identity disagree. DT5
 closes Decision Tools. It does not by itself complete the Decision Expert.
-The next section records that completion. A Master Agent remains future work.
+The next section records that completion. Master Agent offline contracts
+exist; production Master execution remains `DENIED`.
 
 ## Decision Expert complete
 
@@ -919,11 +970,13 @@ tool_use, structured terminal decisions, and an injected Messages client.
 DE5 does not perform a live Anthropic call. Production client construction,
 secrets, runtime composition, and deployment remain future integration work.
 
-The full Wilvor AI Operations Copilot is not complete. Master Agent remains
-future work. Agent API remains future work. Also still future work:
-specialist routing, Live Ops Expert, multi-specialist orchestration,
-runtime Lambda composition, dashboard / AI page integration, Terraform,
-IAM, live evaluation, and route generation.
+The full Wilvor AI Operations Copilot is not complete. Live Ops Expert
+and Decision Expert exist as in-process specialists. Master Agent exists
+as offline MA1–MA7 contracts with execution authority `DENIED`. Agent API
+remains absent. Also still absent: production specialist dispatch,
+runtime Lambda composition, dashboard `/ai` page, Terraform AI wiring,
+IAM for an Agent API role, a current live-harness pass in this worktree,
+and route generation. See `docs/ai/` for the current map.
 
 ## Tests
 
@@ -943,3 +996,45 @@ Six Live Operations region tests in this suite can fail for an unrelated
 checksum: committed `us_states.geojson` raw bytes contain one CRLF, while
 `us_states.meta.json` hashes the LF bytes. That is not a decision-contract
 failure. Do not change those files to make this suite green.
+
+Current pytest pass counts are UNKNOWN unless a dated command result is
+cited. Mapping of the contract suite is
+[Tests and maturity](../../../docs/ai/tests-and-maturity.md).
+
+## Historical record
+
+These sentences were current-status claims in earlier revisions of this
+README. They described a phase that has since grown. They are kept here
+so the phase narrative stays readable.
+
+- Phase 0 listed `TemporalScope` as three values (`CURRENT`, `HISTORICAL`,
+  `HYBRID`). `PERSISTED` was added later for Decision airport-candidate
+  evidence (source: `functions/shared/wilvor_ai/contracts.py`,
+  `TemporalScope`).
+- End of Phase 2C: "A model-backed specialist and Agent API are not
+  implemented." The specialist now exists. Agent API remains absent.
+- After Phase 2C: "Master Agent and Agent API remain future work."
+  Master Agent offline contracts now exist with execution `DENIED`.
+  Agent API remains absent.
+- After Phase 3A complete: "Still not implemented: Live Ops Expert,
+  Master Agent / LangGraph orchestration, multi-specialist evidence
+  verification..." Live Ops Expert, Decision Expert, and Master offline
+  contracts exist in this tree. Production execution, Agent API, `/ai`
+  UI, and Terraform AI wiring remain absent.
+- Decision Tools close: "A Master Agent remains future work."
+- Decision Expert close: "Master Agent remains future work. Agent API
+  remains future work. Also still future work: specialist routing, Live
+  Ops Expert, multi-specialist orchestration..."
+
+`run_synthetic_master_workflow` is test-only LangGraph over injected fake
+workers. It is not production Master execution (source:
+`functions/shared/wilvor_ai/master_orchestration.py`).
+
+## Sources
+
+- Source: `functions/shared/wilvor_ai/contracts.py` (`V1_AUTHORITY`, `TemporalScope`)
+- Source: `functions/shared/wilvor_ai/live_ops_specialist.py` (`LiveOpsSpecialist`)
+- Source: `functions/shared/wilvor_ai/historical_specialist.py` (`HistoricalAnalyticsSpecialist`)
+- Source: `functions/shared/wilvor_ai/decision_specialist.py` (`DecisionSpecialist`)
+- Source: `functions/shared/wilvor_ai/master_routing.py` (`MasterRouteExecutionAuthority`)
+- Mapping: `docs/ai/`
