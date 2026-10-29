@@ -44,8 +44,12 @@ used. A valid signature after consumption is a replay proposal.
 Agent 5's atomic ledger (``reserve_once``, ``mark_started``, ``complete``,
 ``fail``, ``cancel``) shared across Lambda instances. The process-local
 latch and ``LocalHarnessConsumptionLedger`` die with this process. They are
-the offline test double, not that ledger. A missing or substitute ledger is
-rejected before any consumption transition.
+the offline test double, not that ledger. ``consume`` accepts only that
+local double. Passing ``MasterExecutionLedger`` is ``LEDGER_NOT_INTEGRATED``
+and does not mean the durable item was consumed.
+``DURABLE_MASTER_LEDGER_CONSUMPTION_AVAILABLE`` stays false.
+``bind_production_grant_to_master_ledger`` always fails closed. A missing or
+substitute ledger is rejected before any consumption transition.
 
 A directly invoked Lambda can receive a forged API Gateway event. JWT
 validation at API Gateway is an edge control, not attestation on the event.
@@ -140,6 +144,7 @@ PRODUCTION_SCOPE_HOST_INTEGRATED = False
 PRODUCTION_SCHEDULER_HOST_INTEGRATED = False
 PRODUCTION_SIGNING_KEY_STORE_INTEGRATED = False
 PRODUCTION_GRANT_ISSUANCE_AVAILABLE = False
+DURABLE_MASTER_LEDGER_CONSUMPTION_AVAILABLE = False
 HMAC_PREVENTS_REPLAY = False
 LOCAL_HARNESS_IS_PRODUCTION_AUTHORIZATION = False
 
@@ -394,6 +399,7 @@ def _assert_closed_constants() -> None:
         PRODUCTION_SCHEDULER_HOST_INTEGRATED,
         PRODUCTION_SIGNING_KEY_STORE_INTEGRATED,
         PRODUCTION_GRANT_ISSUANCE_AVAILABLE,
+        DURABLE_MASTER_LEDGER_CONSUMPTION_AVAILABLE,
         HMAC_PREVENTS_REPLAY,
         LOCAL_HARNESS_IS_PRODUCTION_AUTHORIZATION,
     )
@@ -1022,6 +1028,26 @@ def issue_production_execution_grant(*_args: object, **_kwargs: object) -> None:
     raise ContractValidationError("production_grant_issuance_closed")
 
 
+def bind_production_grant_to_master_ledger(*_args: object, **_kwargs: object) -> None:
+    """Fail closed. No reviewed issuer can bind a grant into the master ledger.
+
+    ``LocalHarnessGrantIssuer.consume`` accepts only
+    ``LocalHarnessConsumptionLedger``. ``MasterExecutionLedger.reserve_once``
+    generates its own claim nonce, and ``mark_started`` does not consume a
+    signed grant. Those are not one conditional write. The necessary
+    production seam, which this function does not implement, is:
+
+    ``LocalHarnessGrantIssuer.consume(claim, ledger: ReviewedAtomicGrantLedger, **bindings)``
+    where ``ReviewedAtomicGrantLedger.reserve_once(nonce, idempotency_key, attempt_token, fence_epoch)``
+    is the same conditional item write as
+    ``MasterExecutionLedger.mark_started(envelope, *, owner_id, attempt_token, fence_epoch, now_utc)``,
+    and the signed grant nonce is that ledger nonce rather than two independent secrets.
+    """
+
+    _assert_closed_constants()
+    raise ContractValidationError("ledger_not_integrated")
+
+
 class GrantEvaluationClock:
     """Injected evaluation clock. It is not the application request clock.
 
@@ -1627,7 +1653,11 @@ class LocalHarnessGrantIssuer:
         ledger: object,
         **bindings: object,
     ) -> GrantConsumption:
-        """Verify, then reserve the nonce once. A missing ledger reserves nothing."""
+        """Verify, then reserve the nonce once on the local double.
+
+        ``MasterExecutionLedger`` is not accepted. A local reservation is not
+        a durable consume. A missing ledger reserves nothing.
+        """
 
         with self._lock:
             verification = self._verify_locked(claim, **bindings)
@@ -1635,7 +1665,7 @@ class LocalHarnessGrantIssuer:
                 return _consumption_rejected(verification.reason or GrantRejectionReason.DENIED_BY_DEFAULT, verification.signature_intact)
             if ledger is None:
                 return _consumption_rejected(GrantRejectionReason.MISSING_LEDGER, True)
-            if type(ledger) is not LocalHarnessConsumptionLedger:
+            if DURABLE_MASTER_LEDGER_CONSUMPTION_AVAILABLE is not False or type(ledger) is not LocalHarnessConsumptionLedger:
                 return _consumption_rejected(GrantRejectionReason.LEDGER_NOT_INTEGRATED, True)
             record = self._record_for_locked(claim)
             if record is None:
@@ -1811,6 +1841,7 @@ _assert_closed_constants()
 
 
 __all__ = [
+    "DURABLE_MASTER_LEDGER_CONSUMPTION_AVAILABLE",
     "HMAC_PREVENTS_REPLAY",
     "INTEGRATION_OBLIGATIONS",
     "LOCAL_HARNESS_IS_PRODUCTION_AUTHORIZATION",
@@ -1844,6 +1875,7 @@ __all__ = [
     "MasterExecutionGrantEvaluation",
     "ParsedExecutionGrantClaim",
     "ProductionGrantRefusal",
+    "bind_production_grant_to_master_ledger",
     "evaluate_grant_envelope",
     "issue_production_execution_grant",
     "parse_execution_grant",
