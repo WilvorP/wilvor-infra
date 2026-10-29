@@ -10,7 +10,13 @@ master request, exact invocation, and ``MasterPurpose`` (the idempotency
 purpose). ``idempotency_key`` is stored inside the payload fingerprint.
 Changing it must not open a second attempt. A grant nonce is created here
 with the default ``secrets`` source and is kept across an ownership takeover.
-Callers cannot choose the nonce. The nonce is not a production grant.
+That nonce identifies the claim item. It is not the attempt credential and
+it is not a production grant. Callers cannot choose it. Takeover rotates
+``attempt_token`` and increments ``fence_epoch``. A stale attempt token or a
+stale fence epoch cannot validate afterward, including when the unchanged
+claim nonce is presented with them. ``GRANT_NONCE_ROTATES_ON_TAKEOVER`` stays
+false because rotating the claim nonce would not be what ``mark_started``
+checks and would break replay of the same claim item.
 
 Atomicity is a conditional write on one item. A lease bounds how long a
 reserved attempt keeps the owner. Expiry of a reservation that never started
@@ -32,7 +38,9 @@ mode switch. A descriptive claim result keeps execution authority ``DENIED``,
 production authority ``DENIED``, and source authenticity ``NOT_ESTABLISHED``.
 ``specialist_execution_permitted`` stays false. In-memory state is never
 production cross-instance authority. ``for_durable`` accepts only the exact
-DynamoDB adapter type. The adapter requires an injected client, speaks only
+DynamoDB adapter type. That type check is not verified AWS account or table
+provenance. ``DURABLE_ADAPTER_TYPE_IS_VERIFIED_AWS_PROVENANCE`` stays false.
+The adapter requires an injected client, speaks only
 consistent ``GetItem`` and conditional ``PutItem``, and creates no client.
 The table below is documentation for a later review. This module does not
 provision it.
@@ -102,10 +110,12 @@ RETENTION_AFTER_DEADLINE = timedelta(days=30)
 PROCESS_LOCAL_LOCK_IS_DISTRIBUTED_ATOMICITY = False
 IN_MEMORY_IS_PRODUCTION_CROSS_INSTANCE_AUTHORITY = False
 GRANT_NONCE_IS_PRODUCTION_GRANT = False
+GRANT_NONCE_ROTATES_ON_TAKEOVER = False
 TTL_DELETION_IS_CORRECTNESS = False
 LEDGER_WRITES_ARE_SPECIALIST_READ_PERMISSIONS = False
 REGION_SCOPE_IS_GEOGRAPHIC_VERIFICATION = False
 PRINCIPAL_REF_IS_AUTHENTICATED_BY_THIS_MODULE = False
+DURABLE_ADAPTER_TYPE_IS_VERIFIED_AWS_PROVENANCE = False
 
 CONDITIONAL_PUT_ABSENT = "attribute_not_exists(#pk) AND attribute_not_exists(#sk)"
 _FENCE_CLAUSES = (
@@ -161,6 +171,9 @@ INTEGRATION_DEPENDENCIES: tuple[str, ...] = (
     "MAX_ROUTE_STEPS and MAX_DECISION_STEPS stay on the fanout. This ledger does not raise them.",
     "DynamoDB table wilvor_master_execution_ledger is documented for later review and is not provisioned.",
     "Production grant issuance is not integrated. A claim result is not that grant.",
+    "LocalHarnessGrantIssuer.consume accepts only LocalHarnessConsumptionLedger. A ledger reserve is not that consumption.",
+    "DynamoDbMasterExecutionLedgerStore's type is not verified AWS account or table provenance.",
+    "TTL deletion is not first use and does not reopen a claim.",
 )
 
 _TERMINAL = frozenset({"COMPLETED", "FAILED", "CANCELLED"})
@@ -213,8 +226,12 @@ def _assert_closed_constants() -> None:
         raise ContractValidationError("in_memory_not_cross_instance_authority")
     if GRANT_NONCE_IS_PRODUCTION_GRANT is not False:
         raise ContractValidationError("grant_nonce_is_not_a_production_grant")
+    if GRANT_NONCE_ROTATES_ON_TAKEOVER is not False:
+        raise ContractValidationError("grant_nonce_rotated_on_takeover")
     if TTL_DELETION_IS_CORRECTNESS is not False:
         raise ContractValidationError("ttl_deletion_is_not_correctness")
+    if DURABLE_ADAPTER_TYPE_IS_VERIFIED_AWS_PROVENANCE is not False:
+        raise ContractValidationError("durable_adapter_type_is_not_aws_provenance")
     if LEDGER_WRITES_ARE_SPECIALIST_READ_PERMISSIONS is not False:
         raise ContractValidationError("ledger_write_is_not_a_read_permission")
     if REGION_SCOPE_IS_GEOGRAPHIC_VERIFICATION is not False:
@@ -715,9 +732,11 @@ def _condition_matches(record: _LedgerRecord, condition: _LedgerCondition) -> bo
         return False
     if record.payload_fingerprint != condition.payload_fingerprint:
         return False
-    if condition.lease_relation == "unexpired" and not record.lease_expires_at_epoch > condition.now_epoch:
+    # Same bounds as the DynamoDB expressions: unexpired is `>`, expired is `<=`.
+    # Parentheses stay on the comparisons so `not` cannot be misread.
+    if condition.lease_relation == "unexpired" and not (record.lease_expires_at_epoch > condition.now_epoch):
         return False
-    if condition.lease_relation == "expired" and not record.lease_expires_at_epoch <= condition.now_epoch:
+    if condition.lease_relation == "expired" and not (record.lease_expires_at_epoch <= condition.now_epoch):
         return False
     if condition.require_repeat_allowed and record.repeat_non_idempotent_after_expiry is not True:
         return False
@@ -1028,6 +1047,8 @@ class DynamoDbMasterExecutionLedgerStore:
     ``LedgerStoreUnavailable``. A conditional conflict becomes ``False``.
     This store never issues a full-table read or a delete. TTL deletion, if a
     later table setting enables it, is not visible here and is not correctness.
+    Matching ``DynamoDbMasterExecutionLedgerStore`` and the documented table
+    name does not prove which AWS account or table was reached.
     """
 
     def __init__(self, client: object, table_name: str) -> None:
@@ -1043,6 +1064,12 @@ class DynamoDbMasterExecutionLedgerStore:
 
     @property
     def production_cross_instance_authority(self) -> bool:
+        return False
+
+    @property
+    def verified_aws_account_and_table_provenance(self) -> bool:
+        """Type and table-name checks are not account or table provenance."""
+
         return False
 
     def read(self, partition_key: str, sort_key: str) -> MasterExecutionLedgerRead:
@@ -1143,7 +1170,7 @@ class MasterExecutionLedgerResult:
     change. A test dispatcher may use that bit to count work. It is not
     permission to run a specialist. ``store_is_durable_adapter`` names the
     store object. It does not prove the table exists, that the client honored
-    the condition, or that execution is authorized.
+    the condition, which AWS account answered, or that execution is authorized.
     """
 
     outcome: MasterExecutionLedgerOutcome
@@ -1269,6 +1296,55 @@ def _lease_deadline(epoch_seconds: int) -> str:
     return _format_utc(datetime.fromtimestamp(epoch_seconds, tz=timezone.utc))
 
 
+@dataclass(frozen=True)
+class MasterExecutionAttemptFenceCheck:
+    """Read-only comparison with the current attempt. A match is not a permit.
+
+    ``matches_current_attempt`` requires the current attempt token, fence
+    epoch, and claim nonce together. The claim nonce does not rotate on
+    takeover, so the previous attempt token and the previous fence still fail
+    this check. Boolean context is never acceptance.
+    """
+
+    matches_current_attempt: bool
+    rejection: MasterExecutionLedgerRejection | None = None
+    state: MasterExecutionLedgerState | None = None
+    ttl_deleted: bool = False
+    absence_is_first_use: bool = False
+    authorizes_execution: bool = False
+    verified_aws_provenance: bool = False
+    production_cross_instance_authority: bool = False
+    specialist_execution_permitted: bool = False
+    grant_nonce_rotates_on_takeover: bool = False
+
+    def __post_init__(self) -> None:
+        _assert_closed_constants()
+        if type(self.matches_current_attempt) is not bool or type(self.ttl_deleted) is not bool:
+            raise ContractValidationError("invalid_fence_check")
+        if self.absence_is_first_use is not False:
+            raise ContractValidationError("ttl_deletion_is_not_correctness")
+        if self.authorizes_execution is not False or self.specialist_execution_permitted is not False:
+            raise ContractValidationError("execution_not_granted")
+        if self.verified_aws_provenance is not False:
+            raise ContractValidationError("durable_adapter_type_is_not_aws_provenance")
+        if self.production_cross_instance_authority is not False:
+            raise ContractValidationError("in_memory_not_cross_instance_authority")
+        if self.grant_nonce_rotates_on_takeover is not False:
+            raise ContractValidationError("grant_nonce_rotated_on_takeover")
+        if self.rejection is not None and not isinstance(self.rejection, MasterExecutionLedgerRejection):
+            raise ContractValidationError("invalid_fence_check")
+        if self.state is not None and not isinstance(self.state, MasterExecutionLedgerState):
+            raise ContractValidationError("invalid_fence_check")
+        if self.matches_current_attempt:
+            if self.rejection is not None or self.state is None or self.ttl_deleted is not False:
+                raise ContractValidationError("invalid_fence_check")
+        elif self.rejection is None:
+            raise ContractValidationError("invalid_fence_check")
+
+    def __bool__(self) -> bool:
+        return False
+
+
 class MasterExecutionLedger:
     """Conditional claim port. Does not call a specialist or a model.
 
@@ -1322,6 +1398,18 @@ class MasterExecutionLedger:
 
     @property
     def production_cross_instance_authority(self) -> bool:
+        return False
+
+    @property
+    def verified_aws_account_and_table_provenance(self) -> bool:
+        """The DynamoDB adapter type is not account or table provenance."""
+
+        return False
+
+    @property
+    def grant_nonce_rotates_on_takeover(self) -> bool:
+        """Claim nonce stays on the item. The attempt token and fence rotate."""
+
         return False
 
     def reserve_once(
@@ -1479,6 +1567,66 @@ class MasterExecutionLedger:
             ttl_deleted=view.ttl_deleted,
         )
 
+    def fenced_attempt_matches(
+        self,
+        envelope: object,
+        *,
+        owner_id: str,
+        attempt_token: str,
+        fence_epoch: int,
+        grant_nonce: str,
+    ) -> MasterExecutionAttemptFenceCheck:
+        """Compare one presented attempt with the stored claim. Does not write.
+
+        A missing item is not treated as first use. A TTL tombstone is not
+        first use. Matching fields do not authorize execution.
+        """
+
+        checked = self._envelope(envelope)
+        owner = _token(owner_id, "owner_id")
+        token = _token(attempt_token, "attempt_token")
+        fence = _fence_epoch(fence_epoch)
+        nonce = _token(grant_nonce, "grant_nonce")
+        view = self._read(checked)
+        if view.ttl_deleted:
+            return MasterExecutionAttemptFenceCheck(
+                matches_current_attempt=False,
+                rejection=MasterExecutionLedgerRejection.RETENTION_GAP,
+                ttl_deleted=True,
+            )
+        record = view.record
+        if record is None:
+            return MasterExecutionAttemptFenceCheck(
+                matches_current_attempt=False,
+                rejection=MasterExecutionLedgerRejection.FENCED_OUT,
+            )
+        if record.payload_fingerprint != checked.fingerprint:
+            return MasterExecutionAttemptFenceCheck(
+                matches_current_attempt=False,
+                rejection=MasterExecutionLedgerRejection.CONFLICTING_DUPLICATE,
+                state=record.state,
+            )
+        if (
+            record.attempt_token != token
+            or record.fence_epoch != fence
+            or record.grant_nonce != nonce
+        ):
+            return MasterExecutionAttemptFenceCheck(
+                matches_current_attempt=False,
+                rejection=MasterExecutionLedgerRejection.FENCED_OUT,
+                state=record.state,
+            )
+        if record.owner_id != owner:
+            return MasterExecutionAttemptFenceCheck(
+                matches_current_attempt=False,
+                rejection=MasterExecutionLedgerRejection.OWNER_MISMATCH,
+                state=record.state,
+            )
+        return MasterExecutionAttemptFenceCheck(
+            matches_current_attempt=True,
+            state=record.state,
+        )
+
     def _finish(
         self,
         envelope: object,
@@ -1576,6 +1724,7 @@ class MasterExecutionLedger:
             state=MasterExecutionLedgerState.RESERVED,
             fence_epoch=record.fence_epoch + 1,
             attempt_token=attempt,
+            grant_nonce=record.grant_nonce,
             owner_id=owner,
             lease_expires_at_epoch=_epoch(expiry),
             non_idempotent_started=False,
@@ -1585,6 +1734,10 @@ class MasterExecutionLedger:
             terminal_at_utc=None,
             failure_reason=None,
         )
+        if updated.grant_nonce != record.grant_nonce or GRANT_NONCE_ROTATES_ON_TAKEOVER is not False:
+            raise ContractValidationError("grant_nonce_rotated_on_takeover")
+        if updated.fence_epoch != record.fence_epoch + 1 or updated.attempt_token == record.attempt_token:
+            raise ContractValidationError("invalid_fence_epoch")
         applied = self._replace(updated, condition)
         if applied is True:
             return self._from_record(updated, claimed=True)
@@ -1820,7 +1973,9 @@ __all__ = [
     "CONDITIONAL_REPLACE_UNEXPIRED",
     "DYNAMODB_LEDGER_SCHEMA",
     "DYNAMODB_LEDGER_TABLE_NAME",
+    "DURABLE_ADAPTER_TYPE_IS_VERIFIED_AWS_PROVENANCE",
     "GRANT_NONCE_IS_PRODUCTION_GRANT",
+    "GRANT_NONCE_ROTATES_ON_TAKEOVER",
     "IN_MEMORY_IS_PRODUCTION_CROSS_INSTANCE_AUTHORITY",
     "INTEGRATION_DEPENDENCIES",
     "LEDGER_WRITES_ARE_SPECIALIST_READ_PERMISSIONS",
@@ -1838,6 +1993,7 @@ __all__ = [
     "InMemoryMasterExecutionLedgerBackend",
     "InMemoryMasterExecutionLedgerStore",
     "LedgerStoreUnavailable",
+    "MasterExecutionAttemptFenceCheck",
     "MasterExecutionLedger",
     "MasterExecutionLedgerEnvelope",
     "MasterExecutionLedgerOutcome",
