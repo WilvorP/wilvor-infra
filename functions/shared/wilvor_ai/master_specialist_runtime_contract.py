@@ -1833,6 +1833,85 @@ def issue_grant(_reference: IssuedGrantReference) -> None:
     _fail("grant_not_issued")
 
 
+@dataclass(frozen=True)
+class LocalSchedulerProtocolNote:
+    """Descriptive split between scheduling, a scripted worker, and native execution.
+
+    Constructing this note does not execute a specialist and does not admit
+    evidence. ``PRODUCTION_HOST`` stays inactive.
+    """
+
+    scheduling_recorded: bool
+    scripted_worker_reported: bool
+    native_specialist_executed: bool = False
+    evidence_admitted: bool = False
+    aviation_evidence: bool = False
+    production_host_active: bool = False
+    production_authority: MasterProductionAuthority = MasterProductionAuthority.DENIED
+    execution_authority: MasterRouteExecutionAuthority = MasterRouteExecutionAuthority.DENIED
+    source_authenticity: MasterSourceAuthenticity = MasterSourceAuthenticity.NOT_ESTABLISHED
+    request_coverage: MasterRequestCoverage = MasterRequestCoverage.NOT_ESTABLISHED
+    posture: TrustDistinction = TrustDistinction.DESCRIPTIVE
+    status: RuntimeContractStatus = RuntimeContractStatus.NOT_ESTABLISHED
+    schema_version: str = MASTER_SPECIALIST_RUNTIME_CONTRACT_SCHEMA_VERSION
+
+    def __post_init__(self) -> None:
+        _authority(
+            production_authority=self.production_authority,
+            execution_authority=self.execution_authority,
+            source_authenticity=self.source_authenticity,
+            request_coverage=self.request_coverage,
+            schema_version=self.schema_version,
+        )
+        _posture(self.posture, frozenset({TrustDistinction.DESCRIPTIVE}))
+        _status(
+            self.status,
+            frozenset(
+                {
+                    RuntimeContractStatus.DESCRIBED,
+                    RuntimeContractStatus.NOT_ESTABLISHED,
+                    RuntimeContractStatus.REJECTED_FALSE_PROOF,
+                }
+            ),
+        )
+        if type(self.scheduling_recorded) is not bool or type(self.scripted_worker_reported) is not bool:
+            _fail("invalid_status")
+        if PRODUCTION_HOST is not None or self.production_host_active is not False:
+            _fail("production_host_not_active")
+        _closed_flag(self.native_specialist_executed, False, "specialist_invocation_not_granted")
+        _closed_flag(self.evidence_admitted, False, "evidence_not_admitted")
+        _closed_flag(self.aviation_evidence, False, "aviation_evidence_not_admitted")
+
+
+def observe_local_scheduler_protocol(candidate: object) -> LocalSchedulerProtocolNote:
+    """Describe a scheduler candidate without executing anything.
+
+    A boolean, token, mapping, or callable is a false proof. Any other
+    object, including a scripted worker or a scheduling record, stays
+    unestablished. Scheduling completion is not native execution.
+    """
+
+    if PRODUCTION_HOST is not None:
+        _fail("production_host_not_active")
+    if candidate is None:
+        return LocalSchedulerProtocolNote(
+            scheduling_recorded=False,
+            scripted_worker_reported=False,
+            status=RuntimeContractStatus.NOT_ESTABLISHED,
+        )
+    if isinstance(candidate, (str, bytes, bytearray, bool, int, float, Mapping)) or callable(candidate):
+        return LocalSchedulerProtocolNote(
+            scheduling_recorded=False,
+            scripted_worker_reported=False,
+            status=RuntimeContractStatus.REJECTED_FALSE_PROOF,
+        )
+    return LocalSchedulerProtocolNote(
+        scheduling_recorded=False,
+        scripted_worker_reported=False,
+        status=RuntimeContractStatus.NOT_ESTABLISHED,
+    )
+
+
 def invoke_specialist(*_args: object, **_kwargs: object) -> None:
     """Specialist dispatch is closed. This is not a dispatcher."""
 

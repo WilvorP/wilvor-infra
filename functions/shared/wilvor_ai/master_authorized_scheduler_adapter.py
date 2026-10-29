@@ -28,6 +28,12 @@ not a permit. Fake worker results are not source-authenticated aviation
 evidence and are not synthetic-orchestration results. Native specialist
 runners and MA4 admission are not called.
 
+The consumed-grant and ``mark_started`` fence port lives in
+``wilvor_ai.master_host_scheduler_integration``. This file does not import
+it, so the adapter import graph stays closed. That port calls the local
+harness issuer and ``MasterExecutionLedger.mark_started``. It does not turn
+this module into a second production issuer.
+
 Cross-module interfaces this branch does not import:
 
 - Agent 4 host grant: ``wilvor_ai.master_host_execution_grant``
@@ -601,6 +607,9 @@ class SchedulerInvocationOutcome:
     historical_window: tuple[str, str] | None
     depends_on: tuple[str, ...]
     reason: str | None = None
+    native_specialist_executed: bool = False
+    scheduling_complete_is_specialist_success: bool = False
+    ma4_admission_performed: bool = False
     evidence_verified: bool = False
     aviation_evidence: bool = False
     production_dispatch: bool = False
@@ -640,6 +649,12 @@ class SchedulerInvocationOutcome:
             raise ContractValidationError("scheduling_completion_not_established")
         if self.execution_succeeded and not self.scheduling_completed:
             raise ContractValidationError("execution_success_not_established")
+        if self.native_specialist_executed is not False:
+            raise ContractValidationError("specialist_execution_not_granted")
+        if self.scheduling_complete_is_specialist_success is not False:
+            raise ContractValidationError("scheduling_is_not_execution")
+        if self.ma4_admission_performed is not False:
+            raise ContractValidationError("ma4_admission_not_performed")
 
 
 @dataclass(frozen=True)
@@ -944,6 +959,44 @@ def open_local_test_host_seam() -> LocalTestHostAuthoritySeam:
     return LocalTestHostAuthoritySeam(_LOCAL_TEST_ACTIVATION)
 
 
+class _OfflineSealMembership:
+    """Private mark for offline scripted scheduling. Not a host grant."""
+
+
+class NonproductionSchedulerSeal:
+    """In-process wiring for scripted scheduling.
+
+    Opening the seal does not issue a grant, consume a ledger fence, or
+    enable production dispatch. Construct it through
+    ``open_nonproduction_scheduler_seal``.
+    """
+
+    __slots__ = ("_membership",)
+
+    def __init__(self, activation: object) -> None:
+        if activation is not _LOCAL_TEST_ACTIVATION:
+            raise ContractValidationError("production_input_cannot_open_test_seam")
+        self._membership = _OfflineSealMembership()
+
+    @property
+    def production_dispatch_enabled(self) -> bool:
+        return False
+
+    @property
+    def grants_authority(self) -> bool:
+        return False
+
+
+def open_nonproduction_scheduler_seal() -> NonproductionSchedulerSeal:
+    """Open the nonproduction scheduling seal.
+
+    This function reads no environment variable and no event. The seal is
+    not a consumed host grant and not a ``mark_started`` fence.
+    """
+
+    return NonproductionSchedulerSeal(_LOCAL_TEST_ACTIVATION)
+
+
 class InProcessLedgerReservationDouble:
     """Reserve/consume stand-in for Agent 5.
 
@@ -1200,7 +1253,10 @@ class MasterAuthorizedSchedulerAdapter:
         ledger: InProcessLedgerReservationDouble | None = None,
         dispatch_port: SchedulerDispatchPort | None = None,
         fanout: MasterExecutionFanout | None = None,
+        integration_seal: NonproductionSchedulerSeal | None = None,
     ) -> None:
+        if integration_seal is not None and type(integration_seal) is not NonproductionSchedulerSeal:
+            raise ContractValidationError("forged_schedule_binding")
         if host_seam is not None and type(host_seam) is not LocalTestHostAuthoritySeam:
             raise ContractValidationError("host_grant_authority_missing")
         if ledger is not None and type(ledger) is not InProcessLedgerReservationDouble:
@@ -1233,6 +1289,7 @@ class MasterAuthorizedSchedulerAdapter:
         self._seam = host_seam
         self._ledger = ledger
         self._port = dispatch_port
+        self._integration_seal = integration_seal
         self._binding = _ScheduleBinding()
         self._lock = Lock()
         self._contexts: dict[tuple[int, str], BoundedDispatchContext] = {}
@@ -1254,6 +1311,12 @@ class MasterAuthorizedSchedulerAdapter:
     @property
     def production_dispatch_enabled(self) -> bool:
         return False
+
+    @property
+    def nonproduction_seal(self) -> NonproductionSchedulerSeal | None:
+        """The offline scheduling seal, when one was bound. It grants nothing."""
+
+        return self._integration_seal
 
     @property
     def durable_exactly_once(self) -> bool:
@@ -1445,6 +1508,124 @@ class MasterAuthorizedSchedulerAdapter:
                 outcomes=tuple(ordered),
                 dependency_edges=self._fanout.dependency_edges(),
             )
+
+    def require_offline_dispatchable(
+        self,
+        invocation: MasterInvocationAuthorization,
+        *,
+        now_utc: str,
+        seal: object,
+    ) -> BoundedDispatchContext:
+        """Check one retained step before a scripted observation is recorded.
+
+        The seal is not a host grant. This method does not consume a grant
+        or a ledger fence and does not call a worker.
+        """
+
+        _whole_second(now_utc, "now_utc")
+        with self._lock:
+            self._require_offline_seal(seal)
+            step = self._require_exact(invocation)
+            self._reject_terminal_block(step, now_utc)
+            if step.step_id in self._outcomes:
+                raise ContractValidationError("duplicate_dispatch")
+            self._require_open(now_utc)
+            self._require_eligible(step, now_utc)
+            return self._context_for(step, now_utc)
+
+    def record_offline_scripted_attempt(
+        self,
+        invocation: MasterInvocationAuthorization,
+        observation: object,
+        *,
+        now_utc: str,
+        seal: object,
+    ) -> SchedulerInvocationOutcome:
+        """Record a scripted worker note against the retained fanout.
+
+        ``MasterExecutionFanout.complete`` updates scheduling only. A
+        succeeded scripted report is not native specialist execution and
+        does not admit MA4 evidence. This method accepts no grant object.
+        """
+
+        _whole_second(now_utc, "now_utc")
+        _reject_model_callable(observation)
+        if type(observation) is not ScriptedWorkerObservation:
+            raise ContractValidationError("worker_observation_rejected")
+        with self._lock:
+            self._require_offline_seal(seal)
+            step = self._require_exact(invocation)
+            self._reject_terminal_block(step, now_utc)
+            if step.step_id in self._outcomes:
+                raise ContractValidationError("duplicate_dispatch")
+            self._require_open(now_utc)
+            self._require_eligible(step, now_utc)
+            context = self._context_for(step, now_utc)
+            self._require_context_identity(step, context)
+            self._fanout.claim(invocation, SCHEDULER_CLAIMER_ID, now_utc=now_utc)
+            if observation.report is ScriptedWorkerReport.SUCCEEDED:
+                if (
+                    observation.tool_calls_used > context.max_tool_calls
+                    or observation.model_turns_used > context.max_model_turns
+                ):
+                    self._fanout.fail(
+                        invocation,
+                        SCHEDULER_CLAIMER_ID,
+                        now_utc=now_utc,
+                        reason="budget_exceeded",
+                    )
+                    return self._finish(
+                        step,
+                        ExecutionDisposition.TEST_WORKER_FAILED,
+                        succeeded=False,
+                        reason="budget_exceeded",
+                        now_utc=now_utc,
+                    )
+                self._fanout.complete(invocation, SCHEDULER_CLAIMER_ID, now_utc=now_utc)
+                return self._finish(
+                    step,
+                    ExecutionDisposition.TEST_WORKER_SUCCEEDED,
+                    succeeded=True,
+                    reason=None,
+                    now_utc=now_utc,
+                )
+            if observation.report is ScriptedWorkerReport.TIMED_OUT:
+                self._fanout.fail(
+                    invocation,
+                    SCHEDULER_CLAIMER_ID,
+                    now_utc=now_utc,
+                    reason="worker_timeout",
+                )
+                return self._finish(
+                    step,
+                    ExecutionDisposition.TEST_WORKER_TIMED_OUT,
+                    succeeded=False,
+                    reason="worker_timeout",
+                    now_utc=now_utc,
+                )
+            self._fanout.fail(
+                invocation,
+                SCHEDULER_CLAIMER_ID,
+                now_utc=now_utc,
+                reason="worker_failed",
+            )
+            return self._finish(
+                step,
+                ExecutionDisposition.TEST_WORKER_FAILED,
+                succeeded=False,
+                reason="worker_failed",
+                now_utc=now_utc,
+            )
+
+    def _require_offline_seal(self, seal: object) -> None:
+        if PRODUCTION_DISPATCH_ENABLED is not False:
+            raise ContractValidationError("production_dispatch_disabled")
+        if (
+            self._integration_seal is None
+            or type(seal) is not NonproductionSchedulerSeal
+            or seal is not self._integration_seal
+        ):
+            raise ContractValidationError("host_grant_authority_missing")
 
     def _run_eligible_locked(self, now_utc: str) -> tuple[SchedulerInvocationOutcome, ...]:
         self._require_test_authority()
