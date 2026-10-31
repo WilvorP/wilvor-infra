@@ -1442,6 +1442,53 @@ class MasterExecutionLedger:
                 raise LedgerStoreUnavailable("durable_storage_unavailable")
         return self._classify_reserve(view.record, checked, owner, now, lease, allow_takeover=True)
 
+    def consume_signed_nonce_and_start(
+        self,
+        envelope: object,
+        *,
+        owner_id: str,
+        grant_nonce: str,
+        now_utc: str,
+        lease_seconds: int,
+    ) -> MasterExecutionLedgerResult:
+        """Atomically reserve the signed nonce and mark the attempt started.
+
+        One conditional ``put_if_absent`` writes ``STARTED`` with
+        ``grant_nonce`` equal to the signed grant nonce. A later replay of
+        the same fingerprint and nonce is ``REPLAYED``. A successful write
+        is not specialist execution. TTL absence is not first use.
+        """
+
+        checked, owner, now, lease = self._reserve_args(envelope, owner_id, now_utc, lease_seconds)
+        nonce = _token(grant_nonce, "grant_nonce")
+        deadline = _whole_second(checked.deadline_utc, "deadline_utc")
+        view = self._read(checked)
+        if view.ttl_deleted:
+            return self._rejected(MasterExecutionLedgerRejection.RETENTION_GAP)
+        if view.record is None:
+            if now >= deadline:
+                return self._rejected(MasterExecutionLedgerRejection.DEADLINE_EXPIRED)
+            self._require_lease_fits(now, lease, deadline)
+            record = build_started_record_for_signed_nonce(
+                checked,
+                owner_id=owner,
+                grant_nonce=nonce,
+                attempt_token=self._new_secret({nonce}),
+                now_utc=_format_utc(now),
+                lease_seconds=lease,
+            )
+            inserted = self._put_if_absent(record)
+            if inserted is True:
+                return self._from_record(record, claimed=True)
+            if inserted is not False:
+                raise LedgerStoreUnavailable("durable_storage_unavailable")
+            view = self._read(checked)
+            if view.ttl_deleted:
+                return self._rejected(MasterExecutionLedgerRejection.RETENTION_GAP)
+            if view.record is None:
+                raise LedgerStoreUnavailable("durable_storage_unavailable")
+        return self._classify_signed_consume(view.record, checked, owner, now, nonce)
+
     def mark_started(
         self,
         envelope: object,
@@ -1664,6 +1711,42 @@ class MasterExecutionLedger:
         )
         condition = self._condition(view.record, _epoch(now), "any", False)
         return self._apply(updated, condition, checked, owner, token, fence, target)
+
+    def _classify_signed_consume(
+        self,
+        record: _LedgerRecord,
+        envelope: MasterExecutionLedgerEnvelope,
+        owner: str,
+        now: datetime,
+        nonce: str,
+    ) -> MasterExecutionLedgerResult:
+        if record.payload_fingerprint != envelope.fingerprint or record.grant_nonce != nonce:
+            return self._rejected(MasterExecutionLedgerRejection.CONFLICTING_DUPLICATE)
+        now_epoch = _epoch(now)
+        expired = now_epoch >= record.lease_expires_at_epoch
+        same_owner = record.owner_id == owner
+        deadline = _whole_second(envelope.deadline_utc, "deadline_utc")
+        if record.state.value in _TERMINAL:
+            if same_owner:
+                return self._from_record(record, claimed=False)
+            return self._rejected(MasterExecutionLedgerRejection.ALREADY_SETTLED)
+        if record.state is MasterExecutionLedgerState.STARTED:
+            if expired:
+                return self._rejected(MasterExecutionLedgerRejection.NON_IDEMPOTENT_REPEAT_PROHIBITED)
+            if same_owner:
+                return self._from_record(record, claimed=False)
+            return self._rejected(MasterExecutionLedgerRejection.CLAIM_HELD)
+        if record.state is MasterExecutionLedgerState.RESERVED:
+            if record.grant_nonce != nonce:
+                return self._rejected(MasterExecutionLedgerRejection.CONFLICTING_DUPLICATE)
+            if not expired and not same_owner:
+                return self._rejected(MasterExecutionLedgerRejection.CLAIM_HELD)
+            if expired and now >= deadline:
+                return self._rejected(MasterExecutionLedgerRejection.DEADLINE_EXPIRED)
+            if expired:
+                return self._rejected(MasterExecutionLedgerRejection.NON_IDEMPOTENT_REPEAT_PROHIBITED)
+            return self._from_record(record, claimed=False)
+        raise LedgerStoreUnavailable("durable_storage_unavailable")
 
     def _classify_reserve(
         self,
@@ -1965,6 +2048,85 @@ def ledger_item_key(envelope: MasterExecutionLedgerEnvelope) -> tuple[str, str]:
     return checked.partition_key, checked.sort_key
 
 
+def encode_ledger_record_item(record: object) -> dict[str, dict[str, object]]:
+    """Encode one stored attempt as a DynamoDB item. Not a permit."""
+
+    if type(record) is not _LedgerRecord:
+        raise ContractValidationError("invalid_ledger_record")
+    return _item_from_record(record)
+
+
+def build_started_record_for_signed_nonce(
+    envelope: object,
+    *,
+    owner_id: str,
+    grant_nonce: str,
+    attempt_token: str,
+    now_utc: str,
+    lease_seconds: int,
+    fence_epoch: int = 1,
+) -> _LedgerRecord:
+    """Build a STARTED record bound to a caller-supplied signed grant nonce.
+
+    The signed nonce is stored as ``grant_nonce``. Construction does not
+    authenticate a principal, issue a production grant, or execute a specialist.
+    """
+
+    if type(envelope) is not MasterExecutionLedgerEnvelope:
+        raise ContractValidationError("invalid_ledger_envelope")
+    owner = _token(owner_id, "owner_id")
+    nonce = _token(grant_nonce, "grant_nonce")
+    attempt = _token(attempt_token, "attempt_token")
+    fence = _fence_epoch(fence_epoch)
+    now = _whole_second(now_utc, "now_utc")
+    lease = _lease_seconds(lease_seconds)
+    deadline = _whole_second(envelope.deadline_utc, "deadline_utc")
+    if now >= deadline:
+        raise ContractValidationError("deadline_expired")
+    if now + timedelta(seconds=lease) > deadline:
+        raise ContractValidationError("lease_exceeds_deadline")
+    if attempt == nonce:
+        raise ContractValidationError("attempt_token_not_unique")
+    observed = _format_utc(now)
+    return _LedgerRecord(
+        pk=envelope.partition_key,
+        sk=envelope.sort_key,
+        master_request_id=envelope.master_request_id,
+        planning_session_id=envelope.planning_session_id,
+        step_id=envelope.step_id,
+        invocation_id=envelope.invocation_id,
+        specialist=envelope.specialist,
+        purpose=envelope.purpose,
+        capability=envelope.capability,
+        principal_ref=envelope.principal_ref,
+        policy_revision=envelope.policy_revision,
+        resource_scope=envelope.resource_scope,
+        region_scope=envelope.region_scope,
+        decision_target_scope=envelope.decision_target_scope,
+        accepted_at_utc=envelope.accepted_at_utc,
+        deadline_utc=envelope.deadline_utc,
+        idempotency_key=envelope.idempotency_key,
+        max_model_turns=envelope.max_model_turns,
+        max_tool_calls=envelope.max_tool_calls,
+        correlation_id=envelope.correlation_id,
+        historical_start_utc=envelope.historical_start_utc,
+        historical_end_utc=envelope.historical_end_utc,
+        repeat_non_idempotent_after_expiry=envelope.repeat_non_idempotent_after_expiry,
+        payload_fingerprint=envelope.fingerprint,
+        state=MasterExecutionLedgerState.STARTED,
+        fence_epoch=fence,
+        attempt_token=attempt,
+        grant_nonce=nonce,
+        owner_id=owner,
+        lease_expires_at_epoch=_epoch(now + timedelta(seconds=lease)),
+        retention_expires_at_epoch=_retention_epoch(envelope.deadline_utc),
+        non_idempotent_started=True,
+        reserved_at_utc=observed,
+        ledger_observed_at_utc=observed,
+        started_at_utc=observed,
+    )
+
+
 __all__ = [
     "CONDITIONAL_PUT_ABSENT",
     "CONDITIONAL_REPLACE_EXACT",
@@ -2003,5 +2165,7 @@ __all__ = [
     "MasterExecutionLedgerRetention",
     "MasterExecutionLedgerState",
     "conditional_replace_expression",
+    "build_started_record_for_signed_nonce",
+    "encode_ledger_record_item",
     "ledger_item_key",
 ]

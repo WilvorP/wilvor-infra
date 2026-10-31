@@ -1412,6 +1412,38 @@ class MasterTrustedReadExecutor:
             policy_check is not None,
         )
 
+    def reject_unexecuted(
+        self,
+        request: UntrustedReadRequest,
+        denials: tuple[ReadBoundaryDenial, ...],
+        *,
+        host_invocation: object = None,
+        guard_denial_reasons: tuple[MasterReadDenialReason, ...] = (),
+        policy_check_supplied: bool = False,
+    ) -> ReadReceiptCandidate:
+        """Seal a rejected observation without resolving or calling an adapter.
+
+        Used when an earlier host boundary (scope, SQL, Scan, live client) has
+        already failed closed. This is not a production grant and does not
+        authenticate a source.
+        """
+
+        _require_closed()
+        if type(request) is not UntrustedReadRequest:
+            raise ContractValidationError("invalid_read_request")
+        if not isinstance(denials, tuple) or not denials:
+            raise ContractValidationError("invalid_denial_reasons")
+        if not isinstance(guard_denial_reasons, tuple):
+            raise ContractValidationError("invalid_denial_reasons")
+        host = host_invocation if _host_is_sealed(host_invocation) else None
+        return self._rejected(
+            request,
+            host if isinstance(host, HostReadInvocation) else None,
+            _unique(list(denials)),
+            guard_denial_reasons,
+            policy_check_supplied,
+        )
+
     def _closed_denials(
         self,
         host: object,
