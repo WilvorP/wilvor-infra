@@ -1,5 +1,7 @@
 import type { StyleSpecification } from 'maplibre-gl';
 
+import { MAP_BACKGROUND } from './mapPalette';
+
 /**
  * Built-in dark basemap.
  *
@@ -68,16 +70,20 @@ export function buildDarkBasemapStyle(
       {
         id: 'background',
         type: 'background',
-        paint: { 'background-color': '#080b11' },
+        paint: { 'background-color': MAP_BACKGROUND },
       },
       {
         id: 'basemap',
         type: 'raster',
         source: 'basemap',
         paint: {
-          // Desaturated and dimmed so operational overlays stay dominant.
-          'raster-opacity': 0.72,
-          'raster-saturation': -0.35,
+          // The CARTO dark tiles are near-black. Lifting the floor and letting
+          // the slate background show through moves them onto the console's
+          // surface ramp, while staying desaturated so overlays dominate.
+          'raster-opacity': 0.74,
+          'raster-saturation': -0.6,
+          'raster-brightness-min': 0.15,
+          'raster-brightness-max': 0.92,
         },
       },
     ],

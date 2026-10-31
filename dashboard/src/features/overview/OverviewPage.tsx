@@ -107,7 +107,7 @@ export function OverviewPage({ mapStyleUrl }: OverviewPageProps) {
 
   if (failedWithoutData) {
     return (
-      <div className={styles.page}>
+      <div className={styles.fatalPage}>
         <div className={styles.fatal}>
           <ErrorState
             error={overview.error}
@@ -119,41 +119,72 @@ export function OverviewPage({ mapStyleUrl }: OverviewPageProps) {
     );
   }
 
+  const hasSelection = selectedAircraftId !== null || selectedHazard !== null;
+
   return (
     <div className={styles.page}>
-      {failedWithStaleData ? (
-        <Notice tone="warning">
-          Showing the last successful refresh. The most recent update failed:{' '}
-          {describeApiError(overview.error)}
-        </Notice>
-      ) : null}
+      <div className={styles.summary}>
+        {failedWithStaleData ? (
+          <Notice tone="warning">
+            Showing the last successful refresh. The most recent update
+            failed: {describeApiError(overview.error)}
+          </Notice>
+        ) : null}
 
-      <OverviewKpis data={data} stale={failedWithStaleData} />
+        <OverviewKpis data={data} stale={failedWithStaleData} />
+      </div>
 
-      <div className={styles.main}>
-        <div className={styles.mapColumn}>
-          <div className={styles.mapFrame}>
-            <OperationsMap
-              styleUrl={mapStyleUrl}
-              selectedHazardId={asString(selectedHazard?.hazard_id)}
-              onSelectHazard={handleSelectHazard}
-              selectedAircraftId={selectedAircraftId}
-              onSelectAircraft={handleSelectAircraft}
-              projectionPoints={
-                selectedAircraftId === null
-                  ? null
-                  : (detail.data?.projectionPoints ?? null)
-              }
-              emphasizedHazardIds={
-                selectedAircraftId === null
-                  ? NO_EMPHASIZED_HAZARDS
-                  : emphasizedHazardIds
-              }
-            />
+      <div className={styles.map}>
+        <OperationsMap
+          styleUrl={mapStyleUrl}
+          frame="flush"
+          selectedHazardId={asString(selectedHazard?.hazard_id)}
+          onSelectHazard={handleSelectHazard}
+          selectedAircraftId={selectedAircraftId}
+          onSelectAircraft={handleSelectAircraft}
+          projectionPoints={
+            selectedAircraftId === null
+              ? null
+              : (detail.data?.projectionPoints ?? null)
+          }
+          emphasizedHazardIds={
+            selectedAircraftId === null
+              ? NO_EMPHASIZED_HAZARDS
+              : emphasizedHazardIds
+          }
+        />
+      </div>
+
+      <aside className={styles.rail} aria-label="Operational context">
+        {hasSelection ? (
+          <div className={styles.inspector}>
+            {selectedAircraftId !== null ? (
+              <SelectedAircraftStrip
+                selection={
+                  contextSelection ?? {
+                    aircraftId: selectedAircraftId,
+                    source: 'map',
+                  }
+                }
+                aircraft={selectedAircraft}
+                hasProjection={
+                  (detail.data?.projectionPoints?.length ?? 0) > 0
+                }
+                onClear={() => {
+                  setSelectedAircraftId(null);
+                  setContextSelection(null);
+                }}
+              />
+            ) : (
+              <HazardInvestigationDrawer
+                hazard={selectedHazard}
+                onClose={() => setSelectedHazard(null)}
+              />
+            )}
           </div>
-        </div>
+        ) : null}
 
-        <aside className={styles.rail} aria-label="Operational detail">
+        <div className={styles.context}>
           <TopRisksPanel
             risks={data?.topRisks ?? undefined}
             loading={loading}
@@ -170,8 +201,8 @@ export function OverviewPage({ mapStyleUrl }: OverviewPageProps) {
             loading={loading}
             failed={failedWithoutData}
           />
-        </aside>
-      </div>
+        </div>
+      </aside>
 
       <div className={styles.worklist}>
         <OperationalWorklist
@@ -181,38 +212,6 @@ export function OverviewPage({ mapStyleUrl }: OverviewPageProps) {
           currentAlertCount={data?.alerts?.currentCount}
           currentRecommendationCount={data?.recommendations?.currentCount}
         />
-      </div>
-
-      <div
-        className={[
-          styles.drawer,
-          selectedAircraftId !== null ? styles.drawerCompact : '',
-          selectedHazard !== null ? styles.drawerOccupied : '',
-        ]
-          .filter(Boolean)
-          .join(' ')}
-      >
-        {selectedAircraftId !== null ? (
-          <SelectedAircraftStrip
-            selection={
-              contextSelection ?? {
-                aircraftId: selectedAircraftId,
-                source: 'map',
-              }
-            }
-            aircraft={selectedAircraft}
-            hasProjection={(detail.data?.projectionPoints?.length ?? 0) > 0}
-            onClear={() => {
-              setSelectedAircraftId(null);
-              setContextSelection(null);
-            }}
-          />
-        ) : (
-          <HazardInvestigationDrawer
-            hazard={selectedHazard}
-            onClose={() => setSelectedHazard(null)}
-          />
-        )}
       </div>
     </div>
   );

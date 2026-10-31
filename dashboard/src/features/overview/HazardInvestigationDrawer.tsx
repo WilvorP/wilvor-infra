@@ -1,5 +1,4 @@
 import { DataField, DataFieldGrid } from '@/components/DataField';
-import { EmptyState } from '@/components/QueryState';
 import { StatusPill } from '@/components/StatusPill';
 import type { ActiveHazard } from '@/types/api';
 import { asNumber, asString } from '@/utils/coerce';
@@ -11,7 +10,7 @@ import {
 } from '@/utils/format';
 import { presentHazardSeverity } from '@/utils/status';
 
-import styles from './HazardInvestigationDrawer.module.css';
+import styles from './Inspector.module.css';
 
 export interface HazardInvestigationDrawerProps {
   hazard: ActiveHazard | null;
@@ -19,7 +18,7 @@ export interface HazardInvestigationDrawerProps {
 }
 
 /**
- * Contextual investigation surface for a map selection.
+ * Docked inspector for a hazard selected on the map.
  *
  * Every field is read directly from the `ActiveHazards` record returned by
  * `GET /hazards/active`. Attributes the pipeline does not persist — notably a
@@ -32,14 +31,7 @@ export function HazardInvestigationDrawer({
   onClose,
 }: HazardInvestigationDrawerProps) {
   if (hazard === null) {
-    return (
-      <div className={styles.drawer}>
-        <EmptyState
-          title="No selection"
-          detail="Select a hazard on the map to inspect its validity window, altitude band and source product."
-        />
-      </div>
-    );
+    return null;
   }
 
   const hazardId = asString(hazard.hazard_id) ?? NOT_REPORTED;
@@ -54,28 +46,28 @@ export function HazardInvestigationDrawer({
         `${maxAltitude === null ? '—' : formatNumber(maxAltitude)} ft`;
 
   return (
-    <div className={styles.drawer}>
-      <div className={styles.header}>
-        <div className={styles.identity}>
-          <span className={styles.kind}>
-            {humaniseToken(hazard.hazard_type)}
-          </span>
-          <span className={`${styles.id} wv-numeric`}>{hazardId}</span>
-        </div>
+    <section className={styles.inspector} aria-label="Selected hazard">
+      <header className={styles.header}>
+        <span className={styles.kicker}>Selected hazard</span>
+        <button type="button" className={styles.close} onClick={onClose}>
+          Close
+        </button>
+      </header>
 
+      <div className={styles.identity}>
+        <span className={styles.name}>{humaniseToken(hazard.hazard_type)}</span>
         <StatusPill
           size="sm"
           prefix="Severity"
           presentation={presentHazardSeverity(hazard.severity)}
         />
-
-        <button type="button" className={styles.close} onClick={onClose}>
-          Close
-        </button>
+        <span className={`${styles.id} ${styles.idWide} wv-mono`}>
+          {hazardId}
+        </span>
       </div>
 
       <div className={styles.body}>
-        <DataFieldGrid columns={3}>
+        <DataFieldGrid columns={2}>
           <DataField
             label="Product"
             value={asString(hazard.product_type) ?? NOT_REPORTED}
@@ -84,11 +76,6 @@ export function HazardInvestigationDrawer({
             label="Issuing office (ICAO)"
             value={asString(hazard.source_icao_id) ?? NOT_REPORTED}
           />
-          <DataField
-            label="Amendment"
-            value={humaniseToken(hazard.amendment_type)}
-          />
-
           <DataField
             label="Valid from"
             value={formatUtcDateTime(hazard.valid_from_utc)}
@@ -100,7 +87,6 @@ export function HazardInvestigationDrawer({
             numeric
           />
           <DataField label="Altitude band" value={altitudeBand} numeric />
-
           <DataField
             label="Movement"
             value={
@@ -111,6 +97,10 @@ export function HazardInvestigationDrawer({
                   `${formatNumber(hazard.movement_speed_kt)} kt`
             }
             numeric
+          />
+          <DataField
+            label="Amendment"
+            value={humaniseToken(hazard.amendment_type)}
           />
           <DataField
             label="Geometry"
@@ -133,6 +123,6 @@ export function HazardInvestigationDrawer({
           </div>
         ) : null}
       </div>
-    </div>
+    </section>
   );
 }

@@ -29,7 +29,11 @@ export function ImpactedAirportsPanel({
   const items = airports ?? [];
 
   return (
-    <Panel title="Weather-impacted airports" meta={failed ? undefined : `top ${items.length}`}>
+    <Panel
+      variant="section"
+      title="Weather-impacted airports"
+      meta={failed ? undefined : `top ${items.length}`}
+    >
       {loading ? <LoadingState label="Loading airport status" /> : null}
 
       {!loading && failed ? (
@@ -70,6 +74,7 @@ export function ImpactedAirportsPanel({
               <div className={styles.rowBody}>
                 <StatusPill
                   size="sm"
+                  variant="plain"
                   presentation={presentWeatherImpact(
                     airport.weather_impact_status,
                   )}

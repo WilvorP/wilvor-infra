@@ -9,15 +9,15 @@
   gap: var(--wv-space-2);
   min-width: 0;
   padding: var(--wv-space-4) 0;
-  border-bottom: 1px solid var(--wv-border-subtle);
+  border-top: 1px solid var(--wv-border-subtle);
 }
 
 .row:first-child {
-  padding-top: 0;
+  border-top: none;
+  padding-top: var(--wv-space-1);
 }
 
 .row:last-child {
-  border-bottom: none;
   padding-bottom: 0;
 }
 
@@ -29,35 +29,43 @@
 }
 
 .score {
-  font-size: var(--wv-text-xs);
+  margin-left: auto;
+  font-size: var(--wv-text-sm);
   font-weight: var(--wv-weight-semibold);
   color: var(--wv-text-primary);
 }
 
 .scoreMax {
+  font-size: var(--wv-text-xs);
   color: var(--wv-text-tertiary);
   font-weight: var(--wv-weight-regular);
 }
 
 .timestamp {
   margin-left: auto;
-  font-size: var(--wv-text-2xs);
+  font-size: var(--wv-text-xs);
   color: var(--wv-text-tertiary);
+  white-space: nowrap;
 }
 
 .rowBody {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: var(--wv-space-3);
+  gap: var(--wv-space-1) var(--wv-space-3);
   font-size: var(--wv-text-xs);
 }
 
 .primary {
   font-family: var(--wv-font-mono);
+  font-size: var(--wv-text-sm);
   font-weight: var(--wv-weight-medium);
   color: var(--wv-text-primary);
   overflow-wrap: anywhere;
+}
+
+.rowBody .primary {
+  font-size: var(--wv-text-xs);
 }
 
 .secondary {
@@ -66,7 +74,7 @@
 }
 
 .action {
-  font-size: var(--wv-text-xs);
+  font-size: var(--wv-text-sm);
   font-weight: var(--wv-weight-medium);
   color: var(--wv-text-primary);
   overflow-wrap: anywhere;
@@ -92,7 +100,6 @@
   gap: var(--wv-space-2);
   padding: var(--wv-space-4);
   background-color: var(--wv-surface-2);
-  border: 1px solid var(--wv-border-subtle);
   border-radius: var(--wv-radius-sm);
 }
 

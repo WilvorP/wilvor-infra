@@ -3,14 +3,14 @@ import { useEffect } from 'react';
 
 import type { AircraftProjectionPoint } from '@/types/api';
 
+import { MAP_CASING, MAP_TRAJECTORY } from './mapPalette';
 import { MAP_IDS } from './mapStyle';
 import {
   EMPTY_PROJECTION_COLLECTION,
   projectionCollectionForSelection,
 } from './projectionGeoJson';
 
-/** Matches `--wv-accent-strong`; trajectory is selection context, not risk. */
-const TRAJECTORY_COLOUR = '#5cc3f2';
+const TRAJECTORY_COLOUR = MAP_TRAJECTORY;
 
 /**
  * Draw the selected aircraft's short-term projected trajectory.
@@ -62,7 +62,7 @@ export function useTrajectoryLayer(
           'circle-radius': 3.2,
           'circle-color': TRAJECTORY_COLOUR,
           'circle-stroke-width': 1,
-          'circle-stroke-color': '#080b11',
+          'circle-stroke-color': MAP_CASING,
         },
       });
     }

@@ -1,36 +1,26 @@
 import { useIsFetching } from '@tanstack/react-query';
 
-import { StatusPill } from '@/components/StatusPill';
 import { queryKeys } from '@/api/queryKeys';
-import { useFreshness, useSystemHealth } from '@/hooks/useOperationalQueries';
-import { formatUtcTime } from '@/utils/format';
-import { presentSystemStatus } from '@/utils/status';
+import { FreshnessStrip } from '@/features/health/FreshnessStrip';
 
 import styles from './AppHeader.module.css';
 
 /**
- * Console header.
+ * Context bar: source freshness, the backend data time, polling state and
+ * the advisory notice, on every route.
  *
  * "Live" here means polling is active, not that the data is instantaneous.
- * The label is therefore paired with a backend-generated timestamp so the
- * operator judges currency from the data itself rather than from the
- * indicator.
- *
- * The timestamp comes from `/freshness`, which the shell already polls on
- * every route via the freshness strip. TanStack Query dedupes the two
- * subscriptions into one request, so this adds no API traffic.
+ * It sits beside the backend-generated timestamp the freshness readout
+ * renders, so the operator judges currency from the data itself rather than
+ * from the indicator.
  */
 export function AppHeader() {
   const fetching = useIsFetching({ queryKey: queryKeys.all }) > 0;
-  const health = useSystemHealth();
-  const freshness = useFreshness();
 
   return (
     <header className={styles.header}>
-      <div className={styles.brand}>
-        <span className={styles.mark} aria-hidden="true" />
-        <span className={styles.wordmark}>WILVOR</span>
-        <span className={styles.product}>Operations</span>
+      <div className={styles.freshness}>
+        <FreshnessStrip />
       </div>
 
       <span
@@ -41,24 +31,22 @@ export function AppHeader() {
         {fetching ? 'Refreshing' : 'Live polling'}
       </span>
 
-      <div className={styles.spacer} />
-
-      <div className={styles.meta}>
-        <span className={styles.metaLabel}>Data generated</span>
-        <span className={`${styles.metaValue} wv-numeric`}>
-          {formatUtcTime(freshness.data?.generatedAt)}
-        </span>
-      </div>
-
-      <StatusPill
-        size="sm"
-        prefix="Platform"
-        presentation={presentSystemStatus(
-          health.isError ? null : health.data?.status,
-        )}
-      />
-
       <p className={styles.advisory} title="Wilvor is advisory decision support">
+        <svg
+          className={styles.advisoryIcon}
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          strokeLinecap="round"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <circle cx="12" cy="12" r="9" />
+          <path d="M12 11v5.5M12 7.6v.1" />
+        </svg>
         Advisory only — not ATC
       </p>
     </header>

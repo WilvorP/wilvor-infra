@@ -1,13 +1,28 @@
 .shell {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: var(--wv-sidebar-width) minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   background-color: var(--wv-bg-base);
+}
+
+.workspace {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
 }
 
 .main {
   flex: 1 1 auto;
   min-height: 0;
   outline: none;
+}
+
+/* Below this width the sidebar folds into a top bar above the context bar. */
+@media (max-width: 1100px) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
 }

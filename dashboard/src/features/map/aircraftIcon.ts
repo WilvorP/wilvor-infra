@@ -38,16 +38,17 @@ const AIRCRAFT_SHAPE: readonly Point[] = [
 const OUTLINE_SCALE = 1.28;
 
 /**
- * Pale blue. Distinct from the amber/red used for hazard severity and risk so
- * aircraft never read as carrying a severity of their own — this milestone
- * deliberately applies no risk colouring.
+ * Muted steel blue. Distinct from the amber/red used for hazard severity and
+ * risk so aircraft never read as carrying a severity of their own — this
+ * milestone deliberately applies no risk colouring. Kept below pure white so
+ * several thousand symbols read as a calm traffic texture rather than glare.
  */
 export const AIRCRAFT_FILL_RGB: readonly [number, number, number] = [
-  207, 227, 255,
+  164, 184, 210,
 ];
 
-/** Matches `--wv-bg-base`, so the symbol stays legible over hazard fills. */
-const AIRCRAFT_OUTLINE_RGB: readonly [number, number, number] = [8, 11, 17];
+/** Matches `MAP_CASING`, so the symbol stays legible over hazard fills. */
+const AIRCRAFT_OUTLINE_RGB: readonly [number, number, number] = [19, 24, 32];
 
 const OUTLINE_ALPHA = 0.88;
 

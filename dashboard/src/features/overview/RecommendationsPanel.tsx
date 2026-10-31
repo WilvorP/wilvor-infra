@@ -38,6 +38,7 @@ export function RecommendationsPanel({
 
   return (
     <Panel
+      variant="section"
       title="Current recommendations"
       meta={
         failed || currentCount == null
@@ -73,21 +74,17 @@ export function RecommendationsPanel({
                   size="sm"
                   presentation={presentRiskLevel(item.riskLevel)}
                 />
-                <span className={styles.action}>
-                  {humaniseToken(item.action)}
+                <span className={styles.primary}>
+                  {formatAircraftLabel(undefined, item.aircraftId)}
                 </span>
                 <span className={`${styles.timestamp} wv-numeric`}>
                   until {formatUtcTime(item.validUntilUtc)}
                 </span>
               </div>
 
+              <p className={styles.action}>{humaniseToken(item.action)}</p>
+
               <div className={styles.rowBody}>
-                <span className={styles.primary}>
-                  {formatAircraftLabel(undefined, item.aircraftId)}
-                </span>
-                <span className={styles.separator} aria-hidden="true">
-                  ·
-                </span>
                 <span className={styles.secondary}>
                   {asString(item.preferredAirportId)
                     ? `Preferred ${asString(item.preferredAirportId)}`

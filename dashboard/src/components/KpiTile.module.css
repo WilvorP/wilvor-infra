@@ -4,9 +4,50 @@
   gap: var(--wv-space-2);
   padding: var(--wv-space-5) var(--wv-space-6);
   background-color: var(--wv-surface-1);
-  border: 1px solid var(--wv-border);
+  border: 1px solid var(--wv-border-subtle);
   border-radius: var(--wv-radius-md);
   min-width: 0;
+}
+
+/*
+ * Readout: label above an inline value, with the breakdown on the value line
+ * so a whole strip of metrics stays one row tall.
+ */
+.readout {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-areas:
+    'label label'
+    'value breakdown';
+  align-items: baseline;
+  column-gap: var(--wv-space-5);
+  row-gap: var(--wv-space-1);
+  padding: 0 var(--wv-space-7);
+  min-width: 0;
+  border-left: 1px solid var(--wv-border-subtle);
+}
+
+.readout:first-child {
+  padding-left: 0;
+  border-left: none;
+}
+
+.readout > .label {
+  grid-area: label;
+}
+
+.readout > .valueRow,
+.readout > .problem {
+  grid-area: value;
+}
+
+.readout > .breakdown {
+  grid-area: breakdown;
+  margin: 0;
+}
+
+.readout .value {
+  font-size: var(--wv-text-xl);
 }
 
 .interactive {
@@ -29,11 +70,10 @@
 }
 
 .label {
-  font-size: var(--wv-text-2xs);
-  font-weight: var(--wv-weight-semibold);
-  text-transform: uppercase;
-  letter-spacing: var(--wv-tracking-wider);
-  color: var(--wv-text-tertiary);
+  font-size: var(--wv-text-xs);
+  font-weight: var(--wv-weight-medium);
+  color: var(--wv-text-secondary);
+  white-space: nowrap;
 }
 
 .valueRow {
@@ -47,20 +87,25 @@
   font-size: var(--wv-text-2xl);
   font-weight: var(--wv-weight-semibold);
   line-height: var(--wv-leading-tight);
+  letter-spacing: var(--wv-tracking-tight);
   color: var(--wv-text-primary);
 }
 
 .unit {
   font-size: var(--wv-text-xs);
   color: var(--wv-text-tertiary);
+  white-space: nowrap;
 }
 
 .stale {
   margin-left: auto;
-  font-size: var(--wv-text-2xs);
-  text-transform: uppercase;
-  letter-spacing: var(--wv-tracking-wide);
+  font-size: var(--wv-text-xs);
+  font-weight: var(--wv-weight-medium);
   color: var(--wv-acceptable);
+}
+
+.readout .stale {
+  margin-left: var(--wv-space-2);
 }
 
 .problem {
@@ -72,26 +117,26 @@
 .breakdown {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--wv-space-2) var(--wv-space-5);
+  gap: var(--wv-space-1) var(--wv-space-5);
   margin: var(--wv-space-2) 0 0;
 }
 
 .breakdownEntry {
   display: flex;
   align-items: baseline;
-  gap: var(--wv-space-3);
+  gap: var(--wv-space-2);
+  white-space: nowrap;
 }
 
 .breakdownLabel {
-  font-size: var(--wv-text-2xs);
+  font-size: var(--wv-text-xs);
   color: var(--wv-text-tertiary);
-  text-transform: uppercase;
-  letter-spacing: var(--wv-tracking-wide);
 }
 
 .breakdownValue {
+  margin: 0;
   font-size: var(--wv-text-xs);
-  font-weight: var(--wv-weight-medium);
+  font-weight: var(--wv-weight-semibold);
   color: var(--wv-text-secondary);
 }
 

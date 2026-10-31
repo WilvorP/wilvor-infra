@@ -2,75 +2,91 @@
  * Wilvor operations console design tokens.
  *
  * Conventions:
- *   - Dark surfaces are layered by elevation (base -> 3), not by shadow.
+ *   - Surfaces are a slate/charcoal ramp layered by elevation (base -> 3), not
+ *     by shadow. Each step is far enough from its neighbour to separate
+ *     regions without a border, so borders are reserved for hairline seams.
  *   - Radii stay small. Large rounded cards read as consumer software rather
  *     than an operations console.
+ *   - The accent is for interface state only (selection, focus, active
+ *     navigation). Operational data keeps its own semantic colours.
  *   - Every status colour is paired with a text label and a glyph in the
  *     components that consume it. Colour is never the sole carrier of meaning.
+ *   - Map colours live in features/map/mapPalette.ts and mirror these values.
  */
 
 :root {
   color-scheme: dark;
 
   /* ---- Surfaces ---- */
-  --wv-bg-base: #080b11;
-  --wv-surface-1: #0e131b;
-  --wv-surface-2: #141b25;
-  --wv-surface-3: #1b2431;
-  --wv-surface-raised: #212c3b;
-  --wv-surface-overlay: rgba(8, 11, 17, 0.92);
+  --wv-bg-base: #161b22;
+  --wv-surface-1: #1d232c;
+  --wv-surface-2: #232a34;
+  --wv-surface-3: #2b333e;
+  --wv-surface-raised: #343d49;
+  --wv-surface-overlay: rgba(29, 35, 44, 0.97);
 
   /* ---- Borders ---- */
-  --wv-border-subtle: #1a222e;
-  --wv-border: #24303f;
-  --wv-border-strong: #35455a;
+  --wv-border-subtle: #262d37;
+  --wv-border: #2f3742;
+  --wv-border-strong: #3d4653;
 
-  /* ---- Text ---- */
-  --wv-text-primary: #e6edf6;
-  --wv-text-secondary: #93a4bb;
-  --wv-text-tertiary: #64758d;
-  --wv-text-inverse: #080b11;
+  /*
+   * ---- Text ----
+   * Tertiary is the dimmest text allowed; it clears 4.5:1 on every surface
+   * from bg-base up to surface-3.
+   */
+  --wv-text-primary: #e8ecf1;
+  --wv-text-secondary: #b4bdc9;
+  --wv-text-tertiary: #959fad;
+  --wv-text-inverse: #12161c;
 
-  /* ---- Accent (used sparingly: selection and focus only) ---- */
-  --wv-accent: #3ba9dd;
-  --wv-accent-strong: #5cc3f2;
-  --wv-accent-dim: rgba(59, 169, 221, 0.14);
+  /* ---- Accent (interface state only: selection, focus, active nav) ---- */
+  --wv-accent: #5f9fe0;
+  --wv-accent-strong: #86b8ed;
+  --wv-accent-dim: rgba(95, 159, 224, 0.14);
 
   /* ---- Risk severity ---- */
-  --wv-risk-high: #ff6a55;
-  --wv-risk-high-dim: rgba(255, 106, 85, 0.14);
-  --wv-risk-medium: #f0b429;
-  --wv-risk-medium-dim: rgba(240, 180, 41, 0.14);
-  --wv-risk-low: #3fbf87;
-  --wv-risk-low-dim: rgba(63, 191, 135, 0.14);
-  --wv-risk-unknown: #7c8ba1;
-  --wv-risk-unknown-dim: rgba(124, 139, 161, 0.14);
+  --wv-risk-high: #ef6c5c;
+  --wv-risk-high-dim: rgba(239, 108, 92, 0.13);
+  --wv-risk-medium: #e2aa40;
+  --wv-risk-medium-dim: rgba(226, 170, 64, 0.13);
+  --wv-risk-low: #4fbb8b;
+  --wv-risk-low-dim: rgba(79, 187, 139, 0.13);
+  --wv-risk-unknown: #8d98a8;
+  --wv-risk-unknown-dim: rgba(141, 152, 168, 0.14);
 
   /* ---- Data freshness ---- */
-  --wv-fresh: #3fbf87;
-  --wv-fresh-dim: rgba(63, 191, 135, 0.14);
-  --wv-acceptable: #f0b429;
-  --wv-acceptable-dim: rgba(240, 180, 41, 0.14);
-  --wv-stale: #ff6a55;
-  --wv-stale-dim: rgba(255, 106, 85, 0.14);
-  --wv-unavailable: #7c8ba1;
-  --wv-unavailable-dim: rgba(124, 139, 161, 0.14);
+  --wv-fresh: #4fbb8b;
+  --wv-fresh-dim: rgba(79, 187, 139, 0.13);
+  --wv-acceptable: #e2aa40;
+  --wv-acceptable-dim: rgba(226, 170, 64, 0.13);
+  --wv-stale: #ef6c5c;
+  --wv-stale-dim: rgba(239, 108, 92, 0.13);
+  --wv-unavailable: #8d98a8;
+  --wv-unavailable-dim: rgba(141, 152, 168, 0.14);
 
   /* ---- Typography ---- */
   --wv-font-sans:
-    'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto,
-    'Helvetica Neue', Arial, sans-serif;
+    'Inter Variable', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    Roboto, 'Helvetica Neue', Arial, sans-serif;
   --wv-font-mono:
     ui-monospace, 'SF Mono', 'Cascadia Mono', 'Segoe UI Mono', Menlo, Consolas,
     monospace;
 
-  --wv-text-2xs: 0.6875rem; /* 11px - dense labels */
-  --wv-text-xs: 0.75rem; /* 12px - table and metadata */
+  /*
+   * Inter features for operational figures: tabular widths, slashed zero, and
+   * the disambiguation set (distinct I / l / 1) so identifiers that share the
+   * numeric style cannot be misread.
+   */
+  --wv-font-features-numeric: 'tnum' 1, 'zero' 1, 'ss02' 1;
+
+  --wv-text-2xs: 0.6875rem; /* 11px - dense secondary metadata */
+  --wv-text-xs: 0.75rem; /* 12px - labels, table cells */
   --wv-text-sm: 0.8125rem; /* 13px - body default */
-  --wv-text-md: 0.9375rem; /* 15px - panel headings */
-  --wv-text-lg: 1.125rem; /* 18px - section titles */
-  --wv-text-xl: 1.5rem; /* 24px - KPI values */
-  --wv-text-2xl: 2rem; /* 32px - primary KPI values */
+  --wv-text-md: 0.875rem; /* 14px - panel headings */
+  --wv-text-lg: 1rem; /* 16px - section titles */
+  --wv-text-xl: 1.25rem; /* 20px - KPI values */
+  --wv-text-2xl: 1.75rem; /* 28px - primary KPI values */
 
   --wv-weight-regular: 400;
   --wv-weight-medium: 500;
@@ -79,8 +95,9 @@
   --wv-leading-tight: 1.2;
   --wv-leading-normal: 1.45;
 
+  --wv-tracking-tight: -0.01em;
   --wv-tracking-wide: 0.06em;
-  --wv-tracking-wider: 0.1em;
+  --wv-tracking-wider: 0.08em;
 
   /* ---- Spacing ---- */
   --wv-space-1: 2px;
@@ -96,19 +113,27 @@
 
   /* ---- Radii ---- */
   --wv-radius-xs: 2px;
-  --wv-radius-sm: 3px;
-  --wv-radius-md: 4px;
-  --wv-radius-lg: 6px;
+  --wv-radius-sm: 4px;
+  --wv-radius-md: 6px;
+  --wv-radius-lg: 8px;
+
+  /* ---- Focus ---- */
+  --wv-focus-color: var(--wv-accent-strong);
+  --wv-focus-width: 2px;
+  --wv-focus-offset: 1px;
 
   /* ---- Layout ---- */
+  --wv-sidebar-width: 196px;
+  --wv-topbar-height: 44px;
   --wv-header-height: 48px;
   --wv-freshness-height: 34px;
   --wv-nav-height: 38px;
   --wv-drawer-height: 400px;
-  --wv-rail-width: 340px;
+  --wv-rail-width: 344px;
+  --wv-control-height: 28px;
 
   /* ---- Elevation ---- */
-  --wv-shadow-overlay: 0 8px 24px rgba(0, 0, 0, 0.55);
+  --wv-shadow-overlay: 0 6px 20px rgba(6, 9, 13, 0.45);
 
   /* ---- Motion ---- */
   --wv-duration-fast: 90ms;

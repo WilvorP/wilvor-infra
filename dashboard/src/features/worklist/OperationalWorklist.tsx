@@ -231,8 +231,19 @@ export function OperationalWorklist({
           ? tab === 'recommendations'
           : false;
 
+  const hasRows =
+    !loading &&
+    !failed &&
+    (tab === 'encounters'
+      ? visibleEncounters.length > 0
+      : tab === 'alerts'
+        ? visibleAlerts.length > 0
+        : visibleRecommendations.length > 0);
+
   return (
     <Panel
+      variant="section"
+      className={styles.panel}
       title="Current attention"
       meta={
         failed || loading
@@ -243,37 +254,33 @@ export function OperationalWorklist({
         <div className={styles.tabs} role="tablist" aria-label="Worklist source">
           <TabButton
             active={tab === 'encounters'}
+            count={currentEncounterCount}
             onClick={() => {
               setTab('encounters');
               setFilters((current) => ({ ...current, state: '', riskLevel: '' }));
             }}
           >
             Encounters
-            {currentEncounterCount != null
-              ? ` ${formatCount(currentEncounterCount)}`
-              : ''}
           </TabButton>
           <TabButton
             active={tab === 'alerts'}
+            count={currentAlertCount}
             onClick={() => {
               setTab('alerts');
               setFilters((current) => ({ ...current, state: '', riskLevel: '' }));
             }}
           >
             Alerts
-            {currentAlertCount != null ? ` ${formatCount(currentAlertCount)}` : ''}
           </TabButton>
           <TabButton
             active={tab === 'recommendations'}
+            count={currentRecommendationCount}
             onClick={() => {
               setTab('recommendations');
               setFilters((current) => ({ ...current, state: '', riskLevel: '' }));
             }}
           >
             Recommendations
-            {currentRecommendationCount != null
-              ? ` ${formatCount(currentRecommendationCount)}`
-              : ''}
           </TabButton>
         </div>
       }
@@ -319,12 +326,12 @@ export function OperationalWorklist({
           </select>
         </label>
 
-        <label className={styles.field}>
-          <span>Aircraft</span>
+        <label className={`${styles.field} ${styles.fieldSearch}`}>
+          <span className="wv-visually-hidden">Aircraft</span>
           <input
             type="search"
             value={filters.aircraft}
-            placeholder="id or callsign"
+            placeholder="Aircraft id or callsign"
             onChange={(event) =>
               setFilters((current) => ({
                 ...current,
@@ -334,12 +341,12 @@ export function OperationalWorklist({
           />
         </label>
 
-        <label className={styles.field}>
-          <span>Hazard</span>
+        <label className={`${styles.field} ${styles.fieldSearch}`}>
+          <span className="wv-visually-hidden">Hazard</span>
           <input
             type="search"
             value={filters.hazard}
-            placeholder="hazard id or type"
+            placeholder="Hazard id or type"
             onChange={(event) =>
               setFilters((current) => ({
                 ...current,
@@ -366,7 +373,7 @@ export function OperationalWorklist({
         </label>
 
         <label className={styles.field}>
-          <span>Order</span>
+          <span className="wv-visually-hidden">Order</span>
           <select
             value={sortDirection}
             onChange={(event) =>
@@ -486,6 +493,8 @@ export function OperationalWorklist({
         />
       ) : null}
 
+      {hasRows ? <ColumnHeader tab={tab} /> : null}
+
       {!loading && !failed && tab === 'encounters' && visibleEncounters.length > 0 ? (
         <ul className={styles.list}>
           {visibleEncounters.map((item, index) => {
@@ -590,12 +599,40 @@ export function OperationalWorklist({
   );
 }
 
+/** Visual column labels. Each row button carries its own accessible text. */
+function ColumnHeader({ tab }: { tab: WorklistTab }) {
+  return (
+    <div className={`${styles.columns} ${styles.columnHeader}`} aria-hidden="true">
+      <span>Risk</span>
+      <span className={styles.alignEnd}>Score</span>
+      <span>Aircraft</span>
+      <span>Context</span>
+      <span>
+        {tab === 'encounters'
+          ? 'State'
+          : tab === 'alerts'
+            ? 'Alert state'
+            : 'Action'}
+      </span>
+      <span className={styles.alignEnd}>
+        {tab === 'encounters'
+          ? 'Detected'
+          : tab === 'alerts'
+            ? 'Updated'
+            : 'Created'}
+      </span>
+    </div>
+  );
+}
+
 function TabButton({
   active,
+  count,
   onClick,
   children,
 }: {
   active: boolean;
+  count?: number | null;
   onClick: () => void;
   children: ReactNode;
 }) {
@@ -608,7 +645,32 @@ function TabButton({
       onClick={onClick}
     >
       {children}
+      {count != null ? (
+        <span className={`${styles.tabCount} wv-numeric`}>
+          {` ${formatCount(count)}`}
+        </span>
+      ) : null}
     </button>
+  );
+}
+
+function Score({ value }: { value: unknown }) {
+  return (
+    <span className={`${styles.score} wv-numeric`}>
+      {formatRiskScore(value)}
+      <span className={styles.scoreMax}>/100</span>
+    </span>
+  );
+}
+
+function RowTime({ value, selected }: { value: unknown; selected: boolean }) {
+  return (
+    <span className={styles.timeCell}>
+      <span className={`${styles.timestamp} wv-numeric`}>
+        {formatUtcTime(value)}
+      </span>
+      {selected ? <span className={styles.selectedMark}>Selected</span> : null}
+    </span>
   );
 }
 
@@ -633,68 +695,52 @@ function EncounterRow({
     <li>
       <button
         type="button"
-        className={`${styles.row} ${selected ? styles.rowSelected : ''}`}
+        className={`${styles.columns} ${styles.row} ${selected ? styles.rowSelected : ''}`}
         disabled={disabled}
         aria-current={selected ? 'true' : undefined}
         onClick={onSelect}
       >
-        <div className={styles.rowHeader}>
-          <StatusPill
-            size="sm"
-            prefix="Risk"
-            presentation={presentRiskLevel(risk?.risk_level)}
-          />
-          <span className={`${styles.score} wv-numeric`}>
-            {formatRiskScore(risk?.risk_score)}
-            <span className={styles.scoreMax}>/100</span>
+        <span className={styles.cell}>
+          <span className="wv-visually-hidden">Risk </span>
+          <StatusPill size="sm" presentation={presentRiskLevel(risk?.risk_level)} />
+        </span>
+        <Score value={risk?.risk_score} />
+        <span className={styles.primary}>
+          {formatAircraftLabel(callsign, encounter?.aircraft_id)}
+        </span>
+        <span className={styles.context}>
+          <span className={styles.contextLine}>
+            <span className={styles.contextLead}>
+              {humaniseToken(encounter?.hazard_type)}
+            </span>
+            <span className={`${styles.identifier} wv-mono`}>
+              {asString(encounter?.hazard_id) ?? NOT_REPORTED}
+            </span>
           </span>
+          <span className={styles.contextLine}>
+            <span className={styles.secondary}>
+              Inside now {formatBoolean(asBoolean(encounter?.inside_now))}
+            </span>
+            <span className={styles.separator} aria-hidden="true">
+              {'\u00b7'}
+            </span>
+            <span className={styles.secondary}>Geometry {geometry.label}</span>
+            <span className={styles.separator} aria-hidden="true">
+              {'\u00b7'}
+            </span>
+            <span className={styles.secondary}>
+              Confidence {presentConfidence(risk?.confidence).label}
+            </span>
+          </span>
+        </span>
+        <span className={styles.cell}>
           <StatusPill
             size="sm"
+            variant="plain"
             presentation={presentEncounterState(encounter?.encounter_state)}
           />
-          {selected ? (
-            <span className={styles.selectedMark}>Selected</span>
-          ) : null}
-          <span className={`${styles.timestamp} wv-numeric`}>
-            {formatUtcTime(encounter?.detected_at_utc)}
-          </span>
-        </div>
-
-        <div className={styles.rowBody}>
-          <span className={styles.primary}>
-            {formatAircraftLabel(callsign, encounter?.aircraft_id)}
-          </span>
-          <span className={styles.separator} aria-hidden="true">
-            ·
-          </span>
-          <span className={styles.secondary}>
-            {humaniseToken(encounter?.hazard_type)}
-          </span>
-          <span className={styles.separator} aria-hidden="true">
-            ·
-          </span>
-          <span className={`${styles.secondary} wv-numeric`}>
-            {asString(encounter?.hazard_id) ?? NOT_REPORTED}
-          </span>
-          <span className={styles.separator} aria-hidden="true">
-            ·
-          </span>
-          <span className={styles.secondary}>
-            Inside now {formatBoolean(asBoolean(encounter?.inside_now))}
-          </span>
-          <span className={styles.separator} aria-hidden="true">
-            ·
-          </span>
-          <span className={styles.secondary}>
-            Geometry {geometry.label}
-          </span>
-          <span className={styles.separator} aria-hidden="true">
-            ·
-          </span>
-          <span className={styles.secondary}>
-            Confidence {presentConfidence(risk?.confidence).label}
-          </span>
-        </div>
+        </span>
+        <RowTime value={encounter?.detected_at_utc} selected={selected} />
       </button>
       {disabled ? (
         <p className={styles.rowNote}>
@@ -723,51 +769,40 @@ function AlertRow({
     <li>
       <button
         type="button"
-        className={`${styles.row} ${selected ? styles.rowSelected : ''}`}
+        className={`${styles.columns} ${styles.row} ${selected ? styles.rowSelected : ''}`}
         disabled={disabled}
         aria-current={selected ? 'true' : undefined}
         onClick={onSelect}
       >
-        <div className={styles.rowHeader}>
-          <StatusPill
-            size="sm"
-            prefix="Risk"
-            presentation={presentRiskLevel(alert.risk_level)}
-          />
-          <span className={`${styles.score} wv-numeric`}>
-            {formatRiskScore(alert.risk_score)}
-            <span className={styles.scoreMax}>/100</span>
+        <span className={styles.cell}>
+          <span className="wv-visually-hidden">Risk </span>
+          <StatusPill size="sm" presentation={presentRiskLevel(alert.risk_level)} />
+        </span>
+        <Score value={alert.risk_score} />
+        <span className={styles.primary}>
+          {formatAircraftLabel(callsign, alert.aircraft_id)}
+        </span>
+        <span className={styles.context}>
+          <span className={styles.contextLine}>
+            <span className={styles.contextLead}>
+              {asString(alert.message) ?? NOT_REPORTED}
+            </span>
           </span>
+          <span className={styles.contextLine}>
+            <span className={`${styles.identifier} wv-mono`}>
+              {asString(alert.hazard_id) ?? NOT_REPORTED}
+            </span>
+          </span>
+        </span>
+        <span className={styles.cell}>
+          <span className="wv-visually-hidden">Alert </span>
           <StatusPill
             size="sm"
-            prefix="Alert"
+            variant="plain"
             presentation={presentAlertState(alert.alert_state)}
           />
-          {selected ? (
-            <span className={styles.selectedMark}>Selected</span>
-          ) : null}
-          <span className={`${styles.timestamp} wv-numeric`}>
-            {formatUtcTime(alert.updated_at_utc)}
-          </span>
-        </div>
-
-        <div className={styles.rowBody}>
-          <span className={styles.primary}>
-            {formatAircraftLabel(callsign, alert.aircraft_id)}
-          </span>
-          <span className={styles.separator} aria-hidden="true">
-            ·
-          </span>
-          <span className={`${styles.secondary} wv-numeric`}>
-            {asString(alert.hazard_id) ?? NOT_REPORTED}
-          </span>
-          <span className={styles.separator} aria-hidden="true">
-            ·
-          </span>
-          <span className={styles.secondary}>
-            {asString(alert.message) ?? NOT_REPORTED}
-          </span>
-        </div>
+        </span>
+        <RowTime value={alert.updated_at_utc} selected={selected} />
       </button>
       {disabled ? (
         <p className={styles.rowNote}>
@@ -798,60 +833,49 @@ function RecommendationRow({
     <li>
       <button
         type="button"
-        className={`${styles.row} ${selected ? styles.rowSelected : ''}`}
+        className={`${styles.columns} ${styles.row} ${selected ? styles.rowSelected : ''}`}
         disabled={disabled}
         aria-current={selected ? 'true' : undefined}
         onClick={onSelect}
       >
-        <div className={styles.rowHeader}>
+        <span className={styles.cell}>
+          <span className="wv-visually-hidden">Risk </span>
           <StatusPill
             size="sm"
-            prefix="Risk"
             presentation={presentRiskLevel(recommendation.risk_level)}
           />
-          <span className={`${styles.score} wv-numeric`}>
-            {formatRiskScore(recommendation.risk_score)}
-            <span className={styles.scoreMax}>/100</span>
+        </span>
+        <Score value={recommendation.risk_score} />
+        <span className={styles.primary}>
+          {formatAircraftLabel(callsign, recommendation.aircraft_id)}
+        </span>
+        <span className={styles.context}>
+          <span className={styles.contextLine}>
+            <span className={styles.contextLead}>
+              {preferredAirport
+                ? `Preferred ${preferredAirport}`
+                : 'No preferred airport'}
+            </span>
+            <span className={`${styles.identifier} wv-mono`}>
+              {asString(recommendation.hazard_id) ?? NOT_REPORTED}
+            </span>
           </span>
+          <span className={styles.contextLine}>
+            <span className={styles.secondary}>
+              Confidence {presentConfidence(recommendation.confidence).label}
+            </span>
+          </span>
+        </span>
+        <span className={styles.cell}>
           <StatusPill
             size="sm"
+            variant="plain"
             presentation={presentRecommendationAction(
               recommendation.primary_action_type,
             )}
           />
-          {selected ? (
-            <span className={styles.selectedMark}>Selected</span>
-          ) : null}
-          <span className={`${styles.timestamp} wv-numeric`}>
-            {formatUtcTime(recommendation.created_at_utc)}
-          </span>
-        </div>
-
-        <div className={styles.rowBody}>
-          <span className={styles.primary}>
-            {formatAircraftLabel(callsign, recommendation.aircraft_id)}
-          </span>
-          <span className={styles.separator} aria-hidden="true">
-            ·
-          </span>
-          <span className={`${styles.secondary} wv-numeric`}>
-            {asString(recommendation.hazard_id) ?? NOT_REPORTED}
-          </span>
-          <span className={styles.separator} aria-hidden="true">
-            ·
-          </span>
-          <span className={styles.secondary}>
-            {preferredAirport
-              ? `Preferred ${preferredAirport}`
-              : 'No preferred airport'}
-          </span>
-          <span className={styles.separator} aria-hidden="true">
-            ·
-          </span>
-          <span className={styles.secondary}>
-            Confidence {presentConfidence(recommendation.confidence).label}
-          </span>
-        </div>
+        </span>
+        <RowTime value={recommendation.created_at_utc} selected={selected} />
       </button>
       {disabled ? (
         <p className={styles.rowNote}>
@@ -862,4 +886,3 @@ function RecommendationRow({
     </li>
   );
 }
-

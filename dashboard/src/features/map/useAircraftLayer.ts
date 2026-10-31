@@ -10,15 +10,14 @@ import {
   type AircraftFeatureCollection,
 } from './aircraftGeoJson';
 import { AIRCRAFT_FILL_RGB, createAircraftIcon } from './aircraftIcon';
+import { MAP_CASING, MAP_SELECTION } from './mapPalette';
 import { MAP_IDS } from './mapStyle';
 
 const AIRCRAFT_COLOUR = `rgb(${AIRCRAFT_FILL_RGB.join(', ')})`;
 
-/** Matches `--wv-accent`; used only for the selection highlight. */
-const SELECTION_COLOUR = '#3ba9dd';
+const SELECTION_COLOUR = MAP_SELECTION;
 
-/** Matches `--wv-bg-base`, giving symbols a dark casing over hazard fills. */
-const CASING_COLOUR = '#080b11';
+const CASING_COLOUR = MAP_CASING;
 
 /**
  * The bitmap is generated at twice its display size and registered with
@@ -94,10 +93,10 @@ export function useAircraftLayer(
             16,
           ],
           'circle-color': SELECTION_COLOUR,
-          'circle-opacity': 0.18,
-          'circle-stroke-width': 1.5,
+          'circle-opacity': 0.22,
+          'circle-stroke-width': 2,
           'circle-stroke-color': SELECTION_COLOUR,
-          'circle-stroke-opacity': 0.9,
+          'circle-stroke-opacity': 1,
         },
       });
     }
@@ -146,9 +145,9 @@ export function useAircraftLayer(
             ['linear'],
             ['zoom'],
             3,
-            0.55,
+            0.5,
             6,
-            0.75,
+            0.72,
             10,
             1,
           ],

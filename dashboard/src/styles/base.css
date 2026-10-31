@@ -21,6 +21,13 @@ body {
   -moz-osx-font-smoothing: grayscale;
 }
 
+/* Form controls do not inherit the document font by default. */
+input,
+select,
+textarea {
+  font: inherit;
+}
+
 h1,
 h2,
 h3,
@@ -60,16 +67,25 @@ a:hover {
  * which would make columns of figures jitter every refresh cycle.
  */
 .wv-numeric {
+  font-variant-numeric: tabular-nums slashed-zero;
+  font-feature-settings: var(--wv-font-features-numeric);
+}
+
+/*
+ * Identifiers (ICAO24, hazard and record ids, raw METAR / TAF) are read
+ * character by character, so they stay monospaced rather than proportional.
+ */
+.wv-mono {
   font-family: var(--wv-font-mono);
-  font-variant-numeric: tabular-nums;
-  font-feature-settings: 'tnum' 1;
+  font-size: 0.95em;
+  font-variant-numeric: tabular-nums slashed-zero;
+  letter-spacing: 0;
 }
 
 /* Visible focus is required: this console is keyboard navigable. */
 :focus-visible {
-  outline: 2px solid var(--wv-accent-strong);
-  outline-offset: 1px;
-  border-radius: var(--wv-radius-xs);
+  outline: var(--wv-focus-width) solid var(--wv-focus-color);
+  outline-offset: var(--wv-focus-offset);
 }
 
 .wv-visually-hidden {
@@ -100,21 +116,34 @@ a:hover {
   transform: translateY(0);
 }
 
-::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+/*
+ * Scrollbars sit on a transparent track so they take the colour of whatever
+ * surface they scroll, rather than drawing a contrasting gutter.
+ */
+@supports (scrollbar-color: auto) {
+  :root {
+    scrollbar-color: var(--wv-border-strong) transparent;
+    scrollbar-width: thin;
+  }
 }
 
-::-webkit-scrollbar-track {
-  background: var(--wv-surface-1);
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: var(--wv-border-strong);
-  border: 2px solid var(--wv-surface-1);
-  border-radius: 5px;
+  background-color: var(--wv-border-strong);
+  background-clip: padding-box;
+  border: 2px solid transparent;
+  border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--wv-text-tertiary);
+  background-color: var(--wv-text-tertiary);
 }

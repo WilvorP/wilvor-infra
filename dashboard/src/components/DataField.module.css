@@ -24,15 +24,13 @@
 }
 
 .label {
-  font-size: var(--wv-text-2xs);
-  text-transform: uppercase;
-  letter-spacing: var(--wv-tracking-wide);
+  font-size: var(--wv-text-xs);
   color: var(--wv-text-tertiary);
 }
 
 .value {
   margin: 0;
-  font-size: var(--wv-text-xs);
+  font-size: var(--wv-text-sm);
   color: var(--wv-text-primary);
   overflow-wrap: anywhere;
 }

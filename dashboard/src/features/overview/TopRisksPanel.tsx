@@ -30,7 +30,11 @@ export function TopRisksPanel({ risks, loading, failed }: TopRisksPanelProps) {
   const items = risks ?? [];
 
   return (
-    <Panel title="Operational risks" meta={failed ? undefined : `top ${items.length}`}>
+    <Panel
+      variant="section"
+      title="Operational risks"
+      meta={failed ? undefined : `top ${items.length}`}
+    >
       {loading ? <LoadingState label="Loading risk evaluations" /> : null}
 
       {!loading && failed ? (
@@ -62,22 +66,16 @@ export function TopRisksPanel({ risks, loading, failed }: TopRisksPanelProps) {
                     size="sm"
                     presentation={presentRiskLevel(risk.risk_level)}
                   />
+                  <span className={styles.primary}>
+                    {formatAircraftLabel(undefined, aircraftId)}
+                  </span>
                   <span className={`${styles.score} wv-numeric`}>
                     {formatRiskScore(risk.risk_score)}
                     <span className={styles.scoreMax}>/100</span>
                   </span>
-                  <span className={`${styles.timestamp} wv-numeric`}>
-                    {formatUtcTime(risk.generated_at_utc)}
-                  </span>
                 </div>
 
                 <div className={styles.rowBody}>
-                  <span className={styles.primary}>
-                    {formatAircraftLabel(undefined, aircraftId)}
-                  </span>
-                  <span className={styles.separator} aria-hidden="true">
-                    ·
-                  </span>
                   <span className={styles.secondary}>
                     {humaniseToken(risk.hazard_type)}
                   </span>
@@ -86,6 +84,9 @@ export function TopRisksPanel({ risks, loading, failed }: TopRisksPanelProps) {
                   </span>
                   <span className={styles.secondary}>
                     Confidence {asString(risk.confidence) ?? NOT_REPORTED}
+                  </span>
+                  <span className={`${styles.timestamp} wv-numeric`}>
+                    {formatUtcTime(risk.generated_at_utc)}
                   </span>
                 </div>
               </li>

@@ -5,25 +5,16 @@ import type {
 } from 'maplibre-gl';
 import { useEffect } from 'react';
 
+import { MAP_CASING, MAP_SELECTION, riskRankColour } from './mapPalette';
 import { MAP_IDS } from './mapStyle';
 import {
   EMPTY_AIRPORT_COLLECTION,
   type AirportFeatureCollection,
 } from './airportGeoJson';
 
-const RISK_COLOUR = [
-  'match',
-  ['get', 'riskRank'],
-  4,
-  '#ff6a55',
-  3,
-  '#f0b429',
-  2,
-  '#3fbf87',
-  '#7c8ba1',
-] as unknown as string;
+const RISK_COLOUR = riskRankColour('riskRank');
 
-const SELECTION_COLOUR = '#3ba9dd';
+const SELECTION_COLOUR = MAP_SELECTION;
 
 /**
  * Airport markers from loaded `AirportStatus` pages.
@@ -75,7 +66,7 @@ export function useAirportLayer(
           'circle-radius': ['interpolate', ['linear'], ['zoom'], 3, 3.2, 10, 6],
           'circle-color': RISK_COLOUR,
           'circle-stroke-width': 1,
-          'circle-stroke-color': '#080b11',
+          'circle-stroke-color': MAP_CASING,
         },
       });
     }

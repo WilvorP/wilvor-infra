@@ -8,7 +8,7 @@ import { summariseFreshness } from './freshness';
 import styles from './FreshnessStrip.module.css';
 
 /**
- * Source freshness strip.
+ * Source freshness readout.
  *
  * Displayed on every operational screen so the operator can always tell how
  * old the underlying picture is. Age is shown alongside the status band
@@ -38,9 +38,14 @@ export function FreshnessStrip() {
 
       {hasData
         ? summary.sources.map((source) => (
-            <span key={source.key} className={styles.source}>
+            <span
+              key={source.key}
+              className={styles.source}
+              title={source.note ?? undefined}
+            >
               <StatusPill
                 size="sm"
+                variant="plain"
                 prefix={source.label}
                 presentation={presentFreshness(source.status)}
               />
@@ -70,8 +75,8 @@ export function FreshnessStrip() {
       ) : null}
 
       <span className={styles.generated}>
-        <span className={styles.generatedLabel}>Freshness as of</span>
-        <span className="wv-numeric">
+        <span className={styles.generatedLabel}>Data as of</span>
+        <span className={`${styles.generatedValue} wv-numeric`}>
           {formatUtcTime(summary.generatedAt)}
         </span>
       </span>

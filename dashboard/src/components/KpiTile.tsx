@@ -21,6 +21,11 @@ export interface KpiTileProps {
   /** When set, the tile is a quick-filter control. */
   active?: boolean;
   onSelect?: () => void;
+  /**
+   * `tile` (default) is a standalone card. `readout` is an unboxed metric
+   * for a single-row strip where neighbours are divided by hairlines.
+   */
+  variant?: 'tile' | 'readout';
 }
 
 /**
@@ -38,9 +43,10 @@ export function KpiTile({
   stale = false,
   active = false,
   onSelect,
+  variant = 'tile',
 }: KpiTileProps) {
   const className = [
-    styles.tile,
+    styles[variant],
     onSelect ? styles.interactive : '',
     active ? styles.active : '',
   ]

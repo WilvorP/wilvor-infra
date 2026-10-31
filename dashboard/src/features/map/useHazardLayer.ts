@@ -1,6 +1,7 @@
 import type { GeoJSONSource, Map as MapLibreMap } from 'maplibre-gl';
 import { useEffect } from 'react';
 
+import { riskRankColour } from './mapPalette';
 import { MAP_IDS } from './mapStyle';
 import {
   EMPTY_HAZARD_COLLECTION,
@@ -40,17 +41,7 @@ export function useHazardLayer(
     // `severityRank` mirrors the shared risk scale (4 high .. 1 unknown) so
     // hazard fills match risk colouring elsewhere in the console. Severity is
     // classified in hazardGeoJson.ts; no scoring happens here.
-    const severityColour = [
-      'match',
-      ['get', 'severityRank'],
-      4,
-      '#ff6a55',
-      3,
-      '#f0b429',
-      2,
-      '#3fbf87',
-      '#7c8ba1',
-    ] as unknown as string;
+    const severityColour = riskRankColour('severityRank');
 
     if (map.getLayer(MAP_IDS.hazardFill) === undefined) {
       map.addLayer({

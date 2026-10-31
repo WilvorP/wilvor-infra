@@ -1,0 +1,124 @@
+.inspector {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--wv-space-4);
+  padding: var(--wv-space-5) var(--wv-space-6) 0;
+}
+
+.kicker {
+  font-size: var(--wv-text-xs);
+  font-weight: var(--wv-weight-medium);
+  color: var(--wv-accent-strong);
+}
+
+.close {
+  margin-left: auto;
+  height: 24px;
+  padding: 0 var(--wv-space-4);
+  font-size: var(--wv-text-xs);
+  color: var(--wv-text-secondary);
+  border-radius: var(--wv-radius-sm);
+}
+
+.close:hover {
+  color: var(--wv-text-primary);
+  background-color: var(--wv-surface-3);
+}
+
+.identity {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--wv-space-2) var(--wv-space-4);
+  padding: var(--wv-space-2) var(--wv-space-6) var(--wv-space-5);
+  min-width: 0;
+}
+
+.name {
+  font-size: var(--wv-text-lg);
+  font-weight: var(--wv-weight-semibold);
+  letter-spacing: var(--wv-tracking-tight);
+  color: var(--wv-text-primary);
+}
+
+.id {
+  font-size: var(--wv-text-xs);
+  color: var(--wv-text-tertiary);
+  overflow-wrap: anywhere;
+}
+
+.idWide {
+  flex-basis: 100%;
+}
+
+.body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wv-space-6);
+  padding: 0 var(--wv-space-6) var(--wv-space-6);
+  min-height: 0;
+}
+
+.note {
+  font-size: var(--wv-text-xs);
+  color: var(--wv-text-secondary);
+}
+
+.warning {
+  font-size: var(--wv-text-xs);
+  color: var(--wv-acceptable);
+}
+
+.primaryAction {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: flex-start;
+  height: var(--wv-control-height);
+  padding: 0 var(--wv-space-6);
+  font-size: var(--wv-text-xs);
+  font-weight: var(--wv-weight-semibold);
+  color: var(--wv-text-inverse);
+  background-color: var(--wv-accent-strong);
+  border-radius: var(--wv-radius-sm);
+  text-decoration: none;
+}
+
+.primaryAction:hover {
+  background-color: color-mix(in srgb, var(--wv-accent-strong) 82%, white);
+  text-decoration: none;
+}
+
+.rawBlock {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wv-space-3);
+}
+
+.rawHeading {
+  font-size: var(--wv-text-xs);
+  font-weight: var(--wv-weight-medium);
+  color: var(--wv-text-tertiary);
+}
+
+.raw {
+  margin: 0;
+  padding: var(--wv-space-4) var(--wv-space-5);
+  font-family: var(--wv-font-mono);
+  font-size: var(--wv-text-2xs);
+  line-height: 1.55;
+  color: var(--wv-text-secondary);
+  background-color: var(--wv-bg-base);
+  border-radius: var(--wv-radius-sm);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 160px;
+  overflow: auto;
+}

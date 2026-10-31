@@ -1,7 +1,7 @@
 import { KpiTile, type KpiBreakdownEntry } from '@/components/KpiTile';
 import type { OverviewResponse } from '@/types/api';
 import { asNumber } from '@/utils/coerce';
-import { formatCount } from '@/utils/format';
+import { formatCount, NOT_REPORTED } from '@/utils/format';
 
 import styles from './OverviewKpis.module.css';
 
@@ -13,7 +13,7 @@ export interface OverviewKpisProps {
   stale?: boolean;
 }
 
-const MISSING = '—';
+const MISSING = NOT_REPORTED;
 
 function count(value: unknown): string {
   const numeric = asNumber(value);
@@ -51,6 +51,7 @@ export function OverviewKpis({ data, problem, stale }: OverviewKpisProps) {
   return (
     <div className={styles.grid}>
       <KpiTile
+        variant="readout"
         label="Aircraft"
         value={count(data?.aircraft?.activeCount)}
         unit="tracked"
@@ -59,6 +60,7 @@ export function OverviewKpis({ data, problem, stale }: OverviewKpisProps) {
       />
 
       <KpiTile
+        variant="readout"
         label="Active hazards"
         value={count(data?.hazards?.activeCount)}
         unit="SIGMET / AIRMET"
@@ -67,31 +69,32 @@ export function OverviewKpis({ data, problem, stale }: OverviewKpisProps) {
       />
 
       <KpiTile
-        label="Current Encounters"
+        variant="readout"
+        label="Current encounters"
         value={count(encounters?.activeCount)}
-        unit="current"
         breakdown={problem ? undefined : encounterBreakdown}
         problem={problem}
         stale={stale}
       />
 
       <KpiTile
-        label="Current Recommendations"
+        variant="readout"
+        label="Current recommendations"
         value={count(data?.recommendations?.currentCount)}
-        unit="current"
         problem={problem}
         stale={stale}
       />
 
       <KpiTile
-        label="Current Alerts"
+        variant="readout"
+        label="Current alerts"
         value={count(alerts?.currentCount)}
-        unit="current"
         problem={problem}
         stale={stale}
       />
 
       <KpiTile
+        variant="readout"
         label="Airports"
         value={count(airports?.currentCount)}
         unit="reporting"

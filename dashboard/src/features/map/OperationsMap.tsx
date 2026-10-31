@@ -51,6 +51,11 @@ export interface OperationsMapProps {
    * `overlay` floats it on the canvas.
    */
   legendPlacement?: 'overlay' | 'below';
+  /**
+   * `card` (default) draws a bordered, rounded frame. `flush` fills its
+   * region edge to edge, for layouts that already divide the workspace.
+   */
+  frame?: 'card' | 'flush';
   /** Loaded airport pages only. There is no unpaginated `/map/airports`. */
   airports?: AirportFeatureCollection | null;
   selectedAirportId?: string | null;
@@ -78,6 +83,7 @@ export function OperationsMap({
   visibleAircraftIds = null,
   showAircraft = true,
   legendPlacement = 'below',
+  frame = 'card',
   airports = null,
   selectedAirportId = null,
   onSelectAirport,
@@ -283,7 +289,7 @@ export function OperationsMap({
 
   return (
     <div
-      className={`${styles.wrapper} ${legendPlacement === 'below' ? styles.wrapperLegendBelow : ''}`}
+      className={`${styles.wrapper} ${frame === 'flush' ? styles.wrapperFlush : ''} ${legendPlacement === 'below' ? styles.wrapperLegendBelow : ''}`}
     >
       <div
         ref={containerRef}
@@ -382,14 +388,18 @@ export function OperationsMap({
         ) : selectedHazardId !== null || selectedAircraftId !== null ? (
           <p className={styles.legendNote}>
             {selectedAircraftId !== null ? 'Aircraft' : 'Hazard'} selected.
-            Details in the investigation panel below.
+            Details in the investigation panel.
           </p>
         ) : airports != null ? (
           <p className={styles.legendNote}>
             Airport markers are the loaded pages only, not a full-network
             feed.
           </p>
-        ) : null}
+        ) : (
+          <p className={styles.legendHint}>
+            Select an aircraft or hazard to inspect it.
+          </p>
+        )}
       </div>
 
       <div className={styles.overlayStack}>

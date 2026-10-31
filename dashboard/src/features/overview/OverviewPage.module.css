@@ -1,108 +1,144 @@
+/*
+ * Map-first workspace.
+ *
+ *   summary  summary
+ *   map      rail
+ *   worklist rail
+ *
+ * Regions are tiled with 1px seams (the grid gap shows the page background)
+ * instead of being separate bordered cards, so map, worklist and rail read
+ * as one surface.
+ */
 .page {
-  display: flex;
-  flex-direction: column;
-  gap: var(--wv-space-4);
+  --overview-worklist-height: clamp(220px, 30vh, 320px);
+
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) var(--wv-rail-width);
+  grid-template-rows: auto minmax(0, 1fr) var(--overview-worklist-height);
+  grid-template-areas:
+    'summary summary'
+    'map rail'
+    'worklist rail';
+  gap: 1px;
   box-sizing: border-box;
   width: 100%;
   min-width: 0;
   height: 100%;
   min-height: 0;
-  padding: var(--wv-space-4) var(--wv-space-5);
+  background-color: var(--wv-border-subtle);
+}
+
+.summary {
+  grid-area: summary;
+  display: flex;
+  flex-direction: column;
+  gap: var(--wv-space-4);
+  min-width: 0;
+  padding: var(--wv-space-5) var(--wv-space-6);
+  background-color: var(--wv-surface-1);
+}
+
+.map {
+  grid-area: map;
+  min-width: 0;
+  min-height: 0;
+  background-color: var(--wv-bg-base);
+}
+
+.rail {
+  grid-area: rail;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background-color: var(--wv-surface-1);
+}
+
+/* Appears only while an aircraft or hazard is selected. */
+.inspector {
+  flex: 0 0 auto;
+  max-height: 64%;
+  min-height: 0;
+  overflow-y: auto;
+  background-color: var(--wv-surface-2);
+  border-bottom: 1px solid var(--wv-border-subtle);
+}
+
+.context {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+  padding: var(--wv-space-2) 0 var(--wv-space-4);
+  overflow-y: auto;
+}
+
+.context > * {
+  flex: 0 0 auto;
+}
+
+.context > * + * {
+  margin-top: var(--wv-space-2);
+  border-top: 1px solid var(--wv-border-subtle);
+}
+
+.worklist {
+  grid-area: worklist;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background-color: var(--wv-surface-1);
+}
+
+.worklist > * {
+  flex: 1 1 auto;
+}
+
+.fatalPage {
+  height: 100%;
+  padding: var(--wv-space-6);
   overflow: auto;
 }
 
 .fatal {
   padding: var(--wv-space-6);
   background-color: var(--wv-surface-1);
-  border: 1px solid var(--wv-border);
   border-radius: var(--wv-radius-md);
 }
 
-.main {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, var(--wv-rail-width));
-  grid-template-rows: minmax(520px, 1fr);
-  align-items: stretch;
-  gap: var(--wv-space-4);
-  flex: 1 1 auto;
-  min-width: 0;
-  min-height: 520px;
-}
-
-.mapColumn {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 520px;
-}
-
-.mapFrame {
-  flex: 1 1 auto;
-  width: 100%;
-  height: 100%;
-  min-width: 0;
-  min-height: 520px;
-}
-
-.rail {
-  display: flex;
-  flex-direction: column;
-  gap: var(--wv-space-4);
-  min-width: 0;
-  min-height: 0;
-  height: 100%;
-  max-height: 100%;
-  overflow: auto;
-  padding-right: var(--wv-space-1);
-}
-
-.rail > * {
-  flex: 0 0 auto;
-  min-width: 0;
-}
-
-.worklist {
-  flex: 0 0 auto;
-  min-width: 0;
-  min-height: 0;
-}
-
-.drawer {
-  flex: 0 0 auto;
-  min-width: 0;
-  min-height: 0;
-}
-
-.drawerOccupied {
-  height: min(var(--wv-drawer-height), 42vh);
-}
-
-.drawerCompact {
-  height: auto;
-}
-
-@media (max-width: 1280px) {
-  .main {
+@media (max-width: 1180px) {
+  .page {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: 520px auto;
-    flex: 0 0 auto;
-    min-height: auto;
+    grid-template-rows: auto 460px auto var(--overview-worklist-height);
+    grid-template-areas:
+      'summary'
+      'map'
+      'rail'
+      'worklist';
+    overflow-y: auto;
+    background-attachment: local;
   }
 
-  .mapColumn,
-  .mapFrame {
-    height: 520px;
-    min-height: 520px;
-  }
-
-  .rail {
-    height: auto;
+  .inspector {
     max-height: none;
+  }
+
+  .context {
     overflow: visible;
   }
 
-  .drawerOccupied {
-    height: auto;
-    max-height: min(var(--wv-drawer-height), 50vh);
+  .page {
+    --overview-worklist-height: 420px;
+  }
+}
+
+@media (max-width: 720px) {
+  .page {
+    grid-template-rows: auto 380px auto var(--overview-worklist-height);
+  }
+
+  .summary {
+    padding: var(--wv-space-4) var(--wv-space-5);
   }
 }

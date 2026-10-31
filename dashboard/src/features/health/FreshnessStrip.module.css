@@ -1,43 +1,32 @@
+/* Wraps rather than scrolls, so no source or the data time is ever off-screen. */
 .strip {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: var(--wv-space-5);
+  gap: var(--wv-space-2) var(--wv-space-7);
   box-sizing: border-box;
-  flex: 0 0 auto;
-  min-height: var(--wv-freshness-height);
-  height: auto;
-  padding: var(--wv-space-2) var(--wv-space-6);
-  background-color: var(--wv-surface-1);
-  border-bottom: 1px solid var(--wv-border);
-  overflow-x: auto;
-  overflow-y: hidden;
-  scrollbar-width: none;
-}
-
-.strip::-webkit-scrollbar {
-  display: none;
+  min-width: 0;
+  min-height: var(--wv-topbar-height);
+  padding: var(--wv-space-2) 0;
 }
 
 .heading {
-  font-size: var(--wv-text-2xs);
-  font-weight: var(--wv-weight-semibold);
-  text-transform: uppercase;
-  letter-spacing: var(--wv-tracking-wider);
+  font-size: var(--wv-text-xs);
   color: var(--wv-text-tertiary);
   flex: 0 0 auto;
+  margin-right: calc(var(--wv-space-4) * -1);
 }
 
 .source {
   display: inline-flex;
-  align-items: center;
+  align-items: baseline;
   gap: var(--wv-space-3);
   flex: 0 0 auto;
 }
 
 .age {
-  font-size: var(--wv-text-2xs);
+  font-size: var(--wv-text-xs);
   color: var(--wv-text-tertiary);
-  min-width: 4ch;
 }
 
 .pending,
@@ -57,6 +46,7 @@
 
 .warning {
   color: var(--wv-acceptable);
+  font-weight: var(--wv-weight-medium);
 }
 
 .spacer {
@@ -65,14 +55,14 @@
 
 .generated {
   display: inline-flex;
-  align-items: center;
+  align-items: baseline;
   gap: var(--wv-space-3);
   flex: 0 0 auto;
-  font-size: var(--wv-text-2xs);
+  font-size: var(--wv-text-xs);
   color: var(--wv-text-tertiary);
 }
 
-.generatedLabel {
-  text-transform: uppercase;
-  letter-spacing: var(--wv-tracking-wide);
+.generatedValue {
+  font-weight: var(--wv-weight-medium);
+  color: var(--wv-text-primary);
 }

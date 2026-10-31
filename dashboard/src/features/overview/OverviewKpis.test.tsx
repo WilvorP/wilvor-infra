@@ -36,18 +36,18 @@ describe('OverviewKpis', () => {
 
     expect(within(tile('Aircraft')).getByText('3,412')).toBeInTheDocument();
     expect(within(tile('Active hazards')).getByText('27')).toBeInTheDocument();
-    expect(within(tile('Current Encounters')).getByText('14')).toBeInTheDocument();
-    expect(within(tile('Current Recommendations')).getByText('2')).toBeInTheDocument();
-    expect(within(tile('Current Recommendations')).queryByText('6')).not.toBeInTheDocument();
-    expect(within(tile('Current Alerts')).getByText('4')).toBeInTheDocument();
-    expect(within(tile('Current Alerts')).queryByText('40')).not.toBeInTheDocument();
+    expect(within(tile('Current encounters')).getByText('14')).toBeInTheDocument();
+    expect(within(tile('Current recommendations')).getByText('2')).toBeInTheDocument();
+    expect(within(tile('Current recommendations')).queryByText('6')).not.toBeInTheDocument();
+    expect(within(tile('Current alerts')).getByText('4')).toBeInTheDocument();
+    expect(within(tile('Current alerts')).queryByText('40')).not.toBeInTheDocument();
     expect(within(tile('Airports')).getByText('118')).toBeInTheDocument();
   });
 
   it('renders the encounter risk breakdown', () => {
     render(<OverviewKpis data={OVERVIEW} />);
 
-    const encounters = tile('Current Encounters');
+    const encounters = tile('Current encounters');
 
     expect(within(encounters).getByText('High')).toBeInTheDocument();
     expect(within(encounters).getByText('3')).toBeInTheDocument();
