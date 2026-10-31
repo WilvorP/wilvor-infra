@@ -399,3 +399,39 @@ output "historical_analytics_query_policy_name" {
 output "historical_analytics_dashboard_name" {
   value = module.historical_analytics.dashboard_name
 }
+
+output "ai_host_function_name" {
+  value = module.ai_host.function_name
+}
+
+output "ai_host_function_arn" {
+  value = module.ai_host.function_arn
+}
+
+output "ai_host_log_group_name" {
+  value = module.ai_host.log_group_name
+}
+
+output "ai_host_role_arn" {
+  value = module.ai_host.role_arn
+}
+
+output "ai_ledger_table_name" {
+  value = module.ai_host.ledger_table_name
+}
+
+output "ai_ledger_table_arn" {
+  value = module.ai_host.ledger_table_arn
+}
+
+output "ai_host_enable_invoke" {
+  value = module.ai_host.enable_invoke
+}
+
+output "ai_host_reserved_concurrent_executions" {
+  value = module.ai_host.reserved_concurrent_executions
+}
+
+output "ai_query_route_enabled" {
+  value = module.ai_host.ai_query_route_enabled
+}

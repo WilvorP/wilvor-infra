@@ -696,6 +696,10 @@ module "operational_api" {
 
   name_prefix = local.name_prefix
 
+  # POST /ai/query stays absent. The AI host module owns the separate
+  # function, and its ARN is intentionally not passed into this module.
+  enable_ai_query_route = false
+
   api_zip_path = (
     "${path.root}/../../functions/operational_api/dist/operational_api.zip"
   )
@@ -807,6 +811,19 @@ module "operational_api" {
   enable_historical_analytics_dashboard = (
     module.historical_analytics.enable_historical_analytics
   )
+
+  tags = local.common_tags
+}
+
+module "ai_host" {
+  source = "../../modules/ai_host"
+
+  name_prefix = local.name_prefix
+  aws_region  = var.aws_region
+  account_id  = data.aws_caller_identity.current.account_id
+
+  log_retention_days = 3
+  enable_invoke      = false
 
   tags = local.common_tags
 }
