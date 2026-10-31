@@ -157,3 +157,19 @@ variable "ai_lambda_invoke_arn" {
     error_message = "ai_lambda_invoke_arn must be empty or the API Gateway invoke ARN of an explicit Lambda function."
   }
 }
+
+variable "ai_query_live_aws_controls_verified" {
+  type        = bool
+  default     = false
+  nullable    = false
+  description = "Operator gate for POST /ai/query. Leave false until the twelve live AWS issuance controls are verified, including same-account lambda invoke review. This module does not call AWS, does not read identity policies, and does not turn the gate on."
+
+  validation {
+    condition = (
+      var.ai_query_live_aws_controls_verified == false ||
+      var.enable_ai_query_route
+    )
+
+    error_message = "ai_query_live_aws_controls_verified requires enable_ai_query_route. The route stays absent until that live review is recorded by a separate change."
+  }
+}

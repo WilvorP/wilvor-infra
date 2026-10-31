@@ -164,6 +164,7 @@ MA4_CROSS_MODULE_INTERFACES = (
     "MasterSourceAuthenticity remains NOT_ESTABLISHED. No admission constant is changed.",
     "The source-read trace boundary remains an empty trusted-runtime record. This module does not write into it.",
     "Who can invoke the Lambda is not established. A forged gateway-looking event is not host origin.",
+    "A trusted AWS source receipt is sprint3d_source_evidence.TrustedAwsSourceReceipt, issued only after an approved adapter runs and is bound to the consumed grant and invocation. This local receipt is not that interface, and MasterSourceAuthenticity stays NOT_ESTABLISHED.",
 )
 
 _REGION_TEXT_KEYS = frozenset(

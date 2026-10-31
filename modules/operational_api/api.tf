@@ -384,7 +384,7 @@ resource "aws_apigatewayv2_api" "http" {
     ]
 
     allow_methods = (
-      var.enable_ai_query_route
+      var.enable_ai_query_route && var.ai_query_live_aws_controls_verified
       ? [
         "GET",
         "OPTIONS",
@@ -424,6 +424,15 @@ resource "aws_apigatewayv2_api" "http" {
         local.ai_query_route_configuration_error,
         "POST /ai/query requires an externally configured JWT issuer, audience, and AI Lambda.",
       )
+    }
+
+    precondition {
+      condition = (
+        !var.enable_ai_query_route ||
+        var.ai_query_live_aws_controls_verified
+      )
+
+      error_message = "POST /ai/query stays absent until the live AWS issuance controls are verified."
     }
   }
 }
@@ -533,7 +542,7 @@ resource "aws_lambda_permission" "api_gateway" {
 
 resource "aws_apigatewayv2_authorizer" "ai_jwt" {
   count = (
-    var.enable_ai_query_route ? 1 : 0
+    var.enable_ai_query_route && var.ai_query_live_aws_controls_verified ? 1 : 0
   )
 
   api_id = (
@@ -577,7 +586,7 @@ resource "aws_apigatewayv2_authorizer" "ai_jwt" {
 
 resource "aws_apigatewayv2_integration" "ai_query" {
   count = (
-    var.enable_ai_query_route ? 1 : 0
+    var.enable_ai_query_route && var.ai_query_live_aws_controls_verified ? 1 : 0
   )
 
   api_id = (
@@ -616,7 +625,7 @@ resource "aws_apigatewayv2_integration" "ai_query" {
 
 resource "aws_apigatewayv2_route" "ai_query" {
   count = (
-    var.enable_ai_query_route ? 1 : 0
+    var.enable_ai_query_route && var.ai_query_live_aws_controls_verified ? 1 : 0
   )
 
   api_id = (
@@ -656,7 +665,7 @@ resource "aws_apigatewayv2_route" "ai_query" {
 
 resource "aws_lambda_permission" "ai_query" {
   count = (
-    var.enable_ai_query_route && !local.ai_lambda_qualified
+    var.enable_ai_query_route && !local.ai_lambda_qualified && var.ai_query_live_aws_controls_verified
     ? 1
     : 0
   )
@@ -706,7 +715,7 @@ resource "aws_lambda_permission" "ai_query" {
 
 resource "aws_lambda_permission" "ai_query_qualified" {
   count = (
-    var.enable_ai_query_route && local.ai_lambda_qualified
+    var.enable_ai_query_route && local.ai_lambda_qualified && var.ai_query_live_aws_controls_verified
     ? 1
     : 0
   )

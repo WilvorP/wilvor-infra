@@ -329,11 +329,26 @@ def _source_records(response: HistoricalQueryResponse) -> tuple[SourceRecord, ..
     return tuple(
         SourceRecord(
             record_id=item.record_id,
-            source_version=None,
+            source_version=_listed_source_version(item),
             event_timestamp_utc=item.event_time_utc,
         )
         for item in result.records
     )
+
+
+def _listed_source_version(item: object) -> str | None:
+    """Keep a listed source version when the row actually carries one.
+
+    ``HistoricalEncounterRecord`` does not have ``source_version``. A missing
+    attribute stays missing. Do not parse it out of ``hazard_version_key``.
+    """
+
+    version = getattr(item, "source_version", None)
+    if not isinstance(version, str) or not version or version != version.strip():
+        return None
+    if any(character.isspace() for character in version):
+        return None
+    return version
 
 
 def _application_payload(response: HistoricalQueryResponse) -> dict[str, object]:
