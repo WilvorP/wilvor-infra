@@ -42,6 +42,7 @@ data "aws_iam_policy_document" "host" {
     actions = [
       "dynamodb:GetItem",
       "dynamodb:PutItem",
+      "dynamodb:TransactWriteItems",
     ]
 
     resources = [
@@ -62,16 +63,38 @@ data "aws_iam_policy_document" "host" {
   }
 
   statement {
-    sid    = "DenyOtherDynamoDbTables"
+    sid = "ReadReviewedGetItemTables"
+
+    actions = [
+      "dynamodb:GetItem",
+    ]
+
+    resources = var.reviewed_getitem_table_arns
+  }
+
+  statement {
+    sid    = "DenyReviewedGetItemTableWrites"
+    effect = "Deny"
+
+    actions = local.prohibited_getitem_table_actions
+
+    resources = var.reviewed_getitem_table_arns
+  }
+
+  statement {
+    sid    = "DenyUnreviewedDynamoDb"
     effect = "Deny"
 
     actions = [
       "dynamodb:*",
     ]
 
-    not_resources = [
-      aws_dynamodb_table.ledger.arn,
-    ]
+    # Exact table ARNs only. An index ARN does not match these values, so
+    # this deny still covers every index, including the aircraft callsign GSI.
+    not_resources = concat(
+      [aws_dynamodb_table.ledger.arn],
+      var.reviewed_getitem_table_arns,
+    )
   }
 
   statement {
@@ -111,4 +134,17 @@ resource "aws_iam_role_policy" "host" {
   name   = "${var.name_prefix}-ai-host-policy"
   role   = aws_iam_role.host.id
   policy = data.aws_iam_policy_document.host.json
+
+  lifecycle {
+    precondition {
+      condition = alltrue([
+        for arn in var.reviewed_getitem_table_arns :
+        startswith(arn, "arn:aws:dynamodb:${var.aws_region}:${var.account_id}:table/")
+        && !strcontains(arn, "*")
+        && !strcontains(arn, "/index/")
+        && arn != aws_dynamodb_table.ledger.arn
+      ])
+      error_message = "Reviewed GetItem tables must be exact base-table ARNs in this account and region, and must not be the execution ledger."
+    }
+  }
 }

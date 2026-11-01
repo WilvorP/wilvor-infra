@@ -825,5 +825,12 @@ module "ai_host" {
   log_retention_days = 3
   enable_invoke      = false
 
+  # Aircraft mapping is GetItem on the base table. QUERY is not allowed, so
+  # the callsign index is not passed. No reviewed historical DynamoDB table
+  # exists in this root; encounter and Glue tables are not substitutes.
+  reviewed_getitem_table_arns = [
+    module.aircraft_foundation.aircraft_current_state_table_arn,
+  ]
+
   tags = local.common_tags
 }

@@ -41,6 +41,23 @@ variable "enable_invoke" {
   description = "When false, reserved concurrency is 0 and the function cannot run. This switch does not create POST /ai/query, a function URL, or a Lambda permission."
 }
 
+variable "reviewed_getitem_table_arns" {
+  type        = list(string)
+  description = "Exact DynamoDB base-table ARNs whose reviewed mapping allows GetItem and does not allow Query. Index ARNs and wildcards are rejected. The ledger ARN is not a member of this list."
+
+  validation {
+    condition = (
+      length(var.reviewed_getitem_table_arns) > 0
+      && length(var.reviewed_getitem_table_arns) == length(distinct(var.reviewed_getitem_table_arns))
+      && alltrue([
+        for arn in var.reviewed_getitem_table_arns :
+        can(regex("^arn:aws:dynamodb:[a-z0-9-]+:[0-9]{12}:table/[A-Za-z0-9_.-]+$", arn))
+      ])
+    )
+    error_message = "reviewed_getitem_table_arns must be distinct exact DynamoDB table ARNs without wildcards or index suffixes."
+  }
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

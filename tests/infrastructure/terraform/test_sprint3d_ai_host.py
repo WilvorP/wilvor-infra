@@ -23,9 +23,33 @@ PROHIBITED_LEDGER_ACTIONS = (
     "dynamodb:DeleteItem",
     "dynamodb:BatchWriteItem",
     "dynamodb:UpdateItem",
-    "dynamodb:TransactWriteItems",
     "dynamodb:CreateTable",
+    "dynamodb:PartiQLSelect",
+    "dynamodb:PartiQLInsert",
+    "dynamodb:PartiQLUpdate",
+    "dynamodb:PartiQLDelete",
 )
+LEDGER_ALLOW_ACTIONS = (
+    "dynamodb:GetItem",
+    "dynamodb:PutItem",
+    "dynamodb:TransactWriteItems",
+)
+PROHIBITED_GETITEM_TABLE_ACTIONS = (
+    "dynamodb:PutItem",
+    "dynamodb:UpdateItem",
+    "dynamodb:DeleteItem",
+    "dynamodb:TransactWriteItems",
+    "dynamodb:BatchWriteItem",
+    "dynamodb:BatchGetItem",
+    "dynamodb:Scan",
+    "dynamodb:Query",
+    "dynamodb:CreateTable",
+    "dynamodb:PartiQLSelect",
+    "dynamodb:PartiQLInsert",
+    "dynamodb:PartiQLUpdate",
+    "dynamodb:PartiQLDelete",
+)
+AIRCRAFT_TABLE_NAME = "wilvor-dev-aircraft-current-state"
 
 
 def _read(path: Path) -> str:
@@ -170,25 +194,163 @@ def test_ledger_table_matches_the_sprint3c_key_and_ttl_contract(repo_root: Path)
     )
 
 
-def test_ai_host_iam_is_limited_to_ledger_get_and_put(ai_host_source: str):
+def _hcl_string_list(source: str, name: str) -> tuple[str, ...]:
+    match = re.search(rf"{re.escape(name)}\s*=\s*\[(.*?)\]", source, flags=re.S)
+    assert match is not None, f"Missing list {name}"
+    return tuple(re.findall(r'"([^"]+)"', match.group(1)))
+
+
+def _brace_block(text: str, header: str) -> str:
+    start = text.find(header)
+    assert start != -1, f"Missing block {header}"
+    brace = text.find("{", start)
+    depth = 0
+    for index, character in enumerate(text[brace:], start=brace):
+        if character == "{":
+            depth += 1
+        elif character == "}":
+            depth -= 1
+            if depth == 0:
+                return text[brace + 1 : index]
+    raise AssertionError(f"Unclosed block {header}")
+
+
+def _matches(pattern: str, value: str) -> bool:
+    if pattern == "*":
+        return True
+    if pattern.endswith("*"):
+        return value.startswith(pattern[:-1])
+    return pattern == value
+
+
+def _decision(statements: tuple[dict[str, object], ...], action: str, resource: str) -> str:
+    """AWS evaluation for one action and resource. Explicit deny wins."""
+
+    allowed = False
+    for statement in statements:
+        actions = statement["actions"]
+        assert isinstance(actions, tuple)
+        if not any(_matches(pattern, action) for pattern in actions):
+            continue
+        not_resources = statement.get("not_resources")
+        resources = statement.get("resources")
+        if isinstance(not_resources, tuple):
+            applies = not any(_matches(pattern, resource) for pattern in not_resources)
+        else:
+            assert isinstance(resources, tuple)
+            applies = any(_matches(pattern, resource) for pattern in resources)
+        if not applies:
+            continue
+        if statement["effect"] == "Deny":
+            return "explicit_deny"
+        allowed = True
+    return "allow" if allowed else "implicit_deny"
+
+
+def _reviewed_policy(ai_host_source: str) -> tuple[dict[str, object], ...]:
+    ledger_actions = _hcl_string_list(ai_host_source, "prohibited_ledger_actions")
+    specialist_actions = _hcl_string_list(ai_host_source, "prohibited_getitem_table_actions")
+    assert ledger_actions == PROHIBITED_LEDGER_ACTIONS
+    assert specialist_actions == PROHIBITED_GETITEM_TABLE_ACTIONS
+    assert "dynamodb:TransactWriteItems" not in ledger_actions
+    assert "dynamodb:TransactWriteItems" in specialist_actions
+    assert "dynamodb:GetItem" not in specialist_actions
+
+    policy = _brace_block(ai_host_source, 'data "aws_iam_policy_document" "host"')
+    allow = _extract_statement(policy, "ReadAndPutExecutionLedger")
+    specialist_allow = _extract_statement(policy, "ReadReviewedGetItemTables")
+    unreviewed = _extract_statement(policy, "DenyUnreviewedDynamoDb")
+    assert tuple(re.findall(r'"(dynamodb:[^"]+)"', allow)) == LEDGER_ALLOW_ACTIONS
+    assert tuple(re.findall(r'"(dynamodb:[^"]+)"', specialist_allow)) == ("dynamodb:GetItem",)
+    assert tuple(re.findall(r'"(dynamodb:[^"]+)"', unreviewed)) == ("dynamodb:*",)
+    assert "local.prohibited_ledger_actions" in _extract_statement(policy, "DenyLedgerProhibitedApis")
+    assert '"dynamodb:GetItem"' in specialist_allow
+    assert "var.reviewed_getitem_table_arns" in specialist_allow
+    assert "dynamodb:Query" not in specialist_allow
+    assert "dynamodb:TransactWriteItems" not in specialist_allow
+    assert "/index/" not in specialist_allow
+    assert '"dynamodb:*"' in unreviewed
+    assert "not_resources" in unreviewed
+    assert "concat(" in unreviewed
+    assert "aws_dynamodb_table.ledger.arn" in unreviewed
+    assert "var.reviewed_getitem_table_arns" in unreviewed
+    assert "/index/" not in unreviewed
+    assert "DenyOtherDynamoDbTables" not in policy
+
+    ledger = f"arn:aws:dynamodb:us-west-1:{INTENDED_ACCOUNT_ID}:table/{LEDGER_TABLE_NAME}"
+    aircraft = f"arn:aws:dynamodb:us-west-1:{INTENDED_ACCOUNT_ID}:table/{AIRCRAFT_TABLE_NAME}"
+    return (
+        {
+            "effect": "Allow",
+            "actions": LEDGER_ALLOW_ACTIONS,
+            "resources": (ledger,),
+        },
+        {
+            "effect": "Deny",
+            "actions": ledger_actions,
+            "resources": (ledger, f"{ledger}/index/*"),
+        },
+        {
+            "effect": "Allow",
+            "actions": ("dynamodb:GetItem",),
+            "resources": (aircraft,),
+        },
+        {
+            "effect": "Deny",
+            "actions": specialist_actions,
+            "resources": (aircraft,),
+        },
+        {
+            "effect": "Deny",
+            "actions": ("dynamodb:*",),
+            "not_resources": (ledger, aircraft),
+        },
+        {
+            "effect": "Deny",
+            "actions": (
+                "bedrock:*",
+                "secretsmanager:GetSecretValue",
+                "secretsmanager:GetSecret",
+                "lambda:InvokeFunction",
+                "lambda:AddPermission",
+                "lambda:CreateFunctionUrlConfig",
+                "execute-api:Invoke",
+            ),
+            "resources": ("*",),
+        },
+    )
+
+
+def test_ai_host_iam_allows_ledger_consume_and_reviewed_getitem_only(
+    ai_host_source: str,
+    terraform_dir: Path,
+):
     allow = _extract_statement(ai_host_source, "ReadAndPutExecutionLedger")
     denied = _extract_statement(ai_host_source, "DenyLedgerProhibitedApis")
-    other_tables = _extract_statement(ai_host_source, "DenyOtherDynamoDbTables")
+    specialist_deny = _extract_statement(ai_host_source, "DenyReviewedGetItemTableWrites")
     closed_calls = _extract_statement(ai_host_source, "DenyModelSecretsAndInvoke")
+    ai_host = _module_block(_read(terraform_dir / "main.tf"), "ai_host")
 
-    assert '"dynamodb:GetItem"' in allow
-    assert '"dynamodb:PutItem"' in allow
     assert "effect" not in allow
     assert "local.prohibited_ledger_actions" in denied
+    assert "local.prohibited_getitem_table_actions" in specialist_deny
+    assert re.search(r'effect\s*=\s*"Deny"', denied)
+    assert re.search(r'effect\s*=\s*"Deny"', specialist_deny)
     for action in PROHIBITED_LEDGER_ACTIONS:
         assert action not in allow
-        assert f'"{action}"' in ai_host_source
-
-    assert re.search(r'effect\s*=\s*"Deny"', denied)
-    assert 'effect = "Deny"' in other_tables
-    assert '"dynamodb:*"' in other_tables
-    assert "not_resources" in other_tables
-    assert "aws_dynamodb_table.ledger.arn" in other_tables
+    assert "dynamodb:TransactWriteItems" not in denied
+    assert "iam:SimulatePrincipalPolicy" not in ai_host_source
+    assert "dynamodb:DescribeTable" not in ai_host_source
+    assert "module.aircraft_foundation.aircraft_current_state_table_arn" in ai_host
+    for withheld in (
+        "aircraft_hazard_encounter_table_arn",
+        "risk_results_table_arn",
+        "active_hazards_table_arn",
+        "historical_facts",
+        "query_index",
+        "/index/",
+    ):
+        assert withheld not in ai_host
 
     for action in (
         "bedrock:*",
@@ -204,6 +366,80 @@ def test_ai_host_iam_is_limited_to_ledger_get_and_put(ai_host_source: str):
     assert '"logs:CreateLogStream"' in logs
     assert '"logs:PutLogEvents"' in logs
     assert "logs:CreateLogGroup" not in logs
+
+
+def test_effective_iam_matches_the_reviewed_ledger_and_aircraft_getitem(
+    ai_host_source: str,
+    repo_root: Path,
+    terraform_dir: Path,
+):
+    tfvars = _read(terraform_dir / "terraform.tfvars")
+    assert 'project_name = "wilvor"' in tfvars
+    assert 'environment  = "dev"' in tfvars
+    foundation = _read(repo_root / "modules" / "aircraft_foundation" / "main.tf")
+    aircraft_table = _brace_block(foundation, 'resource "aws_dynamodb_table" "aircraft_current_state"')
+    base_keys = aircraft_table.split("global_secondary_index", 1)[0]
+    assert re.search(
+        r'name\s*=\s*"\$\{var\.name_prefix\}-aircraft-current-state"',
+        base_keys,
+    )
+    assert re.search(r'hash_key\s*=\s*"aircraft_id"', base_keys)
+    assert "range_key" not in base_keys
+    assert re.search(
+        r'name\s*=\s*"callsign-position_time_epoch-index"',
+        aircraft_table,
+    )
+    statements = _reviewed_policy(ai_host_source)
+    ledger = f"arn:aws:dynamodb:us-west-1:{INTENDED_ACCOUNT_ID}:table/{LEDGER_TABLE_NAME}"
+    aircraft = f"arn:aws:dynamodb:us-west-1:{INTENDED_ACCOUNT_ID}:table/{AIRCRAFT_TABLE_NAME}"
+    aircraft_index = f"{aircraft}/index/callsign-position_time_epoch-index"
+    ledger_index = f"{ledger}/index/not-a-ledger-index"
+    encounter = (
+        f"arn:aws:dynamodb:us-west-1:{INTENDED_ACCOUNT_ID}:table/"
+        "wilvor-dev-aircraft-hazard-encounter"
+    )
+    encounter_index = f"{encounter}/index/aircraft_id-detected_at_epoch-index"
+
+    expected = {
+        ("dynamodb:GetItem", ledger): "allow",
+        ("dynamodb:PutItem", ledger): "allow",
+        ("dynamodb:TransactWriteItems", ledger): "allow",
+        ("dynamodb:Query", ledger): "explicit_deny",
+        ("dynamodb:Scan", ledger): "explicit_deny",
+        ("dynamodb:DeleteItem", ledger): "explicit_deny",
+        ("dynamodb:UpdateItem", ledger): "explicit_deny",
+        ("dynamodb:BatchWriteItem", ledger): "explicit_deny",
+        ("dynamodb:CreateTable", ledger): "explicit_deny",
+        ("dynamodb:PartiQLSelect", ledger): "explicit_deny",
+        ("dynamodb:BatchGetItem", ledger): "implicit_deny",
+        ("dynamodb:DescribeTable", ledger): "implicit_deny",
+        ("dynamodb:GetItem", ledger_index): "explicit_deny",
+        ("dynamodb:TransactWriteItems", ledger_index): "explicit_deny",
+        ("dynamodb:GetItem", aircraft): "allow",
+        ("dynamodb:Query", aircraft): "explicit_deny",
+        ("dynamodb:Scan", aircraft): "explicit_deny",
+        ("dynamodb:PutItem", aircraft): "explicit_deny",
+        ("dynamodb:UpdateItem", aircraft): "explicit_deny",
+        ("dynamodb:DeleteItem", aircraft): "explicit_deny",
+        ("dynamodb:TransactWriteItems", aircraft): "explicit_deny",
+        ("dynamodb:BatchGetItem", aircraft): "explicit_deny",
+        ("dynamodb:BatchWriteItem", aircraft): "explicit_deny",
+        ("dynamodb:PartiQLSelect", aircraft): "explicit_deny",
+        ("dynamodb:DescribeTable", aircraft): "implicit_deny",
+        ("dynamodb:GetItem", aircraft_index): "explicit_deny",
+        ("dynamodb:Query", aircraft_index): "explicit_deny",
+        ("dynamodb:GetItem", encounter): "explicit_deny",
+        ("dynamodb:Query", encounter): "explicit_deny",
+        ("dynamodb:Query", encounter_index): "explicit_deny",
+        ("dynamodb:TransactWriteItems", encounter): "explicit_deny",
+        ("dynamodb:PutItem", encounter): "explicit_deny",
+        ("iam:SimulatePrincipalPolicy", ledger): "implicit_deny",
+        ("bedrock:InvokeModel", "*"): "explicit_deny",
+        ("lambda:InvokeFunction", "arn:aws:lambda:us-west-1:396037508959:function:wilvor-dev-ai-host"): "explicit_deny",
+        ("secretsmanager:GetSecretValue", "arn:aws:secretsmanager:us-west-1:396037508959:secret:example"): "explicit_deny",
+    }
+    for (action, resource), decision in expected.items():
+        assert _decision(statements, action, resource) == decision, (action, resource)
 
 
 def test_lambda_is_isolated_closed_and_logged(repo_root: Path, ai_host_source: str):
