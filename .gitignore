@@ -23,6 +23,7 @@ functions/weather/metar/processor/build/
 
 # Live Ops public v1 golden claim snapshots must remain trackable despite *.json.
 !tests/fixtures/live_ops_public_claim_snapshots.json
+!tests/fixtures/historical_targeted_retest_summary.json
 
 
 envs/dev/tfplan

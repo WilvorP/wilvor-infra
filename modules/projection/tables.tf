@@ -1,8 +1,8 @@
 resource "aws_dynamodb_table" "aircraft_projection_points" {
   name         = "${var.name_prefix}-aircraft-projection-points"
   billing_mode = "PAY_PER_REQUEST"
-  hash_key  = "projection_id"
-  range_key = "point_key"
+  hash_key     = "projection_id"
+  range_key    = "point_key"
 
   attribute {
     name = "projection_id"

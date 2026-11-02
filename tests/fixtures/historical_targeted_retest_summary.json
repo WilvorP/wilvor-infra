@@ -1,0 +1,43 @@
+{
+  "fixture_provenance": "Synthetic summary reconstructed from the existing regression assertions. The ignored original report was unavailable. This is not a recording or proof of live provider behavior. No provider payloads, operational records, credentials or real identifiers are included.",
+  "action": "run-targeted",
+  "phase_3a_complete": false,
+  "scenarios": [
+    {
+      "scenario_id": "A-R1",
+      "family": "A",
+      "classification": "SAFE_VARIATION",
+      "verifier_outcome": "PASSED",
+      "final_specialist_status": "ANSWERED",
+      "terminal_decision_kind": "FINAL_CLAIMS",
+      "deterministic_rendered_answer": "The synthetic fixture has an exact count of 2.",
+      "validation_feedback_codes": ["DUPLICATE_TOOL_CALL"],
+      "tool_result_statuses": ["SUCCESS"],
+      "cardinality_summary": {
+        "tool_results": [
+          {"tool_name": "summarize_historical_encounters", "status": "SUCCESS"}
+        ]
+      },
+      "wilvor_tool_call_ids": ["synthetic-summary-call-a"],
+      "provider_turn_count": 3
+    },
+    {"scenario_id": "B-R1", "family": "B", "classification": "PASS", "targeted_success": true},
+    {"scenario_id": "B-R2", "family": "B", "classification": "PASS", "targeted_success": true},
+    {"scenario_id": "B-R3", "family": "B", "classification": "PASS", "targeted_success": true},
+    {"scenario_id": "C-R1", "family": "C", "classification": "PASS", "targeted_success": true},
+    {"scenario_id": "C-R2", "family": "C", "classification": "PASS", "targeted_success": true},
+    {"scenario_id": "C-R3", "family": "C", "classification": "MODEL_ROUTING_FAILURE", "targeted_success": false},
+    {"scenario_id": "K-R1", "family": "K", "classification": "PASS", "targeted_success": true},
+    {"scenario_id": "K-R2", "family": "K", "classification": "PASS", "targeted_success": true},
+    {"scenario_id": "H-R1", "family": "H", "classification": "PASS", "targeted_success": true},
+    {
+      "scenario_id": "J-R1",
+      "family": "J",
+      "classification": "PASS",
+      "final_specialist_status": "UNSUPPORTED",
+      "unsupported_reason": "OUT_OF_CATALOG",
+      "sanitized_model_arguments": [],
+      "selected_tool_names": []
+    }
+  ]
+}

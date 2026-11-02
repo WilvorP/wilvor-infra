@@ -34,10 +34,10 @@ def test_validate_clean_record_accepts_valid_record(
     ("change", "expected_reason"),
     [
         ({"schema_version": "wrong.v1"}, "invalid_schema_version"),
-        ({"icao24": ""}, "missing_icao24"),
+        ({"aircraft_id": None}, "missing_aircraft_id"),
         ({"last_contact_epoch": None}, "missing_last_contact_epoch"),
-        ({"latitude": None}, "missing_latitude"),
-        ({"longitude": None}, "missing_longitude"),
+        ({"latitude": None}, "missing_latitude_when_has_position"),
+        ({"longitude": None}, "missing_longitude_when_has_position"),
     ],
 )
 def test_validate_clean_record_reports_required_contract_failures(
@@ -145,7 +145,7 @@ def test_put_current_state_item_returns_skipped_stale_on_condition_failure(
 
     assert (
         current_state_writer.put_current_state_item(clean_aircraft_record)
-        == "skipped_stale"
+        == "skipped_stale_duplicate_or_position_protected"
     )
 
 
@@ -186,8 +186,15 @@ def test_handler_processes_written_and_stale_records(
     kinesis_record_factory,
     monkeypatch,
 ):
-    outcomes = iter(["written", "skipped_stale"])
+    outcomes = iter(["written", "skipped_stale_duplicate_or_position_protected"])
     metrics = []
+    published = []
+
+    monkeypatch.setattr(
+        current_state_writer,
+        "publish_aircraft_state_updated",
+        lambda item: published.append(item),
+    )
 
     monkeypatch.setattr(
         current_state_writer,
@@ -214,6 +221,7 @@ def test_handler_processes_written_and_stale_records(
     assert metrics[0]["metrics"]["WrittenRecords"] == 1
     assert metrics[0]["metrics"]["SkippedStaleRecords"] == 1
     assert metrics[0]["metrics"]["ValidRecords"] == 2
+    assert published == [clean_aircraft_record]
 
 
 def test_handler_rejects_invalid_record_without_retrying(

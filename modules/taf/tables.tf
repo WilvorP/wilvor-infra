@@ -1,7 +1,7 @@
 resource "aws_dynamodb_table" "taf_latest" {
-  name           = "${var.name_prefix}-taf-latest"
-  billing_mode   = "PAY_PER_REQUEST"
-  hash_key       = "station_id"
+  name         = "${var.name_prefix}-taf-latest"
+  billing_mode = "PAY_PER_REQUEST"
+  hash_key     = "station_id"
 
   attribute {
     name = "station_id"
@@ -43,8 +43,8 @@ resource "aws_dynamodb_table" "taf_latest" {
 }
 
 resource "aws_dynamodb_table" "taf_forecast_periods" {
-  name           = "${var.name_prefix}-taf-forecast-periods"
-  billing_mode   = "PAY_PER_REQUEST"
+  name         = "${var.name_prefix}-taf-forecast-periods"
+  billing_mode = "PAY_PER_REQUEST"
 
   hash_key  = "taf_version_key"
   range_key = "period_key"

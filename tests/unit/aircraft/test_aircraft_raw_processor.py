@@ -66,13 +66,21 @@ def test_validate_raw_event_envelope_accepts_expected_contract(
 )
 def test_validate_raw_event_envelope_rejects_invalid_contract(
     raw_processor,
+    raw_opensky_event,
     payload,
     expected,
 ):
+    if isinstance(payload, dict):
+        # Keep all unrelated required lineage fields valid in each negative case.
+        envelope = dict(raw_opensky_event)
+        envelope.pop("schema_version")
+        envelope.pop("source")
+        envelope.pop("raw_state_vector")
+        payload = {**envelope, **payload}
     assert raw_processor.validate_raw_event_envelope(payload) == expected
 
 
-def test_build_clean_kinesis_record_uses_icao24_partition_key(
+def test_build_clean_kinesis_record_uses_aircraft_id_partition_key(
     raw_processor,
     clean_aircraft_record,
 ):
@@ -202,7 +210,7 @@ def test_handler_processes_valid_record(
     monkeypatch.setattr(
         raw_processor,
         "map_raw_event_to_current_state",
-        lambda event: (clean_aircraft_record, []),
+        lambda event, **kwargs: (clean_aircraft_record, []),
     )
     monkeypatch.setattr(
         raw_processor,
@@ -293,7 +301,7 @@ def test_handler_returns_failed_clean_publish_sequences(
     monkeypatch.setattr(
         raw_processor,
         "map_raw_event_to_current_state",
-        lambda event: (clean_aircraft_record, []),
+        lambda event, **kwargs: (clean_aircraft_record, []),
     )
     monkeypatch.setattr(
         raw_processor,

@@ -1,6 +1,6 @@
 resource "aws_dynamodb_table" "airport_status" {
-  name           = "${var.name_prefix}-airport-status"
-  billing_mode   = "PAY_PER_REQUEST"
+  name         = "${var.name_prefix}-airport-status"
+  billing_mode = "PAY_PER_REQUEST"
 
   hash_key = "airport_id"
 
