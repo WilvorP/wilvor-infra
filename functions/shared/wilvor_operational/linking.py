@@ -67,6 +67,10 @@ NO_SNAPSHOT_LIMITATION = (
     "DynamoDB reads are independently observed; this composition is not "
     "a transactional cross-table snapshot."
 )
+QUERY_PAGE_TRUNCATED = (
+    "Bounded query page ended with LastEvaluatedKey; coverage is partial "
+    "and is not a verified zero."
+)
 MISSING_STATION_LIMITATION = (
     "METAR and TAF were not queried because AirportStatus has no station_id."
 )
@@ -212,6 +216,29 @@ def query_observation(
         coverage=Coverage.FULL_QUERY,
         consistency=consistency,
         limit=None,
+        limitations=limitations,
+    )
+
+
+def bounded_query_observation(
+    source: str,
+    *extra_limitations: str,
+    limit: int,
+    truncated: bool = False,
+    consistency: Consistency = Consistency.EVENTUAL,
+) -> RetrievalObservation:
+    if type(limit) is not int or isinstance(limit, bool) or limit < 1:
+        raise TypeError("limit must be a positive int")
+    limitations = extra_limitations
+    if consistency is Consistency.EVENTUAL:
+        limitations = (EVENTUAL_SCAN_LIMITATION,) + extra_limitations
+    if truncated:
+        limitations = limitations + (QUERY_PAGE_TRUNCATED,)
+    return RetrievalObservation(
+        source=source,
+        coverage=Coverage.BOUNDED_QUERY,
+        consistency=consistency,
+        limit=limit,
         limitations=limitations,
     )
 

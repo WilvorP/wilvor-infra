@@ -199,6 +199,7 @@ def discover_current_hazards_in_region(
     product_type=None,
     hazard_type=None,
     hazard_ids=None,
+    max_items=None,
 ):
     resolution = regions.resolve_region(region_query)
     if not resolution.resolved or resolution.region is None:
@@ -212,6 +213,7 @@ def discover_current_hazards_in_region(
         product_type=product_type,
         hazard_type=hazard_type,
         hazard_ids=hazard_ids,
+        max_items=max_items,
     )
     retrieval: list[linking.RetrievalObservation] = list(discovered.retrieval)
 

@@ -201,6 +201,7 @@ def discover_current_hazards(
     product_type=None,
     hazard_type=None,
     hazard_ids=None,
+    max_items=None,
 ):
     product_type = _normalize_filter(product_type) if product_type is not None else ""
     hazard_type = _normalize_filter(hazard_type) if hazard_type is not None else ""
@@ -208,7 +209,10 @@ def discover_current_hazards(
     if hazard_ids is not None:
         matches = []
         retrieval = []
-        for raw_id in hazard_ids:
+        requested = list(hazard_ids)
+        if max_items is not None:
+            requested = requested[:max_items]
+        for raw_id in requested:
             hazard_id = _text(raw_id)
             if not hazard_id:
                 continue
@@ -228,11 +232,24 @@ def discover_current_hazards(
             retrieval=tuple(retrieval),
         )
 
-    observation = linking.query_observation("query_active_hazard_candidates")
-    candidates = readers.query_active_hazard_candidates(
-        tables.hazards,
-        now_epoch=now_epoch,
-    )
+    if max_items is not None:
+        page = readers.query_active_hazard_candidates_page(
+            tables.hazards,
+            now_epoch=now_epoch,
+            limit=max_items,
+        )
+        observation = linking.bounded_query_observation(
+            "query_active_hazard_candidates",
+            limit=max_items,
+            truncated=page.get("last_evaluated_key") is not None,
+        )
+        candidates = page.get("items", [])
+    else:
+        observation = linking.query_observation("query_active_hazard_candidates")
+        candidates = readers.query_active_hazard_candidates(
+            tables.hazards,
+            now_epoch=now_epoch,
+        )
     matches = tuple(
         _hazard_match(item, now_epoch=now_epoch)
         for item in candidates

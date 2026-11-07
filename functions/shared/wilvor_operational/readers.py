@@ -748,3 +748,187 @@ def query_latest_for_partition(
         limit=limit,
         key=key,
     )
+
+
+def query_encounter_candidates_by_hazard_page(
+    table,
+    hazard_id,
+    *,
+    limit,
+    exclusive_start_key=None,
+    key=Key,
+    attr=Attr,
+    query_page=access.query_page,
+    encounter_states=CURRENT_ENCOUNTER_STATES,
+):
+    kwargs = {
+        "IndexName": IDX_ENCOUNTER_HAZARD_TIME,
+        "KeyConditionExpression": key("hazard_id").eq(hazard_id),
+        "FilterExpression": attr("encounter_state").is_in(list(encounter_states)),
+        "ProjectionExpression": ENCOUNTER_CANDIDATE_PROJECTION,
+        "ScanIndexForward": True,
+        "Limit": limit,
+    }
+    _with_start_key(kwargs, exclusive_start_key)
+    return query_page(table, **kwargs)
+
+
+def query_encounter_candidates_by_aircraft_page(
+    table,
+    aircraft_id,
+    *,
+    limit,
+    exclusive_start_key=None,
+    key=Key,
+    attr=Attr,
+    query_page=access.query_page,
+    encounter_states=CURRENT_ENCOUNTER_STATES,
+):
+    kwargs = {
+        "IndexName": IDX_ENCOUNTER_AIRCRAFT_TIME,
+        "KeyConditionExpression": key("aircraft_id").eq(aircraft_id),
+        "FilterExpression": attr("encounter_state").is_in(list(encounter_states)),
+        "ProjectionExpression": ENCOUNTER_CANDIDATE_PROJECTION,
+        "ScanIndexForward": True,
+        "Limit": limit,
+    }
+    _with_start_key(kwargs, exclusive_start_key)
+    return query_page(table, **kwargs)
+
+
+def query_hazard_coordinate_rows_page(
+    table,
+    hazard_version_key,
+    *,
+    limit,
+    exclusive_start_key=None,
+    key=Key,
+    query_page=access.query_page,
+):
+    kwargs = {
+        "KeyConditionExpression": key("hazard_version_key").eq(hazard_version_key),
+        "ScanIndexForward": True,
+        "ConsistentRead": True,
+        "Limit": limit,
+    }
+    _with_start_key(kwargs, exclusive_start_key)
+    return query_page(table, **kwargs)
+
+
+def query_projection_candidates_by_aircraft_page(
+    table,
+    aircraft_id,
+    *,
+    now_epoch,
+    limit,
+    exclusive_start_key=None,
+    key=Key,
+    attr=Attr,
+    query_page=access.query_page,
+):
+    kwargs = {
+        "IndexName": IDX_PROJECTION_AIRCRAFT_TIME,
+        "KeyConditionExpression": key("aircraft_id").eq(aircraft_id),
+        "FilterExpression": (
+            attr("projection_status").eq("READY")
+            & attr("valid_until_epoch").gt(now_epoch)
+        ),
+        "ProjectionExpression": PROJECTION_INDEX_PROJECTION,
+        "ScanIndexForward": False,
+        "Limit": limit,
+    }
+    _with_start_key(kwargs, exclusive_start_key)
+    return query_page(table, **kwargs)
+
+
+def query_risk_candidates_by_aircraft_page(
+    table,
+    aircraft_id,
+    *,
+    limit,
+    exclusive_start_key=None,
+    key=Key,
+    query_page=access.query_page,
+):
+    kwargs = {
+        "IndexName": IDX_RISK_AIRCRAFT_TIME,
+        "KeyConditionExpression": key("aircraft_id").eq(aircraft_id),
+        "ProjectionExpression": RISK_CANDIDATE_PROJECTION,
+        "ScanIndexForward": False,
+        "Limit": limit,
+    }
+    _with_start_key(kwargs, exclusive_start_key)
+    return query_page(table, **kwargs)
+
+
+def query_risk_candidates_by_encounter_page(
+    table,
+    encounter_id,
+    *,
+    limit,
+    exclusive_start_key=None,
+    key=Key,
+    query_page=access.query_page,
+):
+    kwargs = {
+        "IndexName": IDX_RISK_ENCOUNTER_TIME,
+        "KeyConditionExpression": key("encounter_id").eq(encounter_id),
+        "ProjectionExpression": RISK_CANDIDATE_PROJECTION,
+        "ScanIndexForward": False,
+        "Limit": limit,
+    }
+    _with_start_key(kwargs, exclusive_start_key)
+    return query_page(table, **kwargs)
+
+
+def query_recommendation_candidates_by_aircraft_page(
+    table,
+    aircraft_id,
+    *,
+    now_iso,
+    limit,
+    exclusive_start_key=None,
+    key=Key,
+    attr=Attr,
+    query_page=access.query_page,
+):
+    kwargs = {
+        "IndexName": IDX_RECOMMENDATION_AIRCRAFT_TIME,
+        "KeyConditionExpression": key("aircraft_id").eq(aircraft_id),
+        "FilterExpression": (
+            attr("recommendation_status").eq("ACTIVE")
+            & attr("valid_until_utc").gt(now_iso)
+        ),
+        "ProjectionExpression": RECOMMENDATION_ACTIVE_PROJECTION,
+        "ScanIndexForward": False,
+        "Limit": limit,
+    }
+    _with_start_key(kwargs, exclusive_start_key)
+    return query_page(table, **kwargs)
+
+
+def query_alert_candidates_by_aircraft_page(
+    table,
+    aircraft_id,
+    *,
+    now_iso,
+    limit,
+    exclusive_start_key=None,
+    key=Key,
+    attr=Attr,
+    query_page=access.query_page,
+    alert_states=CURRENT_ALERT_STATES,
+):
+    kwargs = {
+        "IndexName": IDX_ALERT_AIRCRAFT_TIME,
+        "KeyConditionExpression": key("aircraft_id").eq(aircraft_id),
+        "FilterExpression": (
+            attr("alert_state").is_in(list(alert_states))
+            & attr("valid_until_utc").gt(now_iso)
+        ),
+        "ProjectionExpression": ALERT_ACTIVE_PROJECTION,
+        "ScanIndexForward": False,
+        "Limit": limit,
+    }
+    _with_start_key(kwargs, exclusive_start_key)
+    return query_page(table, **kwargs)
