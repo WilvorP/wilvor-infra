@@ -21,7 +21,12 @@ from typing import Any
 from wilvor_ai.contracts import ContractValidationError
 from wilvor_ai.master_authorized_scheduler_adapter import ScriptedTestWorker
 from wilvor_ai.master_evidence_admission import MasterSourceAuthenticity
-from wilvor_ai.master_read_resource_guard import server_read_budget
+from wilvor_ai.master_contracts import MasterSpecialist
+from wilvor_ai.master_read_resource_guard import (
+    server_read_argument_names,
+    server_read_budget,
+    server_read_tools,
+)
 from wilvor_ai.model_contracts import ModelDecision, ModelDecisionKind, ProposedToolCall
 from wilvor_ai.providers.master_instructions import (
     MASTER_PLANNING_INSTRUCTION_REF,
@@ -227,6 +232,32 @@ def reject_master_planner_tools(decision: object) -> None:
         _fail("master_planner_tools_rejected")
 
 
+def reject_uncatalogued_specialist_tools(decision: object, specialist: MasterSpecialist) -> None:
+    """Specialist tools must be the server catalog. Display aliases are not tools."""
+
+    if not isinstance(specialist, MasterSpecialist):
+        _fail("invalid_specialist")
+    catalog = server_read_tools(specialist)
+    calls = getattr(decision, "tool_calls", ())
+    if calls in (None, ()):
+        return
+    if not isinstance(calls, tuple):
+        _fail("invalid_proposed_tool_call")
+    for item in calls:
+        name = getattr(item, "name", None)
+        arguments = getattr(item, "arguments", None)
+        if name is None and isinstance(item, Mapping):
+            name = item.get("name")
+            arguments = item.get("arguments")
+        if not isinstance(name, str) or name not in catalog:
+            _fail("unknown_tool")
+        allowed = server_read_argument_names(specialist, name)
+        if isinstance(arguments, Mapping):
+            for key in arguments:
+                if not isinstance(key, str) or key not in allowed:
+                    _fail("unknown_argument")
+
+
 class Sprint4BoundedModelProvider:
     """Host-bounded ``complete()`` wrapper. Not a production client factory."""
 
@@ -237,6 +268,7 @@ class Sprint4BoundedModelProvider:
         max_turns: int,
         max_tool_calls: int,
         allow_specialist_tools: bool,
+        specialist: MasterSpecialist | None = None,
     ) -> None:
         _assert_closed_surface()
         reject_vendor_sdk_provider(inner)
@@ -248,10 +280,16 @@ class Sprint4BoundedModelProvider:
             _fail("server_budget_exceeded")
         if type(allow_specialist_tools) is not bool:
             _fail("invalid_tool_policy")
+        if allow_specialist_tools:
+            if not isinstance(specialist, MasterSpecialist):
+                _fail("invalid_specialist")
+        elif specialist is not None:
+            _fail("invalid_specialist")
         self._inner = inner
         self._max_turns = max_turns
         self._max_tool_calls = max_tool_calls
         self._allow_specialist_tools = allow_specialist_tools
+        self._specialist = specialist
         self.turns = 0
         self.tool_calls = 0
         self.rejection: str | None = None
@@ -272,6 +310,7 @@ class Sprint4BoundedModelProvider:
             if not self._allow_specialist_tools:
                 self.rejection = "master_planner_tools_rejected"
                 _fail(self.rejection)
+            reject_uncatalogued_specialist_tools(decision, self._specialist)
             next_count = self.tool_calls + len(names)
             if next_count > self._max_tool_calls:
                 self.rejection = "server_budget_exceeded"
@@ -281,6 +320,7 @@ class Sprint4BoundedModelProvider:
             if not self._allow_specialist_tools:
                 self.rejection = "master_planner_tools_rejected"
                 _fail(self.rejection)
+            reject_uncatalogued_specialist_tools(decision, self._specialist)
         return decision
 
 
@@ -317,6 +357,7 @@ def bind_injected_master_provider(
     max_turns: int,
     max_tool_calls: int,
     allow_specialist_tools: bool,
+    specialist: MasterSpecialist | None = None,
 ) -> Sprint4BoundedModelProvider:
     """Wrap one injected ``complete()`` provider. No SDK client is constructed."""
 
@@ -328,6 +369,7 @@ def bind_injected_master_provider(
         max_turns=max_turns,
         max_tool_calls=max_tool_calls,
         allow_specialist_tools=allow_specialist_tools,
+        specialist=specialist,
     )
 
 
@@ -342,6 +384,7 @@ def bind_specialist_model_provider(provider: object, specialist: Any) -> Sprint4
         max_turns=turns,
         max_tool_calls=calls,
         allow_specialist_tools=True,
+        specialist=specialist,
     )
 
 
@@ -430,5 +473,6 @@ __all__ = [
     "refuse_production_provider_construction",
     "reject_aws_tool_proposal",
     "reject_master_planner_tools",
+    "reject_uncatalogued_specialist_tools",
     "reject_vendor_sdk_provider",
 ]

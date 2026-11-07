@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   DISABLED_COPILOT_STANDING,
+  HOST_CONTRACT_COPILOT_STANDING,
   INJECTED_COPILOT_STANDING,
 } from '@/api/aiContracts';
 
@@ -26,6 +27,15 @@ describe('CopilotStatusBanner', () => {
 
     expect(
       screen.getByText(/fixture data, not a live AWS read/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText('Not active')).toBeInTheDocument();
+  });
+
+  it('labels host-contract transport as untrusted browser ids with the route disabled', () => {
+    render(<CopilotStatusBanner standing={HOST_CONTRACT_COPILOT_STANDING} />);
+
+    expect(
+      screen.getByText(/Browser IDs are untrusted labels/i),
     ).toBeInTheDocument();
     expect(screen.getByText('Not active')).toBeInTheDocument();
   });

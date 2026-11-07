@@ -192,6 +192,7 @@ class Sprint4DecisionLiveCall:
     request_missing_recommendation_as_monitor: bool = False
     request_operational_directive: bool = False
     live_aws: bool = False
+    context_builder: Any = None
 
     def __post_init__(self) -> None:
         _closed()
@@ -322,6 +323,7 @@ def execute_sprint4_decision_live(
         now_epoch=call.now_epoch,
         query_timestamp_utc=call.query_timestamp_utc,
         correlation_id=call.correlation_id,
+        context_builder=call.context_builder,
     )
     adapter = DecisionToolsAdapter(runtime)
     invocations: dict[str, DecisionToolInvocation] = {}

@@ -98,6 +98,7 @@ class EntityLinkDefect(str, Enum):
     EVALUATION_ID_MISMATCH = "EVALUATION_ID_MISMATCH"
     METAR_STATION_MISMATCH = "METAR_STATION_MISMATCH"
     TAF_STATION_MISMATCH = "TAF_STATION_MISMATCH"
+    STATION_UNRESOLVED = "STATION_UNRESOLVED"
     WEATHER_VERSION_MISMATCH = "WEATHER_VERSION_MISMATCH"
 
 
@@ -460,10 +461,10 @@ def _links(
                 defects.append(EntityLinkDefect.ASSESSMENT_RISK_ID_MISMATCH)
 
     for item in weather:
-        if item.metar.station_id != item.airport_id:
-            defects.append(EntityLinkDefect.METAR_STATION_MISMATCH)
-        if item.taf.station_id != item.airport_id:
-            defects.append(EntityLinkDefect.TAF_STATION_MISMATCH)
+        if item.metar.status is WeatherContextStatus.STATION_UNRESOLVED:
+            defects.append(EntityLinkDefect.STATION_UNRESOLVED)
+        if item.taf.status is WeatherContextStatus.STATION_UNRESOLVED:
+            defects.append(EntityLinkDefect.STATION_UNRESOLVED)
         if item.metar.status is WeatherContextStatus.VERSION_MISMATCH:
             defects.append(EntityLinkDefect.WEATHER_VERSION_MISMATCH)
         if item.taf.status is WeatherContextStatus.VERSION_MISMATCH:

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   copilotClientPostsAiQuery,
   createDisabledCopilotQueryClient,
+  createHostContractCopilotQueryClient,
   createInjectedCopilotQueryClient,
 } from './aiClient';
 import { CopilotContractError, MASTER_RESPONSE_STATUS_TEXT } from './aiContracts';
@@ -65,6 +66,21 @@ describe('Copilot query client', () => {
     await expect(client.query(testRequest())).rejects.toBeInstanceOf(
       CopilotContractError,
     );
+  });
+
+  it('host-contract client never fetches and keeps the route disabled', async () => {
+    const fetchImpl = vi.fn();
+    vi.stubGlobal('fetch', fetchImpl);
+
+    const client = createHostContractCopilotQueryClient(async (received) =>
+      unsupportedResult(received),
+    );
+    const result = await client.query(testRequest());
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(result.standing.transport).toBe('HOST_CONTRACT');
+    expect(result.standing.routeEnabled).toBe(false);
+    expect(result.productionAiActive).toBe(false);
   });
 
   it('honours caller abort before invoking an injected handler', async () => {

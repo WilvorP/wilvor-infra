@@ -233,17 +233,47 @@ def plan_master_request(
         _fail("invalid_planning_context")
     wrapped = planner if type(planner) is Sprint4InjectedRoutePlanner else Sprint4InjectedRoutePlanner(planner)
     raw = wrapped.propose(context)
-    if isinstance(raw, ModelDecision):
-        status = _reject_model_decision_as_proposal(raw)
+    from wilvor_ai.sprint5_master_planning import decode_planner_model_output
+
+    try:
+        decoded = decode_planner_model_output(raw, context)
+    except ContractValidationError as exc:
+        if isinstance(raw, ModelDecision) and exc.errors[0] in {
+            "master_planner_tools_rejected",
+            "master_planner_claims_rejected",
+            "model_aws_authorization_rejected",
+        }:
+            raise
+        if exc.errors[0] in {"user_text_mismatch", "excessive_plan_size", "decision_fanout_not_permitted"}:
+            raise
+        if isinstance(raw, ModelDecision):
+            status = _reject_model_decision_as_proposal(raw)
+            return Sprint4MasterPlanningResult(
+                context=context,
+                proposal=None,
+                decision=None,
+                status=status,
+                untrusted_hints=(),
+            )
+        if exc.errors == ("invalid_master_route_proposal",) or "invalid_" in exc.errors[0]:
+            return Sprint4MasterPlanningResult(
+                context=context,
+                proposal=None,
+                decision=None,
+                status=Sprint4PlanningStatus.INVALID_PROPOSAL,
+                untrusted_hints=(),
+            )
+        raise
+    if isinstance(decoded, Sprint4PlanningStatus):
         return Sprint4MasterPlanningResult(
             context=context,
             proposal=None,
             decision=None,
-            status=status,
+            status=decoded,
             untrusted_hints=(),
         )
     try:
-        proposal = _as_proposal(raw, context)
+        proposal = _as_proposal(decoded, context)
     except ContractValidationError as exc:
         if exc.errors == ("invalid_master_route_proposal",) or "invalid_" in exc.errors[0]:
             if exc.errors[0] in {"user_text_mismatch", "excessive_plan_size", "decision_fanout_not_permitted"}:

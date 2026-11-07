@@ -120,22 +120,35 @@ def _tables(
     taf_records=None,
     metar_fail=None,
     taf_fail=None,
+    airport_records=None,
 ):
+    if airport_records is None and (metar_records or taf_records or assessments):
+        airport_records = {AIRPORT: {"airport_id": AIRPORT, "station_id": AIRPORT}}
     return readers.OperationalTables(
         aircraft=MemoryTable(records={AIRCRAFT: aircraft} if aircraft else {}),
         projections=MemoryTable(
             scan_items=projections or [],
             records=projection_records or {},
+            query_items=projections or [],
         ),
         projection_points=MemoryTable(),
-        hazards=MemoryTable(scan_items=hazards or [], records=hazard_records or {}),
+        hazards=MemoryTable(
+            scan_items=hazards or [],
+            records=hazard_records or {},
+            query_items=hazards or [],
+        ),
         hazard_coordinates=MemoryTable(),
         encounters=MemoryTable(
             scan_items=encounters or [],
             records=encounter_records or {},
+            query_items=encounters or [],
         ),
-        risks=MemoryTable(scan_items=risks or [], records=risk_records or {}),
-        airports=MemoryTable(),
+        risks=MemoryTable(
+            scan_items=risks or [],
+            records=risk_records or {},
+            query_items=risks or [],
+        ),
+        airports=MemoryTable(records=airport_records or {}),
         metar=MemoryTable(records=metar_records or {}, fail=metar_fail),
         taf=MemoryTable(records=taf_records or {}, fail=taf_fail),
         taf_periods=MemoryTable(),
@@ -143,6 +156,7 @@ def _tables(
         recommendations=MemoryTable(
             scan_items=recommendations or [],
             records=recommendation_records or {},
+            query_items=recommendations or [],
         ),
         alerts=MemoryTable(),
     )

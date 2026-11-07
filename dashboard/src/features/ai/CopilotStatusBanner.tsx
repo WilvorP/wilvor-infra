@@ -19,7 +19,9 @@ export function CopilotStatusBanner({ standing }: CopilotStatusBannerProps) {
   const transportLabel =
     standing.transport === 'INJECTED_TEST'
       ? 'Injected test client. Displayed evidence is fixture data, not a live AWS read.'
-      : ROUTE_DISABLED_NOTICE;
+      : standing.transport === 'HOST_CONTRACT'
+        ? 'Host-contract client. Browser IDs are untrusted labels. POST /ai/query stays disabled.'
+        : ROUTE_DISABLED_NOTICE;
 
   return (
     <div className={styles.banner} data-testid="copilot-status-banner">

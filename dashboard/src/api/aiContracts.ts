@@ -81,7 +81,10 @@ export const LIVE_OPS_COMPLETENESS_NOTICE =
 export const ROUTE_DISABLED_NOTICE =
   'POST /ai/query remains disabled. This console does not call that route, and production AI is not active.';
 
-export type CopilotTransport = 'LOCAL_DISABLED' | 'INJECTED_TEST';
+export type CopilotTransport =
+  | 'LOCAL_DISABLED'
+  | 'INJECTED_TEST'
+  | 'HOST_CONTRACT';
 
 export type CopilotEvidenceEntityKind = 'AIRCRAFT' | 'HAZARD' | 'ENCOUNTER';
 
@@ -106,6 +109,14 @@ export const INJECTED_COPILOT_STANDING: CopilotRouteStanding = {
   routeEnabled: false,
   productionAiActive: false,
   transport: 'INJECTED_TEST',
+  backendRouteOwner: 'integration_owner',
+};
+
+export const HOST_CONTRACT_COPILOT_STANDING: CopilotRouteStanding = {
+  routeKey: AI_QUERY_ROUTE_KEY,
+  routeEnabled: false,
+  productionAiActive: false,
+  transport: 'HOST_CONTRACT',
   backendRouteOwner: 'integration_owner',
 };
 
@@ -366,7 +377,8 @@ function assertStanding(standing: CopilotRouteStanding): CopilotRouteStanding {
 
   if (
     standing.transport !== 'LOCAL_DISABLED' &&
-    standing.transport !== 'INJECTED_TEST'
+    standing.transport !== 'INJECTED_TEST' &&
+    standing.transport !== 'HOST_CONTRACT'
   ) {
     throw new CopilotContractError('invalid_transport');
   }

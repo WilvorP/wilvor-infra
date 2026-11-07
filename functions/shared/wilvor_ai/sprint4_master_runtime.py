@@ -192,6 +192,7 @@ class Sprint4HistoricalDispatch:
     deadline_epoch: int | None = None
     observed_epoch: int | None = None
     tool_call_id_factory: Callable[[], str] | None = None
+    use_athena: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.binding, MasterHistoricalBinding):
@@ -203,24 +204,27 @@ class Sprint4DecisionDispatch:
     """Consumed Decision path through the Sprint 3D native entrypoint."""
 
     readiness: MasterDecisionExecutionReadiness
-    reads: FakeDecisionReadCatalog
-    host: object
-    port: object
-    provider: object
-    tables: object
-    source_epoch: int
-    query_timestamp_utc: str
-    user_text: str
+    reads: FakeDecisionReadCatalog | None = None
+    host: object = None
+    port: object = None
+    provider: object = None
+    tables: object = None
+    source_epoch: int = 0
+    query_timestamp_utc: str = ""
+    user_text: str = ""
     binding: MasterDecisionBinding | None = None
     cancelled: Callable[[], bool] | None = None
     deadline_epoch: int | None = None
     observed_epoch: int | None = None
     tool_call_id_factory: Callable[[], str] | None = None
+    live_call: object | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.readiness, MasterDecisionExecutionReadiness):
             _fail("invalid_decision_readiness")
-        if not isinstance(self.reads, FakeDecisionReadCatalog):
+        if self.reads is None and self.live_call is None:
+            _fail("invalid_decision_read")
+        if self.reads is not None and not isinstance(self.reads, FakeDecisionReadCatalog):
             _fail("invalid_decision_read")
 
 
@@ -268,6 +272,7 @@ class Sprint4NativeStepResult:
     live_ops: Sprint3CLiveOpsNativeExecution | None = None
     historical: Sprint3DHistoricalNativeExecution | None = None
     decision: Sprint3DDecisionNativeExecution | None = None
+    decision_live: object | None = None
     live_ops_context: LiveOpsTrustedContext | None = None
     production_dispatch: bool = False
     source_authenticity: MasterSourceAuthenticity = MasterSourceAuthenticity.NOT_ESTABLISHED
@@ -288,7 +293,10 @@ class Sprint4NativeStepResult:
             False,
             "source_authenticity_not_established",
         )
-        present = [item is not None for item in (self.live_ops, self.historical, self.decision)]
+        present = [
+            item is not None
+            for item in (self.live_ops, self.historical, self.decision, self.decision_live)
+        ]
         if sum(present) != 1:
             _fail("native_result_not_bound")
         if self.specialist is MasterSpecialist.LIVE_OPS:
@@ -300,7 +308,11 @@ class Sprint4NativeStepResult:
             if not isinstance(self.historical, Sprint3DHistoricalNativeExecution):
                 _fail("invalid_historical_run")
         elif self.specialist is MasterSpecialist.DECISION:
-            if not isinstance(self.decision, Sprint3DDecisionNativeExecution):
+            if self.decision is None and self.decision_live is None:
+                _fail("invalid_decision_result")
+            if self.decision is not None and not isinstance(
+                self.decision, Sprint3DDecisionNativeExecution
+            ):
                 _fail("invalid_decision_result")
 
 
@@ -417,6 +429,21 @@ def _dispatch_native(
     if handle.specialist is MasterSpecialist.HISTORICAL_ANALYTICS:
         historical = handle.historical
         assert historical is not None
+        if historical.use_athena:
+            from wilvor_ai.sprint5_master_runtime import execute_sprint5_historical_athena
+
+            executed = execute_sprint5_historical_athena(
+                orchestrator,
+                step.invocation,
+                historical,
+                handle.authority,
+                now_utc=now_utc,
+            )
+            return Sprint4NativeStepResult(
+                invocation_id=invocation.invocation_id,
+                specialist=MasterSpecialist.HISTORICAL_ANALYTICS,
+                historical=executed,
+            )
         executed = execute_historical_native(
             orchestrator,
             invocation,
@@ -439,6 +466,17 @@ def _dispatch_native(
         )
     decision = handle.decision
     assert decision is not None
+    if decision.live_call is not None and decision.reads is None:
+        from wilvor_ai.sprint5_master_runtime import execute_sprint5_decision_live_dispatch
+
+        live_result = execute_sprint5_decision_live_dispatch(decision)
+        return Sprint4NativeStepResult(
+            invocation_id=invocation.invocation_id,
+            specialist=MasterSpecialist.DECISION,
+            decision_live=live_result,
+        )
+    if not isinstance(decision.reads, FakeDecisionReadCatalog):
+        _fail("invalid_decision_read")
     executed = execute_decision_native(
         orchestrator,
         invocation,
@@ -836,7 +874,9 @@ class Sprint4NativeWorkflowResult:
             _reject_synthetic_evidence(item)
 
 
-def _admission_artifact(result: Sprint4NativeStepResult) -> tuple[object, HistoricalSpecialistRunResult | None]:
+def _admission_artifact(result: Sprint4NativeStepResult) -> tuple[object, HistoricalSpecialistRunResult | None] | None:
+    if result.decision_live is not None and result.decision is None:
+        return None
     if result.specialist is MasterSpecialist.LIVE_OPS:
         live = result.live_ops
         assert live is not None and result.live_ops_context is not None
@@ -877,7 +917,10 @@ def synthesize_grounded_response(
         result = by_id.get(step.invocation.invocation_id)
         if result is None:
             continue
-        artifact, historical_run = _admission_artifact(result)
+        admitted = _admission_artifact(result)
+        if admitted is None:
+            continue
+        artifact, historical_run = admitted
         _reject_synthetic_evidence(artifact)
         evidence_inputs.append(
             MasterEvidenceCorroborationInput(

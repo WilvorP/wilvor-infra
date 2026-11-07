@@ -4,6 +4,7 @@ import {
   assertCopilotQueryResult,
   createRouteDisabledResult,
   DISABLED_COPILOT_STANDING,
+  HOST_CONTRACT_COPILOT_STANDING,
   INJECTED_COPILOT_STANDING,
   type CopilotQueryRequest,
   type CopilotQueryResult,
@@ -81,6 +82,40 @@ export function createInjectedCopilotQueryClient(
   handler: InjectedCopilotHandler,
 ): CopilotQueryClient {
   return new InjectedCopilotQueryClient(handler);
+}
+
+/**
+ * Host-contract client. Browser-supplied ids are untrusted labels.
+ * This still never POSTs `POST /ai/query` and never calls fetch().
+ */
+export class HostContractCopilotQueryClient implements CopilotQueryClient {
+  readonly standing: CopilotRouteStanding = HOST_CONTRACT_COPILOT_STANDING;
+
+  constructor(private readonly handler: InjectedCopilotHandler) {}
+
+  async query(
+    request: CopilotQueryRequest,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<CopilotQueryResult> {
+    if (options.signal?.aborted) {
+      throw options.signal.reason ?? new DOMException('Aborted', 'AbortError');
+    }
+
+    assertCopilotQueryRequest(request);
+
+    const result = await this.handler(request, options);
+
+    return assertCopilotQueryResult({
+      ...result,
+      standing: HOST_CONTRACT_COPILOT_STANDING,
+    });
+  }
+}
+
+export function createHostContractCopilotQueryClient(
+  handler: InjectedCopilotHandler,
+): CopilotQueryClient {
+  return new HostContractCopilotQueryClient(handler);
 }
 
 /**

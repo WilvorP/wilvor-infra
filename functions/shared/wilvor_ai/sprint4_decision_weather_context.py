@@ -56,6 +56,14 @@ class WeatherContextStatus(str, Enum):
     MISSING = "MISSING"
     UNAVAILABLE = "UNAVAILABLE"
     NOT_CITED = "NOT_CITED"
+    STATION_UNRESOLVED = "STATION_UNRESOLVED"
+
+
+STATION_UNRESOLVED_TOKEN = "UNRESOLVED"
+STATION_UNRESOLVED_LIMITATION = (
+    "AirportStatus.station_id was not resolved. airport_id was not used as "
+    "a METAR/TAF lookup key."
+)
 
 
 def _closed() -> None:
@@ -172,13 +180,87 @@ def load_persisted_airport_weather_context(
     )
 
 
+def _resolve_station_id(tables: Any, airport_id: str) -> tuple[str | None, WeatherContextStatus | None]:
+    """Resolve METAR/TAF station from AirportStatus. airport_id is not a fallback."""
+
+    airports = getattr(tables, "airports", None)
+    if airports is None:
+        return None, WeatherContextStatus.UNAVAILABLE
+    try:
+        row = readers.get_airport_status_record(airports, airport_id)
+    except Exception:
+        return None, WeatherContextStatus.UNAVAILABLE
+    if not isinstance(row, dict):
+        return None, WeatherContextStatus.STATION_UNRESOLVED
+    station_id = _text(row.get("station_id"))
+    if station_id is None:
+        return None, WeatherContextStatus.STATION_UNRESOLVED
+    return station_id, None
+
+
+def _unresolved_product(
+    *,
+    product: str,
+    airport_id: str,
+    cited_version: str | None,
+    status: WeatherContextStatus,
+) -> Sprint4WeatherProductContext:
+    if cited_version is None:
+        return Sprint4WeatherProductContext(
+            product=product,
+            airport_id=airport_id,
+            station_id=STATION_UNRESOLVED_TOKEN,
+            cited_version=None,
+            observed_version=None,
+            event_timestamp_utc=None,
+            status=WeatherContextStatus.NOT_CITED,
+        )
+    return Sprint4WeatherProductContext(
+        product=product,
+        airport_id=airport_id,
+        station_id=STATION_UNRESOLVED_TOKEN,
+        cited_version=cited_version,
+        observed_version=None,
+        event_timestamp_utc=None,
+        status=status,
+    )
+
+
 def _one_candidate(
     tables: Any,
     candidate: PersistedAirportCandidate,
     query_timestamp_utc: str,
     tool_call_id: str,
 ) -> Sprint4AirportWeatherContext:
-    station_id = candidate.airport_id
+    station_id, unresolved = _resolve_station_id(tables, candidate.airport_id)
+    if unresolved is not None:
+        metar = _unresolved_product(
+            product="METAR",
+            airport_id=candidate.airport_id,
+            cited_version=candidate.metar_version,
+            status=unresolved,
+        )
+        taf = _unresolved_product(
+            product="TAF",
+            airport_id=candidate.airport_id,
+            cited_version=candidate.taf_version,
+            status=unresolved,
+        )
+        evidence = tuple(
+            item
+            for item in (
+                _evidence(query_timestamp_utc, tool_call_id, metar, _SOURCE_METAR),
+                _evidence(query_timestamp_utc, tool_call_id, taf, _SOURCE_TAF),
+            )
+            if item is not None
+        )
+        return Sprint4AirportWeatherContext(
+            airport_id=candidate.airport_id,
+            airport_assessment_id=candidate.airport_assessment_id,
+            metar=metar,
+            taf=taf,
+            evidence=evidence,
+        )
     metar = _product(
         tables,
         product="METAR",
@@ -331,6 +413,8 @@ def _evidence(
         limitations.append(VERSION_MISMATCH_LIMITATION)
     elif product.status is WeatherContextStatus.UNAVAILABLE:
         limitations.append(_READ_FAILED)
+    elif product.status is WeatherContextStatus.STATION_UNRESOLVED:
+        limitations.append(STATION_UNRESOLVED_LIMITATION)
     else:
         records = (
             SourceRecord(
