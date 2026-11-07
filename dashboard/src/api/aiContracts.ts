@@ -8,6 +8,10 @@
  * Mapping onto a live HTTP handler is reserved for the integration owner.
  * Until that owner enables the route, the only legal transports are the
  * local disabled client and an injected test double.
+ *
+ * Authoritative Python mapping: `wilvor_ai.sprint4_copilot_contract_map`.
+ * This TypeScript module is a client projection. It does not redefine
+ * Master, MA5, or Live Ops backend contracts.
  */
 
 export const COPILOT_SESSION_QUERY_SCHEMA =
