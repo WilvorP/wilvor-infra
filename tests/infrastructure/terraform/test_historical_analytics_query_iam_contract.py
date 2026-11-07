@@ -248,5 +248,12 @@ def test_policy_is_disposable_and_not_on_operational_api_or_data_plane():
     assert "historical_analytics" not in data_plane
     assert "aws_iam_role_policy_attachment" not in module_text()
     assert "aws_iam_policy_attachment" not in module_text()
-    assert "query_policy_arn" not in dev_main
+    assert dev_main.count('resource "aws_iam_role_policy_attachment"') == 1
+    assert (
+        'resource "aws_iam_role_policy_attachment" "ai_host_historical_analytics_query"'
+        in dev_main
+    )
+    assert "module.ai_host.role_name" in dev_main
+    assert "module.historical_analytics.query_policy_arn" in dev_main
+    assert "enable_invoke      = false" in dev_main
     assert 'output "historical_analytics_query_policy_arn"' in read(DEV_OUTPUTS)

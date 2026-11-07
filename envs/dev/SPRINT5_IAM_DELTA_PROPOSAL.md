@@ -62,9 +62,26 @@ Callsign GSI `callsign-position_time_epoch-index` stays omitted until
 - `.../table/wilvor-dev-risk-results/index/aircraft_id-generated_at_epoch-index`
 - `.../table/wilvor-dev-recommendations/index/aircraft_id-created_at_epoch-index`
 - `.../table/wilvor-dev-active-alerts/index/aircraft_id-updated_at_epoch-index`
-- `.../table/wilvor-dev-airport-assessment/index/airport_id-created_at_epoch-index`
+- `.../table/wilvor-dev-airport-assessment` (base table, hash `evaluation_id`, range `airport_id`)
+
+The airport-assessment GSI `airport_id-created_at_epoch-index` is not granted.
+Persisted Decision evidence calls `query_airport_assessments_for_evaluation`,
+which queries the base table by `evaluation_id`. The GSI is used by the
+operational API, not by the AI host.
 
 Page limit remains 25. Empty pages are not verified zeros.
+
+### 3a. Deny carve-out required for these Allows to take effect
+
+Deployed `DenyUnreviewedDynamoDb` is `dynamodb:*` on every resource except the
+ledger and `wilvor-dev-aircraft-current-state`. An index ARN does not match
+the parent table ARN. Adding Allow statements without adding the same exact
+ARNs to `not_resources` leaves the Allows overridden.
+
+`DenyReviewedGetItemTableWrites` denies `dynamodb:Query` on every
+GetItem-only base table. `wilvor-dev-airport-assessment` is therefore not in
+that list. It has its own allow for GetItem and Query, and its own deny for
+Scan and writes. `wilvor-dev-hazard-coordinates` allows Query only.
 
 ### 4. Historical Athena — attach existing unattached policy
 

@@ -41,6 +41,9 @@ def test_iam_delta_is_proposed_not_applied_and_has_no_wildcards():
     assert all("*" not in resource for resource in resources)
     assert any("hazard-coordinates" in resource for resource in resources)
     assert any("aircraft_id-generated_at_epoch-index" in resource for resource in resources)
+    assert any(resource.endswith("table/wilvor-dev-airport-assessment") for resource in resources)
+    assert not any("airport_id-created_at_epoch-index" in resource for resource in resources)
+    assert not any("callsign-position_time_epoch-index" in resource for resource in resources)
     assert "wilvor-dev-historical-analytics-query" in proposal.attach_existing_policies
     with pytest.raises(ContractValidationError, match="sprint4_iam_not_applied|sprint5_iam_not_applied"):
         apply_sprint5_iam_delta()

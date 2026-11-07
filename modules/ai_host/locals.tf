@@ -27,7 +27,8 @@ locals {
     "dynamodb:PartiQLDelete",
   ]
 
-  # GetItem-only reviewed tables. Query stays denied, including callsign lookup.
+  # GetItem-only reviewed tables. Query stays denied on these base ARNs,
+  # including the aircraft callsign lookup, which is an index and is not listed.
   prohibited_getitem_table_actions = [
     "dynamodb:PutItem",
     "dynamodb:UpdateItem",
@@ -43,4 +44,45 @@ locals {
     "dynamodb:PartiQLUpdate",
     "dynamodb:PartiQLDelete",
   ]
+
+  # Query targets. GetItem is denied here. Query itself is not in this list,
+  # so this deny does not override the Query allow on the same ARN.
+  prohibited_query_target_actions = [
+    "dynamodb:GetItem",
+    "dynamodb:PutItem",
+    "dynamodb:UpdateItem",
+    "dynamodb:DeleteItem",
+    "dynamodb:TransactWriteItems",
+    "dynamodb:BatchWriteItem",
+    "dynamodb:BatchGetItem",
+    "dynamodb:Scan",
+    "dynamodb:CreateTable",
+    "dynamodb:PartiQLSelect",
+    "dynamodb:PartiQLInsert",
+    "dynamodb:PartiQLUpdate",
+    "dynamodb:PartiQLDelete",
+  ]
+
+  # Airport-assessment allows GetItem and base-table Query. Writes and Scan stay denied.
+  prohibited_getitem_and_query_actions = [
+    "dynamodb:PutItem",
+    "dynamodb:UpdateItem",
+    "dynamodb:DeleteItem",
+    "dynamodb:TransactWriteItems",
+    "dynamodb:BatchWriteItem",
+    "dynamodb:BatchGetItem",
+    "dynamodb:Scan",
+    "dynamodb:CreateTable",
+    "dynamodb:PartiQLSelect",
+    "dynamodb:PartiQLInsert",
+    "dynamodb:PartiQLUpdate",
+    "dynamodb:PartiQLDelete",
+  ]
+
+  reviewed_dynamodb_arns = concat(
+    var.reviewed_getitem_table_arns,
+    var.reviewed_query_index_arns,
+    var.reviewed_query_only_table_arns,
+    var.reviewed_getitem_and_query_table_arns,
+  )
 }

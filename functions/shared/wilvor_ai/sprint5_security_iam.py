@@ -177,9 +177,13 @@ def reviewed_sprint5_iam_delta() -> Sprint5IamDeltaProposal:
                 _index_arn(risks, "aircraft_id-generated_at_epoch-index"),
                 _index_arn(recommendations, "aircraft_id-created_at_epoch-index"),
                 _index_arn(alerts, "aircraft_id-updated_at_epoch-index"),
-                _index_arn(assessments, "airport_id-created_at_epoch-index"),
+                _table_arn(assessments),
             ),
-            notes="Decision bounded Query-by-aircraft after Scan removal. Limit 25.",
+            notes=(
+                "Decision bounded Query. Airport assessment is the base table "
+                "hash evaluation_id, not airport_id-created_at_epoch-index. "
+                "Limit 25. These ARNs must also leave DenyUnreviewedDynamoDb."
+            ),
         ),
         Sprint5IamStatement(
             sid="DenyScanAndUnreviewedDynamoDbSprint5",
@@ -209,7 +213,11 @@ def reviewed_sprint5_iam_delta() -> Sprint5IamDeltaProposal:
                 _table_arn(alerts),
                 _table_arn(DYNAMODB_LEDGER_TABLE_NAME),
             ),
-            notes="Explicit deny. Do not replace DenyUnreviewedDynamoDb with a wildcard allow.",
+            notes=(
+                "Explicit deny of Scan and writes. DenyUnreviewedDynamoDb still "
+                "uses dynamodb:* and overrides any Allow whose ARN is absent "
+                "from its not_resources. Do not replace that deny with a wildcard allow."
+            ),
         ),
     )
     return Sprint5IamDeltaProposal(
