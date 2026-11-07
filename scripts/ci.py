@@ -14,7 +14,7 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from scripts.ci_groups import GROUPS, MATRIX_GROUPS, PR_EVENTS, PROFILE_EXPRESSION, expected, inventory
-from scripts.ci_security import SCANS, validate_gitleaksignore, validate_security_reports
+from scripts.ci_security import SCANS, load_terraform_baseline, terraform_sources, validate_gitleaksignore, validate_security_reports
 
 REPORTS = ROOT / "test-results" / "ci"
 PINS = {
@@ -188,6 +188,7 @@ def check_workflows():
         raise ValueError("Review security policy before adding another workflow")
     policy(yaml.safe_load(files[0].read_text(encoding="utf-8")))
     validate_gitleaksignore()
+    load_terraform_baseline()
     summary("### Workflow policy\nTrigger, permission, action-pin and aggregate-gate checks passed.\n")
     return 0
 
@@ -289,7 +290,8 @@ def gate(args):
             validation = read(paths[0])
             if validation.get("valid") is not True or validation.get("error_count") != 0:
                 raise ValueError(f"Terraform validation report failed: {root}")
-    validate_security_reports([read(path) for path in Path(args.artifacts).rglob("scan.json")])
+    terraform_policy = validate_security_reports(
+        [read(path) for path in Path(args.artifacts).rglob("scan.json")], expected_sources=terraform_sources())
     output = REPORTS / "aggregate"
     output.mkdir(parents=True, exist_ok=True)
     if args.profile == "full":
@@ -298,7 +300,14 @@ def gate(args):
         subprocess.run([sys.executable, "-m", "coverage", "combine", "--keep", *coverage_files], cwd=ROOT, env=environment, check=True)
         subprocess.run([sys.executable, "-m", "coverage", "xml", "-o", str(output / "coverage.xml")], cwd=ROOT, env=environment, check=True)
     write(output / "gate.json", {"profile": args.profile, "python_cases": count, "status": "passed"})
-    summary(f"### CI quality gate: PASS\n{count} unique Python cases accounted for in the {args.profile} profile. All required jobs/reports passed; no unexpected skips.\n")
+    summary(
+        f"### CI quality gate: PASS\n{count} unique Python cases accounted for in the {args.profile} profile. "
+        "All required jobs/reports passed; no unexpected skips.\n"
+        f"Terraform raw status {terraform_policy['raw_status']}, raw exit {terraform_policy['raw_exit']}, "
+        f"raw findings {terraform_policy['raw_findings']}. Temporary development deferral decision "
+        f"{terraform_policy['decision']}: deferred {terraform_policy['deferred']}, resolved {terraform_policy['resolved']}. "
+        "This is not risk acceptance.\n"
+    )
     return 0
 
 

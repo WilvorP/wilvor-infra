@@ -9,7 +9,7 @@ import yaml
 
 from scripts import ci
 from scripts.ci_groups import PR_EVENTS, inventory, profile_for_event
-from scripts.ci_security import SCANS, VERSIONS, npm_findings, python_findings, secret_findings, terraform_findings, validate_security_reports
+from scripts.ci_security import SCANS, VERSIONS, npm_findings, passed_scan_report, python_findings, secret_findings, terraform_findings, terraform_sources, validate_security_reports
 
 ROOT = Path(__file__).resolve().parents[3]
 
@@ -19,8 +19,7 @@ def workflow():
 
 
 def clean_reports():
-    return [{"schema": 1, "scan": scan, "version": VERSIONS[scan], "status": "passed", "exit_code": 0,
-             "findings": [], "contexts": [{"status": "complete"}]} for scan in SCANS]
+    return [passed_scan_report(scan) for scan in SCANS]
 
 
 @pytest.mark.parametrize("event,labels,profile", [
@@ -145,6 +144,7 @@ def test_real_gate_requires_security_evidence(tmp_path, monkeypatch, scanner_sta
     (folder / "results.json").write_text(json.dumps({"group": "copilot", "exit_code": 0, "cases": dict.fromkeys(nodes, "passed")}), encoding="utf-8")
     (folder / "junit.xml").write_text('<testsuite><testcase name="test_example"/></testsuite>', encoding="utf-8")
     reports = clean_reports()
+    next(report for report in reports if report["scan"] == "terraform-security")["contexts"][0]["scanned_files"] = list(terraform_sources())
     if scanner_status == "findings":
         reports[0]["status"] = "findings"
     if scanner_status == "missing":

@@ -101,7 +101,6 @@ def test_audit_modes_and_findings_propagate_to_ci(manifests, monkeypatch, outcom
     assert next(c for c in report["contexts"] if c["manifest"] == "requirements.txt")["mode"] == "declared-pinned-snapshot"
     if expected:
         assert report["status"] != "passed"
-        reports = [{"schema": 1, "scan": name, "version": security.VERSIONS[name], "status": "passed", "exit_code": 0,
-                    "findings": [], "contexts": [{"status": "complete"}]} for name in security.SCANS if name != "python-dependencies"]
+        reports = [security.passed_scan_report(name) for name in security.SCANS if name != "python-dependencies"]
         with pytest.raises(ValueError):
             security.validate_security_reports(reports + [report])

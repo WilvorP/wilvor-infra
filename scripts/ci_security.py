@@ -23,6 +23,12 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 SCANS = ("secrets", "python-dependencies", "npm-dependencies", "terraform-security")
 VERSIONS = {"secrets": "8.30.1", "python-dependencies": "2.10.1", "npm-dependencies": "11.6.2", "terraform-security": "0.76.1"}
+TERRAFORM_SCOPE = "all repository envs/modules .tf source, no state/tfvars or AWS access"
+TERRAFORM_BASELINE = ROOT / "security" / "terraform-security-baseline.json"
+TERRAFORM_DEFERRAL = (
+    "Temporary development CI deferral. Not an infrastructure-owner risk acceptance and not production security clearance."
+)
+SEVERITY_RANK = {"UNKNOWN": 0, "LOW": 1, "MEDIUM": 2, "HIGH": 3, "CRITICAL": 4}
 TOOLS = ROOT / "test-results" / "security-tools"
 REPORTS = ROOT / "test-results" / "ci" / "security"
 # Emitted by Gitleaks 8.30.1, verified against commit/file/rule/line. These
@@ -33,6 +39,8 @@ APPROVED_GITLEAKS_FINGERPRINTS = frozenset({
     "8f801061fa3cf5efc07ebfe7139fed4e09678abe:tests/contracts/test_master_specialist_runtime_contract.py:generic-api-key:132",
     "9a003c2e54c88a11dcc0d9f753f1453dbff724cb:dashboard/src/api/operationalApi.test.ts:generic-api-key:114",
     "9a003c2e54c88a11dcc0d9f753f1453dbff724cb:dashboard/src/api/operationalApi.test.ts:generic-api-key:195",
+    "972780efbcc51fb0005767bddbbd819cb4406d56:tests/contracts/test_sprint3d_auth_grants.py:generic-api-key:426",
+    "972780efbcc51fb0005767bddbbd819cb4406d56:tests/contracts/test_sprint3d_offline_validation.py:generic-api-key:1493",
 })
 BINARIES = {
     "secrets": ("gitleaks", "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_windows_x64.zip",
@@ -122,8 +130,8 @@ def validate_gitleaksignore(path=None):
         raise ValueError("Gitleaks exceptions must be a regular reviewed file")
     entries = tuple(line.strip() for line in path.read_text(encoding="utf-8").splitlines()
                     if line.strip() and not line.lstrip().startswith("#"))
-    if len(entries) != 5 or set(entries) != APPROVED_GITLEAKS_FINGERPRINTS:
-        raise ValueError("Gitleaks exceptions must equal the five reviewed historical fingerprints exactly")
+    if len(entries) != 7 or set(entries) != APPROVED_GITLEAKS_FINGERPRINTS:
+        raise ValueError("Gitleaks exceptions must equal the seven reviewed historical fingerprints exactly")
     return entries
 
 
@@ -303,6 +311,123 @@ def scan_npm(temp):
     return findings, [{"scope": "dashboard/package-lock.json (production + development + optional + peer)", "status": "complete"}]
 
 
+def strict_json(text, label):
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"Duplicate JSON key in {label}")
+            result[key] = value
+        return result
+    try:
+        return json.loads(text, object_pairs_hook=unique)
+    except json.JSONDecodeError as error:
+        raise ValueError(f"{label} is corrupted") from error
+
+
+def terraform_sources():
+    files = [path.as_posix() for path in tracked_files() if path.suffix == ".tf" and path.parts[0] in {"envs", "modules"}]
+    if not files:
+        raise RuntimeError("Terraform scan coverage is empty")
+    return tuple(files)
+
+
+def terraform_identity(item):
+    if not isinstance(item, dict):
+        raise ValueError("Terraform finding identity is incomplete")
+    rule, file, resource, line, severity = (item.get("rule"), item.get("file"), item.get("resource"), item.get("line"), item.get("severity"))
+    path = Path(file) if isinstance(file, str) else None
+    if (not isinstance(rule, str) or not rule or not isinstance(resource, str) or not resource or severity not in SEVERITY_RANK
+            or not isinstance(line, int) or isinstance(line, bool) or line < 1 or path is None or path.is_absolute()
+            or ".." in path.parts or path.suffix != ".tf" or path.parts[0] not in {"envs", "modules"}):
+        raise ValueError("Terraform finding identity is incomplete")
+    return {"rule": rule, "file": path.as_posix(), "resource": resource, "line": line, "severity": severity}
+
+
+def load_terraform_baseline(path=None):
+    """Read the reviewed baseline. This never creates or rewrites it."""
+    path = Path(path) if path is not None else TERRAFORM_BASELINE
+    if path.is_symlink() or not path.is_file():
+        raise ValueError("Terraform baseline is missing")
+    payload = strict_json(path.read_text(encoding="utf-8"), "Terraform baseline")
+    required = {"schema", "scanner", "version", "purpose", "risk_acceptance", "note", "entries", "findings"}
+    findings = payload.get("findings") if isinstance(payload, dict) else None
+    if (not isinstance(payload, dict) or set(payload) != required or payload.get("schema") != 1 or payload.get("scanner") != "trivy"
+            or payload.get("version") != VERSIONS["terraform-security"] or payload.get("purpose") != "temporary-development-deferral"
+            or payload.get("risk_acceptance") is not False or payload.get("note") != TERRAFORM_DEFERRAL
+            or not isinstance(findings, list) or not findings or payload.get("entries") != len(findings)):
+        raise ValueError("Terraform baseline is corrupted")
+    identities, seen = [], set()
+    for item in findings:
+        if not isinstance(item, dict) or set(item) != {"rule", "file", "resource", "line", "severity"}:
+            raise ValueError("Terraform baseline is corrupted")
+        identity = terraform_identity(item)
+        key = (identity["rule"], identity["file"], identity["resource"], identity["line"])
+        if key in seen:
+            raise ValueError("Terraform baseline contains a duplicate finding")
+        seen.add(key)
+        identities.append(identity)
+    return tuple(identities)
+
+
+def assess_terraform(findings, baseline=None):
+    approved = tuple(baseline) if baseline is not None else load_terraform_baseline()
+    if not isinstance(findings, list):
+        raise ValueError("Terraform findings are missing")
+    by_location = {(item["rule"], item["file"], item["resource"], item["line"]): item for item in approved}
+    deferred, resolved, unexpected, increases, duplicates, seen = [], [], [], [], [], set()
+    for raw in findings:
+        item = terraform_identity(raw)
+        location = (item["rule"], item["file"], item["resource"], item["line"])
+        if location in seen:
+            duplicates.append(item)
+            continue
+        seen.add(location)
+        match = by_location.get(location)
+        if match and match["severity"] == item["severity"]:
+            deferred.append(item)
+        elif match and SEVERITY_RANK[item["severity"]] > SEVERITY_RANK[match["severity"]]:
+            increases.append(item)
+        else:
+            unexpected.append(item)
+    for item in approved:
+        if (item["rule"], item["file"], item["resource"], item["line"]) not in seen:
+            resolved.append(item)
+    order = lambda item: (item["file"], item["line"], item["rule"], item["resource"], item["severity"])
+    return {
+        "name": "temporary-development-deferral",
+        "risk_acceptance": False,
+        "baseline_entries": len(approved),
+        "raw_findings": len(findings),
+        "deferred": sorted(deferred, key=order),
+        "resolved": sorted(resolved, key=order),
+        "unexpected": sorted(unexpected, key=order),
+        "severity_increases": sorted(increases, key=order),
+        "duplicates": sorted(duplicates, key=order),
+        "decision": "deferred" if not unexpected and not increases and not duplicates else "failed",
+    }
+
+
+def passed_scan_report(scan):
+    report = {"schema": 1, "scan": scan, "version": VERSIONS[scan], "status": "passed", "exit_code": 0,
+              "findings": [], "contexts": [{"status": "complete"}]}
+    if scan == "terraform-security":
+        report["contexts"] = [{"scope": TERRAFORM_SCOPE, "status": "complete", "scanned_files": ["modules/example.tf"]}]
+        report["policy"] = assess_terraform([])
+    return report
+
+
+def terraform_finding_path(target, source):
+    path = Path(str(target))
+    if path.is_absolute():
+        path = path.resolve().relative_to(source.resolve())
+    elif path.parts and path.parts[0] == source.name:
+        path = Path(*path.parts[1:])
+    if path.is_absolute() or ".." in path.parts:
+        raise RuntimeError("Terraform finding path is unsafe")
+    return path.as_posix()
+
+
 def terraform_findings(payload):
     findings = []
     for result in payload.get("Results", []):
@@ -318,8 +443,10 @@ def terraform_findings(payload):
 
 
 def scan_terraform(temp):
+    # The reviewed baseline is read during policy comparison and is never rewritten here.
     source = temp / "source"
     source.mkdir()
+    sources = []
     for relative in tracked_files():
         if relative.suffix != ".tf" or relative.parts[0] not in {"envs", "modules"}:
             continue
@@ -329,6 +456,9 @@ def scan_terraform(temp):
         target = source / relative
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(ROOT / relative, target)
+        sources.append(relative.as_posix())
+    if not sources:
+        raise RuntimeError("Terraform scan coverage is empty")
     ignored = temp / "empty-ignore"
     ignored.write_text("", encoding="utf-8")
     report = temp / "trivy.json"
@@ -341,12 +471,26 @@ def scan_terraform(temp):
     if "Results" not in payload:
         raise RuntimeError("Trivy report is incomplete")
     findings = terraform_findings(payload)
+    for item in findings:
+        item["file"] = terraform_finding_path(item["file"], source)
     if bool(findings) != bool(result.returncode):
         raise RuntimeError("Trivy exit/report mismatch")
-    return findings, [{"scope": "all repository envs/modules .tf source, no state/tfvars or AWS access", "status": "complete"}]
+    return findings, [{"scope": TERRAFORM_SCOPE, "status": "complete", "scanned_files": sources}]
 
 
-def validate_security_reports(reports):
+def validate_terraform_coverage(context, expected_sources):
+    files = context.get("scanned_files")
+    if context.get("scope") != TERRAFORM_SCOPE or context.get("status") != "complete" or not isinstance(files, list) or not files or len(files) != len(set(files)):
+        raise ValueError("Missing or unexpected Terraform scan coverage")
+    for item in files:
+        path = Path(item) if isinstance(item, str) else Path()
+        if not isinstance(item, str) or path.is_absolute() or ".." in path.parts or path.suffix != ".tf" or not path.parts or path.parts[0] not in {"envs", "modules"}:
+            raise ValueError("Missing or unexpected Terraform scan coverage")
+    if expected_sources is not None and tuple(files) != tuple(expected_sources):
+        raise ValueError("Missing or unexpected Terraform scan coverage")
+
+
+def validate_security_reports(reports, expected_sources=None):
     by_scan = {}
     for report in reports:
         name = report["scan"]
@@ -355,11 +499,33 @@ def validate_security_reports(reports):
         by_scan[name] = report
     if set(by_scan) != set(SCANS):
         raise ValueError("Missing/unexpected required security reports")
+    terraform_summary = None
     for name, report in by_scan.items():
-        if report.get("schema") != 1 or report.get("version") != VERSIONS[name] or report.get("status") != "passed" or report.get("exit_code") != 0 or report.get("findings"):
+        if report.get("schema") != 1 or report.get("version") != VERSIONS[name]:
             raise ValueError(f"Security scan is not clean: {name}")
-        if not report.get("contexts") or any(context.get("status") != "complete" for context in report["contexts"]):
+        contexts = report.get("contexts")
+        if not contexts or any(context.get("status") != "complete" for context in contexts):
             raise ValueError(f"Incomplete security scan: {name}")
+        if name != "terraform-security":
+            if report.get("status") != "passed" or report.get("exit_code") != 0 or report.get("findings"):
+                raise ValueError(f"Security scan is not clean: {name}")
+            continue
+        if len(contexts) != 1:
+            raise ValueError("Missing or unexpected Terraform scan coverage")
+        validate_terraform_coverage(contexts[0], expected_sources)
+        findings = report.get("findings")
+        if report.get("status") == "error" or report.get("exit_code") not in (0, 1) or not isinstance(findings, list):
+            raise ValueError("Terraform scanner failed or did not finish")
+        if bool(findings) != (report.get("status") == "findings" and report.get("exit_code") == 1):
+            raise ValueError("Terraform raw result was tampered")
+        policy = assess_terraform(findings)
+        if policy["decision"] != "deferred":
+            raise ValueError("Terraform finding is outside the temporary development baseline")
+        if report.get("policy") != policy:
+            raise ValueError("Terraform policy result does not match the baseline comparison")
+        terraform_summary = {"raw_status": report["status"], "raw_exit": report["exit_code"], "raw_findings": len(findings),
+                             "decision": policy["decision"], "deferred": len(policy["deferred"]), "resolved": len(policy["resolved"])}
+    return terraform_summary
 
 
 def run(scan):
@@ -368,6 +534,8 @@ def run(scan):
         with tempfile.TemporaryDirectory(prefix="wilvor-security-") as directory:
             functions = {"secrets": scan_secrets, "python-dependencies": scan_python, "npm-dependencies": scan_npm, "terraform-security": scan_terraform}
             report["findings"], report["contexts"] = functions[scan](Path(directory))
+            if scan == "terraform-security":
+                report["policy"] = assess_terraform(report["findings"])
         failed_context = any(context["status"] != "complete" for context in report["contexts"])
         report["status"] = "error" if failed_context else "findings" if report["findings"] else "passed"
         report["exit_code"] = 2 if failed_context else 1 if report["findings"] else 0
@@ -379,13 +547,29 @@ def run(scan):
     destination = REPORTS / scan / "scan.json"
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(report, indent=2), encoding="utf-8")
-    message = f"### Security: {scan}\nVersion {VERSIONS[scan]}; status: {report['status']}; findings: {len(report['findings'])}.\n"
-    message += "Identifiers/locations only are in the scan artifact; raw values and scanner output are not published.\n"
+    if scan == "terraform-security" and "policy" in report:
+        policy = report["policy"]
+        message = (
+            f"### Security: terraform-security\nTrivy {VERSIONS[scan]} raw status: {report['status']}; "
+            f"raw exit {report['exit_code']}; raw findings: {len(report['findings'])}.\n"
+            "CI policy is a temporary development deferral, not risk acceptance. "
+            f"Decision: {policy['decision']}; deferred {len(policy['deferred'])}; resolved {len(policy['resolved'])}; "
+            f"unexpected {len(policy['unexpected'])}; severity increases {len(policy['severity_increases'])}; "
+            f"duplicates {len(policy['duplicates'])}.\n"
+        )
+        for item in report["findings"]:
+            message += f"- {item['severity']} {item['rule']} {item['file']}:{item['line']} {item['resource']}\n"
+        message += "Identifiers/locations only are in the scan artifact; raw values and scanner output are not published.\n"
+        code = 2 if report["status"] == "error" else 0 if policy["decision"] == "deferred" else 1
+    else:
+        message = f"### Security: {scan}\nVersion {VERSIONS[scan]}; status: {report['status']}; findings: {len(report['findings'])}.\n"
+        message += "Identifiers/locations only are in the scan artifact; raw values and scanner output are not published.\n"
+        code = report["exit_code"]
     print(message)
     if os.getenv("GITHUB_STEP_SUMMARY"):
         with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as stream:
             stream.write(message)
-    return report["exit_code"]
+    return code
 
 
 if __name__ == "__main__":

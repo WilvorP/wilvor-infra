@@ -25,6 +25,9 @@ functions/weather/metar/processor/build/
 !tests/fixtures/live_ops_public_claim_snapshots.json
 !tests/fixtures/historical_targeted_retest_summary.json
 
+# Temporary Terraform CI deferral baseline must remain trackable despite *.json.
+!security/terraform-security-baseline.json
+
 
 envs/dev/tfplan
 

@@ -318,3 +318,91 @@ Results:
 - Workflow policy and actionlint 1.7.7 passed.
 
 **PARTIAL:** npm, Python, dashboard, Gitleaks, pip-audit, workflow policy and Terraform syntax validation pass. The security gate stays red until an infrastructure owner approves or changes the 99 Trivy findings. No scanner rule was disabled and no ignore comment was added.
+
+## Sprint 3D historical fingerprints, 2026-11-07
+
+GitHub Actions run `42396968336` failed Gitleaks and Trivy. Python, dashboard,
+Terraform validation, npm audit, and pip-audit had passed. This follow-up
+reproduced the secrets scan and documented the Terraform decision. No commit,
+push, merge, checkout, AWS call, or Terraform apply was performed.
+
+The local clone could not see commit `972780efbcc51fb0005767bddbbd819cb4406d56`
+until the missing remote tips were fetched into temporary refs.
+`sprint3d-five-agent-integration` points at that commit.
+`origin/ai-operations-copilot` was stale at `a30cb31`; its remote tip
+`c68742c` contains that commit and two later commits from 2026-11-01. GitHub
+`fetch-depth: 0` fetches every branch, which is why the hosted scan reported
+candidates the earlier local scan did not. The current branch stayed
+`ci-step1`. The artifact API returned 401, so the fingerprints below come from
+the local Gitleaks 8.30.1 report produced by `scripts/ci_security.py`.
+
+Before adding exceptions, that command exited **1** with exactly two history
+findings and no working-tree findings:
+
+- `972780efbcc51fb0005767bddbbd819cb4406d56:tests/contracts/test_sprint3d_auth_grants.py:generic-api-key:426`
+- `972780efbcc51fb0005767bddbbd819cb4406d56:tests/contracts/test_sprint3d_offline_validation.py:generic-api-key:1493`
+
+Both are synthetic idempotency fixtures, described as G11 and G12 in
+`SECURITY_FINDINGS.md`. The original five fingerprints were not changed.
+
+```powershell
+python scripts/ci_security.py run --scan secrets
+python scripts/run_offline_tests.py tests/unit/ci/test_gitleaks_exceptions.py -q -ra --tb=short --junitxml=test-results/security-tools/gitleaks-sprint3d-regressions.xml
+python test-results/security-tools/_canary_gitleaks.py
+python scripts/ci_security.py run --scan secrets
+python scripts/run_offline_tests.py tests/unit/ci -q -ra --tb=line --junitxml=test-results/security-tools/gitleaks-ci-regressions.xml
+python scripts/ci.py policy
+git diff --check
+```
+
+Results, using `.venv\Scripts\python.exe`:
+
+- Pre-exception reproduction: **exit 1, 2 history findings, 0 working-tree findings.**
+- Focused exception tests: **25 passed.**
+- Negative control: **pass.** Exit 1, one working-tree `generic-api-key` on the temporary canary, zero history findings, matched value absent from `scan.json`, and the canary file removed.
+- Post-canary scan with the Sprint 3D history still reachable: **exit 0, zero findings, seven approved history exceptions.**
+- CI regressions: **114 passed.** That is the prior 111 plus the two new fingerprint cases and the focused Sprint 3D regression.
+- Workflow policy: passed.
+- Trivy, npm audit, pip-audit, the 4,281 Python tests, and the dashboard suite were not rerun.
+
+**PARTIAL:** the secrets job is clean for this history, and the Terraform decision is recorded without a suppression. The security gate stays red until an owner approves or changes the 99 Trivy findings. Temporary investigation refs were removed after the clean scan. No production behavior changed.
+
+## Temporary Terraform baseline, 2026-11-07
+
+The 99 Trivy findings are unchanged and are now a temporary development CI
+deferral in `security/terraform-security-baseline.json`. This is not risk
+acceptance and not production clearance. Trivy still exits 1 and the published
+report still lists every finding. The process exit is 0 only when the
+independent comparison matches the baseline. `*.json` stays ignored except for
+this reviewed file, using the same tracking exception pattern as the other
+committed JSON fixtures.
+
+```powershell
+python scripts/run_offline_tests.py tests/unit/ci -q -ra --tb=line --junitxml=test-results/security-tools/baseline-ci-regressions.xml
+python scripts/ci_security.py run --scan terraform-security
+python scripts/ci.py policy
+./test-results/ci-tools/actionlint/actionlint.exe -shellcheck= -pyflakes= .github/workflows/ci.yml
+python scripts/ci_security.py run --scan secrets
+python test-results/security-tools/_canary_gitleaks.py
+python scripts/ci_security.py run --scan secrets
+git diff --check
+```
+
+The secrets commands ran while the remote tips of `sprint3d-five-agent-integration`
+(`972780e`) and `ai-operations-copilot` (`c873448`, including a commit from
+2026-11-07) were reachable. Those temporary refs were removed afterward and
+`origin/ai-operations-copilot` was restored to `a30cb31`. The working branch
+stayed `ci-step1`.
+
+Results, using `.venv\Scripts\python.exe`:
+
+- CI regressions: **137 passed**.
+- Trivy 0.76.1: raw status `findings`, raw exit 1, **99 findings**, 118 Terraform files scanned. CI policy decision `deferred`, 99 deferred, 0 unexpected, 0 resolved, `risk_acceptance` false. Process exit **0**.
+- The aggregate gate test accepted that exact report and rejected one added finding.
+- A same-count substitution, a severity increase, a duplicate occurrence, a missing or malformed baseline, a missing report, a scanner error, missing coverage, and a tampered clean status all failed in unit tests.
+- Workflow policy and actionlint 1.7.7 passed.
+- Gitleaks 8.30.1 on the GitHub-visible history: **exit 0, zero findings, seven history exceptions.**
+- Canary: exit 1, one working-tree finding, zero history findings, value absent from the report, file removed. The following secrets scan was clean again.
+- No Terraform source, application code, AWS call, or full Python/dashboard rerun.
+
+**PASS for this CI deferral.** The 99 findings remain unresolved and must be remediated or formally accepted later. The baseline is not a substitute for that review.

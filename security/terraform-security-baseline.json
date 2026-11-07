@@ -1,0 +1,704 @@
+{
+  "schema": 1,
+  "scanner": "trivy",
+  "version": "0.76.1",
+  "purpose": "temporary-development-deferral",
+  "risk_acceptance": false,
+  "note": "Temporary development CI deferral. Not an infrastructure-owner risk acceptance and not production security clearance.",
+  "entries": 99,
+  "findings": [
+    {
+      "rule": "AWS-0017",
+      "file": "modules/active_alerts/processor.tf",
+      "resource": "module.active_alerts",
+      "line": 79,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0066",
+      "file": "modules/active_alerts/processor.tf",
+      "resource": "module.active_alerts",
+      "line": 85,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0024",
+      "file": "modules/active_alerts/tables.tf",
+      "resource": "module.active_alerts",
+      "line": 58,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0025",
+      "file": "modules/active_alerts/tables.tf",
+      "resource": "module.active_alerts",
+      "line": 61,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/aircraft_foundation/aircraft_current_state_writer.tf",
+      "resource": "module.aircraft_foundation",
+      "line": 12,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0066",
+      "file": "modules/aircraft_foundation/aircraft_current_state_writer.tf",
+      "resource": "module.aircraft_foundation",
+      "line": 85,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/aircraft_foundation/aircraft_raw_processor.tf",
+      "resource": "module.aircraft_foundation",
+      "line": 14,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0066",
+      "file": "modules/aircraft_foundation/aircraft_raw_processor.tf",
+      "resource": "module.aircraft_foundation",
+      "line": 100,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0089",
+      "file": "modules/aircraft_foundation/main.tf",
+      "resource": "module.aircraft_foundation",
+      "line": 43,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0090",
+      "file": "modules/aircraft_foundation/main.tf",
+      "resource": "module.aircraft_foundation",
+      "line": 43,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0132",
+      "file": "modules/aircraft_foundation/main.tf",
+      "resource": "module.aircraft_foundation",
+      "line": 62,
+      "severity": "HIGH"
+    },
+    {
+      "rule": "AWS-0025",
+      "file": "modules/aircraft_foundation/main.tf",
+      "resource": "module.aircraft_foundation",
+      "line": 127,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0024",
+      "file": "modules/aircraft_foundation/main.tf",
+      "resource": "module.aircraft_foundation",
+      "line": 173,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/aircraft_foundation/opensky_poller.tf",
+      "resource": "module.aircraft_foundation",
+      "line": 24,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0066",
+      "file": "modules/aircraft_foundation/opensky_poller.tf",
+      "resource": "module.aircraft_foundation",
+      "line": 95,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0098",
+      "file": "modules/aircraft_foundation/secrets.tf",
+      "resource": "module.aircraft_foundation",
+      "line": 1,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/airport_assessment/processor.tf",
+      "resource": "module.airport_assessment",
+      "line": 122,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0066",
+      "file": "modules/airport_assessment/processor.tf",
+      "resource": "module.airport_assessment",
+      "line": 132,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0024",
+      "file": "modules/airport_assessment/tables.tf",
+      "resource": "module.airport_assessment",
+      "line": 47,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0025",
+      "file": "modules/airport_assessment/tables.tf",
+      "resource": "module.airport_assessment",
+      "line": 50,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/airport_status/processor.tf",
+      "resource": "module.airport_status",
+      "line": 28,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0066",
+      "file": "modules/airport_status/processor.tf",
+      "resource": "module.airport_status",
+      "line": 104,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0024",
+      "file": "modules/airport_status/tables.tf",
+      "resource": "module.airport_status",
+      "line": 59,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0025",
+      "file": "modules/airport_status/tables.tf",
+      "resource": "module.airport_status",
+      "line": 62,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/encounter/processor.tf",
+      "resource": "module.encounter",
+      "line": 179,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0066",
+      "file": "modules/encounter/processor.tf",
+      "resource": "module.encounter",
+      "line": 187,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0025",
+      "file": "modules/encounter/tables.tf",
+      "resource": "module.encounter",
+      "line": 1,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0024",
+      "file": "modules/encounter/tables.tf",
+      "resource": "module.encounter",
+      "line": 64,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/historical_analytics/monitoring.tf",
+      "resource": "module.historical_analytics",
+      "line": 1,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0089",
+      "file": "modules/historical_analytics/results_bucket.tf",
+      "resource": "module.historical_analytics",
+      "line": 1,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0090",
+      "file": "modules/historical_analytics/results_bucket.tf",
+      "resource": "module.historical_analytics",
+      "line": 1,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/historical_facts/coverage.tf",
+      "resource": "module.historical_facts",
+      "line": 1,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0066",
+      "file": "modules/historical_facts/coverage.tf",
+      "resource": "module.historical_facts",
+      "line": 139,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/historical_facts/coverage.tf",
+      "resource": "module.historical_facts",
+      "line": 203,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0066",
+      "file": "modules/historical_facts/coverage.tf",
+      "resource": "module.historical_facts",
+      "line": 280,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/historical_facts/firehose.tf",
+      "resource": "module.historical_facts",
+      "line": 8,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/historical_facts/transform.tf",
+      "resource": "module.historical_facts",
+      "line": 1,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0066",
+      "file": "modules/historical_facts/transform.tf",
+      "resource": "module.historical_facts",
+      "line": 12,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0089",
+      "file": "modules/historical_facts_data/bucket.tf",
+      "resource": "module.historical_facts_data",
+      "line": 1,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0132",
+      "file": "modules/historical_facts_data/bucket.tf",
+      "resource": "module.historical_facts_data",
+      "line": 27,
+      "severity": "HIGH"
+    },
+    {
+      "rule": "AWS-0089",
+      "file": "modules/metar/archive.tf",
+      "resource": "module.metar",
+      "line": 5,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0090",
+      "file": "modules/metar/archive.tf",
+      "resource": "module.metar",
+      "line": 5,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/metar/poller.tf",
+      "resource": "module.metar",
+      "line": 24,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0066",
+      "file": "modules/metar/poller.tf",
+      "resource": "module.metar",
+      "line": 97,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/metar/processor.tf",
+      "resource": "module.metar",
+      "line": 24,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0066",
+      "file": "modules/metar/processor.tf",
+      "resource": "module.metar",
+      "line": 114,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0025",
+      "file": "modules/metar/tables.tf",
+      "resource": "module.metar",
+      "line": 1,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0024",
+      "file": "modules/metar/tables.tf",
+      "resource": "module.metar",
+      "line": 35,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/operational_api/api.tf",
+      "resource": "module.operational_api",
+      "line": 207,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0066",
+      "file": "modules/operational_api/api.tf",
+      "resource": "module.operational_api",
+      "line": 310,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0001",
+      "file": "modules/operational_api/api.tf",
+      "resource": "module.operational_api",
+      "line": 479,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/projection/processor.tf",
+      "resource": "module.projection",
+      "line": 218,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0066",
+      "file": "modules/projection/processor.tf",
+      "resource": "module.projection",
+      "line": 235,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0025",
+      "file": "modules/projection/tables.tf",
+      "resource": "module.projection",
+      "line": 1,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0024",
+      "file": "modules/projection/tables.tf",
+      "resource": "module.projection",
+      "line": 40,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0025",
+      "file": "modules/projection/tables.tf",
+      "resource": "module.projection",
+      "line": 50,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0024",
+      "file": "modules/projection/tables.tf",
+      "resource": "module.projection",
+      "line": 101,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0025",
+      "file": "modules/projection/tables.tf",
+      "resource": "module.projection",
+      "line": 112,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0024",
+      "file": "modules/projection/tables.tf",
+      "resource": "module.projection",
+      "line": 142,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/recommendations/processor.tf",
+      "resource": "module.recommendations",
+      "line": 68,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0066",
+      "file": "modules/recommendations/processor.tf",
+      "resource": "module.recommendations",
+      "line": 74,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0024",
+      "file": "modules/recommendations/tables.tf",
+      "resource": "module.recommendations",
+      "line": 64,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0025",
+      "file": "modules/recommendations/tables.tf",
+      "resource": "module.recommendations",
+      "line": 67,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/risk/processor.tf",
+      "resource": "module.risk",
+      "line": 129,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0066",
+      "file": "modules/risk/processor.tf",
+      "resource": "module.risk",
+      "line": 142,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0025",
+      "file": "modules/risk/tables.tf",
+      "resource": "module.risk",
+      "line": 1,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0024",
+      "file": "modules/risk/tables.tf",
+      "resource": "module.risk",
+      "line": 51,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0089",
+      "file": "modules/runway_metadata/archive.tf",
+      "resource": "module.runway_metadata",
+      "line": 7,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0090",
+      "file": "modules/runway_metadata/archive.tf",
+      "resource": "module.runway_metadata",
+      "line": 7,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/runway_metadata/loader.tf",
+      "resource": "module.runway_metadata",
+      "line": 41,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0066",
+      "file": "modules/runway_metadata/loader.tf",
+      "resource": "module.runway_metadata",
+      "line": 133,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0024",
+      "file": "modules/runway_metadata/tables.tf",
+      "resource": "module.runway_metadata",
+      "line": 21,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0025",
+      "file": "modules/runway_metadata/tables.tf",
+      "resource": "module.runway_metadata",
+      "line": 24,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0089",
+      "file": "modules/sigmet/archive.tf",
+      "resource": "module.sigmet",
+      "line": 5,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0090",
+      "file": "modules/sigmet/archive.tf",
+      "resource": "module.sigmet",
+      "line": 5,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/sigmet/hazard_coordinates_processor.tf",
+      "resource": "module.sigmet",
+      "line": 24,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0066",
+      "file": "modules/sigmet/hazard_coordinates_processor.tf",
+      "resource": "module.sigmet",
+      "line": 114,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/sigmet/hazard_station_candidates_processor.tf",
+      "resource": "module.sigmet",
+      "line": 24,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0066",
+      "file": "modules/sigmet/hazard_station_candidates_processor.tf",
+      "resource": "module.sigmet",
+      "line": 120,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/sigmet/poller.tf",
+      "resource": "module.sigmet",
+      "line": 24,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0066",
+      "file": "modules/sigmet/poller.tf",
+      "resource": "module.sigmet",
+      "line": 83,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/sigmet/processor.tf",
+      "resource": "module.sigmet",
+      "line": 24,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0066",
+      "file": "modules/sigmet/processor.tf",
+      "resource": "module.sigmet",
+      "line": 151,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0025",
+      "file": "modules/sigmet/tables.tf",
+      "resource": "module.sigmet",
+      "line": 1,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0024",
+      "file": "modules/sigmet/tables.tf",
+      "resource": "module.sigmet",
+      "line": 52,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0025",
+      "file": "modules/sigmet/tables.tf",
+      "resource": "module.sigmet",
+      "line": 62,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0024",
+      "file": "modules/sigmet/tables.tf",
+      "resource": "module.sigmet",
+      "line": 92,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0025",
+      "file": "modules/sigmet/tables.tf",
+      "resource": "module.sigmet",
+      "line": 102,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0024",
+      "file": "modules/sigmet/tables.tf",
+      "resource": "module.sigmet",
+      "line": 132,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0025",
+      "file": "modules/sigmet/tables.tf",
+      "resource": "module.sigmet",
+      "line": 143,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0024",
+      "file": "modules/sigmet/tables.tf",
+      "resource": "module.sigmet",
+      "line": 166,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0025",
+      "file": "modules/sigmet/tables.tf",
+      "resource": "module.sigmet",
+      "line": 176,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0024",
+      "file": "modules/sigmet/tables.tf",
+      "resource": "module.sigmet",
+      "line": 206,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0089",
+      "file": "modules/station_reference/archive.tf",
+      "resource": "module.station_reference",
+      "line": 7,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0090",
+      "file": "modules/station_reference/archive.tf",
+      "resource": "module.station_reference",
+      "line": 7,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/station_reference/loader.tf",
+      "resource": "module.station_reference",
+      "line": 31,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0066",
+      "file": "modules/station_reference/loader.tf",
+      "resource": "module.station_reference",
+      "line": 105,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0024",
+      "file": "modules/station_reference/tables.tf",
+      "resource": "module.station_reference",
+      "line": 43,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0025",
+      "file": "modules/station_reference/tables.tf",
+      "resource": "module.station_reference",
+      "line": 46,
+      "severity": "LOW"
+    }
+  ]
+}

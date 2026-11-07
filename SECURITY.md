@@ -14,8 +14,19 @@ suppression, ignored exit code or advisory allowlist is configured.
 | npm audit | npm 11.6.2 on Node 22 | Complete dashboard lockfile including development, peer and optional dependencies |
 | Trivy config | 0.76.1 | All `envs/**/*.tf` and `modules/**/*.tf`; every severity; no state, tfvars, provider initialization or AWS calls |
 
-Gitleaks history scanning uses exactly five reviewed `.gitleaksignore`
-fingerprints for confirmed synthetic fixtures (G1-G5 in `SECURITY_FINDINGS.md`).
+Trivy still reports its raw findings. The current 99 findings, 2 high, 25 medium,
+and 72 low, are listed in `security/terraform-security-baseline.json`. That
+file is a temporary development CI deferral so infrastructure remediation can
+wait until AI Copilot infrastructure work is finished. It is not owner risk
+acceptance and it is not production security clearance. The quality gate
+compares the raw findings to that file again. A new finding, a higher severity,
+or another occurrence fails CI. Resolved findings may pass without rewriting
+the file. See `SECURITY_FINDINGS.md` for the removal procedure. This baseline
+is not a permanent replacement for infrastructure hardening.
+
+Gitleaks history scanning uses exactly seven reviewed `.gitleaksignore`
+fingerprints for confirmed synthetic fixtures (G1-G5, G11, and G12 in
+`SECURITY_FINDINGS.md`).
 The full commit/file/rule/line entries were extracted from Gitleaks 8.30.1.
 Both workflow policy and scanner execution reject missing, duplicate, altered
 or additional entries. Current-tree scanning uses an empty ignore file, so
@@ -52,7 +63,8 @@ foreach ($scan in @('secrets','python-dependencies','npm-dependencies','terrafor
     python scripts/ci_security.py bootstrap --scan $scan
     if ($LASTEXITCODE -ne 0) { throw "Scanner setup failed: $scan" }
     python scripts/ci_security.py run --scan $scan
-    # Exit 0 = clean, 1 = findings, 2 = incomplete/setup error. Inspect each result.
+    # Exit 0 = policy pass, 1 = unapproved findings, 2 = incomplete/setup error.
+    # Terraform exit 0 can still mean raw Trivy findings matched the temporary baseline.
 }
 python scripts/run_offline_tests.py tests/unit/ci -q
 python scripts/ci.py policy

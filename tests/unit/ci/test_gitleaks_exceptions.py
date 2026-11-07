@@ -1,4 +1,4 @@
-"""Only the five reviewed history fingerprints may bypass secret detection."""
+"""Only the seven reviewed history fingerprints may bypass secret detection."""
 
 import json
 from pathlib import Path
@@ -15,15 +15,29 @@ REVIEWED = (
     ("8f801061fa3cf5efc07ebfe7139fed4e09678abe", "tests/contracts/test_master_specialist_runtime_contract.py", 132),
     ("9a003c2e54c88a11dcc0d9f753f1453dbff724cb", "dashboard/src/api/operationalApi.test.ts", 114),
     ("9a003c2e54c88a11dcc0d9f753f1453dbff724cb", "dashboard/src/api/operationalApi.test.ts", 195),
+    ("972780efbcc51fb0005767bddbbd819cb4406d56", "tests/contracts/test_sprint3d_auth_grants.py", 426),
+    ("972780efbcc51fb0005767bddbbd819cb4406d56", "tests/contracts/test_sprint3d_offline_validation.py", 1493),
 )
+ORIGINAL = REVIEWED[:5]
+SPRINT3D = REVIEWED[5:]
 
 
 @pytest.mark.parametrize("commit,file,line", REVIEWED)
 def test_only_reviewed_scanner_fingerprints_are_approved(commit, file, line):
     entries = security.validate_gitleaksignore()
-    assert len(entries) == len(set(entries)) == 5
+    assert len(entries) == len(set(entries)) == 7
     assert set(entries) == {f"{c}:{f}:generic-api-key:{n}" for c, f, n in REVIEWED}
     assert f"{commit}:{file}:generic-api-key:{line}" in entries
+
+
+def test_sprint3d_exceptions_keep_the_original_five_unchanged():
+    entries = set(security.validate_gitleaksignore())
+    original = {f"{commit}:{file}:generic-api-key:{line}" for commit, file, line in ORIGINAL}
+    added = {f"{commit}:{file}:generic-api-key:{line}" for commit, file, line in SPRINT3D}
+    assert original <= entries
+    assert entries - original == added
+    assert len(added) == 2
+    assert all(item.startswith("972780efbcc51fb0005767bddbbd819cb4406d56:tests/contracts/test_sprint3d_") for item in added)
 
 
 @pytest.mark.parametrize("mutation", ["extra", "duplicate", "missing", "line", "commit", "rule", "path", "glob", "inline-comment", "empty"])
@@ -54,7 +68,7 @@ def test_ignore_file_cannot_expand_or_change_exceptions(tmp_path, mutation):
         entries[0] = ":".join(parts)
     path = tmp_path / ".gitleaksignore"
     path.write_text("\n".join(entries), encoding="utf-8")
-    with pytest.raises(ValueError, match="five reviewed"):
+    with pytest.raises(ValueError, match="seven reviewed"):
         security.validate_gitleaksignore(path)
 
 
@@ -68,9 +82,9 @@ def test_invalid_exceptions_stop_scanning_before_invocation(tmp_path, monkeypatc
 
 def test_workflow_policy_rejects_invalid_exception_file(monkeypatch):
     def reject():
-        raise ValueError("five reviewed fingerprints required")
+        raise ValueError("seven reviewed fingerprints required")
     monkeypatch.setattr(ci, "validate_gitleaksignore", reject)
-    with pytest.raises(ValueError, match="five reviewed"):
+    with pytest.raises(ValueError, match="seven reviewed"):
         ci.check_workflows()
 
 
@@ -121,12 +135,10 @@ def test_scanner_cannot_bypass_detection_or_offline_safeguards(tmp_path, monkeyp
     report = json.loads((security.REPORTS / "secrets" / "scan.json").read_text())
     assert "DO_NOT_PUBLISH" not in json.dumps(report)
     assert calls == (["history"] if expected == 2 else ["history", "working-tree"])
-    reports = [{"schema": 1, "scan": name, "version": security.VERSIONS[name], "status": "passed",
-                "exit_code": 0, "findings": [], "contexts": [{"status": "complete"}]}
-               for name in security.SCANS if name != "secrets"] + [report]
+    reports = [security.passed_scan_report(name) for name in security.SCANS if name != "secrets"] + [report]
     if expected == 0:
         security.validate_security_reports(reports)
-        assert report["contexts"][0]["approved_history_exceptions"] == 5
+        assert report["contexts"][0]["approved_history_exceptions"] == 7
     else:
         with pytest.raises(ValueError):
             security.validate_security_reports(reports)
