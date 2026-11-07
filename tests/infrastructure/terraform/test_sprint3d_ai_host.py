@@ -456,6 +456,8 @@ def test_lambda_is_isolated_closed_and_logged(repo_root: Path, ai_host_source: s
     )
     assert re.search(r'handler\s*=\s*"handler\.lambda_handler"', lambda_text)
     assert re.search(r'runtime\s*=\s*"python3\.12"', lambda_text)
+    assert re.search(r"memory_size\s*=\s*256", lambda_text)
+    assert re.search(r"timeout\s*=\s*30", lambda_text)
     assert re.search(
         r"reserved_concurrent_executions\s*=\s*local\.reserved_concurrent_executions",
         lambda_text,

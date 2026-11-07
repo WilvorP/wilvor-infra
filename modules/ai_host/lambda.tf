@@ -23,8 +23,10 @@ resource "aws_lambda_function" "host" {
   role             = aws_iam_role.host.arn
   handler          = "handler.lambda_handler"
   runtime          = "python3.12"
-  memory_size      = 128
-  timeout          = 3
+  # Task 2C diagnostic host size. Reserved concurrency stays 0 unless a
+  # separately approved window raises it to 1. Production AI flags stay false.
+  memory_size      = 256
+  timeout          = 30
 
   # Closed by default. Zero concurrency rejects invokes before the handler.
   # There is no function URL and no API Gateway permission in this module.
