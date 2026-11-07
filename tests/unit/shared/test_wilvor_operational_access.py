@@ -162,6 +162,43 @@ def test_query_all_and_scan_all_drain_pages():
     assert scan_table.calls[1][1]["ExclusiveStartKey"] == {"id": "c"}
 
 
+def test_query_bounded_stops_at_max_items_and_reports_truncation():
+    table = RecordingTable(
+        [
+            {"Items": [{"id": "a"}, {"id": "b"}], "LastEvaluatedKey": {"id": "b"}},
+            {"Items": [{"id": "c"}]},
+        ]
+    )
+
+    page = access.query_bounded(
+        table,
+        max_items=2,
+        KeyConditionExpression=Key("hazard_id").eq("H1"),
+    )
+
+    assert page["items"] == [{"id": "a"}, {"id": "b"}]
+    assert page["truncated"] is True
+    assert page["rows_returned"] == 2
+    assert page["last_evaluated_key"] == {"id": "b"}
+    assert table.calls[0][1]["Limit"] == 2
+    assert len(table.calls) == 1
+
+
+def test_query_bounded_complete_page_is_not_a_verified_zero():
+    table = RecordingTable([{"Items": []}])
+
+    page = access.query_bounded(
+        table,
+        max_items=25,
+        KeyConditionExpression=Key("callsign").eq("UAL123"),
+    )
+
+    assert page["items"] == []
+    assert page["truncated"] is False
+    assert page["rows_returned"] == 0
+    assert page["last_evaluated_key"] is None
+
+
 def test_query_page_and_scan_page_do_not_drain():
     query_table = RecordingTable(
         [

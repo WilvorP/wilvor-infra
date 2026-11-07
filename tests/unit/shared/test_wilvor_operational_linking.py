@@ -195,6 +195,23 @@ def test_query_observation_is_full_query_eventual_and_not_complete():
     assert not hasattr(observation, "is_complete")
 
 
+def test_bounded_query_observation_records_limit_and_truncation():
+    complete = linking.bounded_query_observation(
+        "query_encounter_candidates_by_aircraft",
+        limit=25,
+    )
+    truncated = linking.bounded_query_observation(
+        "query_encounter_candidates_by_aircraft",
+        limit=25,
+        truncated=True,
+    )
+
+    assert complete.coverage is linking.Coverage.BOUNDED_QUERY
+    assert complete.limit == 25
+    assert linking.QUERY_PAGE_TRUNCATED not in complete.limitations
+    assert linking.QUERY_PAGE_TRUNCATED in truncated.limitations
+
+
 def test_hydrate_aircraft_present_retained_missing_and_mismatch():
     current = {
         "aircraft_id": "abc123",

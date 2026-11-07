@@ -580,6 +580,7 @@ def build_airport_operational_context(
     airport_id,
     *,
     now_epoch,
+    include_taf_periods=True,
 ):
     airport_id = _normalize_airport_id(airport_id)
     if not airport_id:
@@ -638,6 +639,11 @@ def build_airport_operational_context(
             taf_periods_link = _missing_weather_lineage_link(
                 "latest TAF is absent; forecast periods were not queried "
                 "from AirportStatus copied taf_version_key"
+            )
+        elif not include_taf_periods:
+            taf_periods_link = _missing_weather_lineage_link(
+                "TAF forecast periods were not queried because the host "
+                "allowlist does not include that resource."
             )
         else:
             taf_version_key = _text(latest_taf.get("taf_version_key"))
