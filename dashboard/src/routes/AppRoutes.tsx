@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes, useSearchParams } from 'react-router-dom';
 
+import { CopilotPage } from '@/features/ai/CopilotPage';
 import { AircraftPage } from '@/features/aircraft/AircraftPage';
 import { AirportsPage } from '@/features/airports/AirportsPage';
 import { AlertsPage } from '@/features/alerts/AlertsPage';
@@ -62,6 +63,7 @@ export function AppRoutes({ mapStyleUrl }: AppRoutesProps) {
         />
         <Route path="/system-health" element={<SystemHealthPage />} />
         <Route path="/health" element={<LegacyHealthRedirect />} />
+        <Route path="/copilot" element={<CopilotPage />} />
 
         {ROUTES.filter((route) => !route.implemented).map((route) => (
           <Route

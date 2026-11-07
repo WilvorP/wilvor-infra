@@ -1,0 +1,38 @@
+.banner {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wv-space-4);
+}
+
+.meta {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--wv-space-4);
+  margin: 0;
+}
+
+.meta div {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wv-space-1);
+  min-width: 0;
+}
+
+.meta dt {
+  font-size: var(--wv-text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--wv-tracking-wide);
+  color: var(--wv-text-tertiary);
+}
+
+.meta dd {
+  margin: 0;
+  font-size: var(--wv-text-xs);
+  color: var(--wv-text-primary);
+}
+
+@media (max-width: 900px) {
+  .meta {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
