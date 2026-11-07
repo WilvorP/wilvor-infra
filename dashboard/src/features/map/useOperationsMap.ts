@@ -1,7 +1,12 @@
-import maplibregl, { type Map as MapLibreMap } from 'maplibre-gl';
+import * as maplibregl from 'maplibre-gl';
+import type { Map as MapLibreMap } from 'maplibre-gl';
+import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url';
 import { useEffect, useRef, useState, type RefObject } from 'react';
 
 import { DARK_BASEMAP_STYLE, DEFAULT_VIEW } from './mapStyle';
+
+// MapLibre 6 is ESM-only. Vite does not locate the module worker by itself.
+maplibregl.setWorkerUrl(workerUrl);
 
 export interface UseOperationsMapResult {
   /** The MapLibre instance once the style has finished loading. */
@@ -44,6 +49,9 @@ export function useOperationsMap(
         center: DEFAULT_VIEW.center,
         zoom: DEFAULT_VIEW.zoom,
         attributionControl: { compact: true },
+        // Keep v5 tile overscaling. v6 slices vector tiles by default, which
+        // changes symbol placement without changing operational data.
+        zoomLevelsToOverscale: undefined,
         // Pitch and rotation add no operational value to a plan-view traffic
         // picture and make bearing interpretation harder.
         pitchWithRotate: false,

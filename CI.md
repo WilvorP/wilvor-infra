@@ -6,10 +6,14 @@ or credentials are configured. Require **CI quality gate** in branch protection.
 | Event | Profile |
 | --- | --- |
 | Feature-branch push | No run |
-| Pull request targeting `main` | PR |
+| Pull request targeting `main`, without `ci-full` | PR |
+| Pull request targeting `main`, with `ci-full` | Full offline |
 | Push/merge to `main` | Full offline |
 | Manual `workflow_dispatch`, on the selected ref | Full offline |
 
+PR events are `opened`, `synchronize`, `reopened`, `labeled` and `unlabeled`.
+Adding or removing `ci-full` reevaluates the current label set; removing it
+returns the PR to lightweight checks. Labels never enter shell commands.
 Concurrent runs of the same PR are cancelled when superseded. Main/manual
 runs are not cancelled in progress. There are no path filters that could
 silently omit required checks.
@@ -33,6 +37,7 @@ patch on GitHub, just as setup-python resolves the current 3.11 patch.
 | Terraform/infrastructure | `tests/infrastructure/terraform` and top-level AI auth-route contracts | Static/PowerShell tests + formatting; no provider initialization | All offline cases + both-root validation |
 | Dashboard | ESLint and TypeScript | Yes | Yes |
 | Dashboard | All configured Vitest cases, coverage and production build | Deferred | Yes |
+| Security (four parallel scans) | Gitleaks history/source, pip-audit manifests, npm lockfile audit, Trivy Terraform configuration | All | All |
 | CI quality gate | Required job status, ownership/report completeness, coverage aggregation | Yes | Yes |
 
 PR CI keeps **every Copilot contract and script-safety case**. It saves work
@@ -44,10 +49,11 @@ offline test. The Python matrix is generated from the same inventory/profile
 used by the gate; profile checks are not separately duplicated test jobs.
 
 Observed starting inventory: 426 pipelines, 275 read-models, 396 history,
-144 script-safety, 2,809 Copilot, 120 infrastructure, 26 new CI helper cases.
-That is **4,196 Python cases**, plus the existing 342 dashboard cases. These
+144 script-safety, 2,809 Copilot, 120 infrastructure, 111 CI helper cases.
+That is **4,281 Python cases**, including all previous 4,196 and 85 added
+label/security regressions, plus the existing 342 dashboard cases. These
 are observations, not ceilings or hardcoded passing counts. PR selection is
-3,096 Python cases; the full profile adds 1,100 more. No tests are selected
+3,181 Python cases; the full profile adds 1,100 more. No tests are selected
 by a fragile keyword such as `not anthropic` or `not integration`.
 
 ## Discovery and adding tests
@@ -176,7 +182,12 @@ AWS authentication, SSO, OIDC, model credentials, deployment or CD are used.
 PR-controlled strings never enter inline shell expressions. Profile and matrix
 values travel through environment variables and validated fixed group names.
 
-Downloads are confined to setup. Python tests retain the existing inherited
+Application-test downloads are confined to setup. Security scanners additionally
+use public advisory/policy feeds; they never call deployed application services.
+See [SECURITY.md](SECURITY.md) for pinned tools, scope, local commands, report
+handling and remediation policy. All four scans run on both profiles and must
+succeed with complete, clean reports for the aggregate gate to pass.
+Python tests retain the existing inherited
 socket guard and dummy SDK-import credentials; the dashboard preload denies
 external socket/DNS operations while allowing local test-runner IPC. Terraform
 validation accesses provider schemas, not deployed resources. Artifacts are

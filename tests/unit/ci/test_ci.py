@@ -21,7 +21,7 @@ NODES = [
     "tests/infrastructure/aws/test_x.py::test_a", "tests/infrastructure/terraform/test_plan_safety.py::test_a",
     "tests/integration/aircraft/test_x.py::test_a",
 ]
-NEEDS = {name: {"result": "success"} for name in ("discovery", "python", "terraform", "dashboard")}
+NEEDS = {name: {"result": "success"} for name in ("discovery", "python", "terraform", "dashboard", "security")}
 
 
 def results(data):

@@ -595,9 +595,17 @@ def test_server_scope_wins_over_caller_region_and_caller_authorized():
         location_hint="Texas",
     )
     authorized = _port(client).execute(
-        _live_binding(idempotency_key="idem-auth", invocation_id="inv-auth", correlation_id="corr-auth"),
+        _live_binding(
+            idempotency_key="idem-auth",
+            invocation_id="inv-auth",
+            correlation_id="corr-auth",
+        ),
         _request(
-            _live_binding(idempotency_key="idem-auth", invocation_id="inv-auth", correlation_id="corr-auth"),
+            _live_binding(
+                idempotency_key="idem-auth",
+                invocation_id="inv-auth",
+                correlation_id="corr-auth",
+            ),
             caller_authorized=True,
         ),
         _live_host(),

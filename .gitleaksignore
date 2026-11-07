@@ -1,0 +1,12 @@
+# Exact historical synthetic fixtures, reviewed in SECURITY_FINDINGS.md (G1-G5).
+# No credential authority; current fixtures were corrected. No path/rule exclusions.
+# G1: offline binding identifiers; formatting-only correction in current source.
+c191249913ecb8a91f10ed41d90dbd439dbaa8bd:tests/contracts/test_sprint3c_scoped_read.py:generic-api-key:598
+# G2: matching synthetic binding inputs in the same offline authorization test.
+c191249913ecb8a91f10ed41d90dbd439dbaa8bd:tests/contracts/test_sprint3c_scoped_read.py:generic-api-key:600
+# G3: default synthetic idempotency nonce, not an authorization credential.
+8f801061fa3cf5efc07ebfe7139fed4e09678abe:tests/contracts/test_master_specialist_runtime_contract.py:generic-api-key:132
+# G4: unsigned airport pagination JSON passed only to a stubbed fetch client.
+9a003c2e54c88a11dcc0d9f753f1453dbff724cb:dashboard/src/api/operationalApi.test.ts:generic-api-key:114
+# G5: unsigned offset pagination JSON passed only to a stubbed fetch client.
+9a003c2e54c88a11dcc0d9f753f1453dbff724cb:dashboard/src/api/operationalApi.test.ts:generic-api-key:195

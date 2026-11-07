@@ -7,6 +7,13 @@ PIPELINES = frozenset({
     "projection", "recommendations", "risk", "runway_metadata", "sigmet", "taf",
 })
 CLI_FILE = "tests/infrastructure/terraform/test_terraform_cli.py"
+PR_EVENTS = ("opened", "synchronize", "reopened", "labeled", "unlabeled")
+PROFILE_EXPRESSION = "${{ github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci-full') && 'pr' || 'full' }}"
+
+
+def profile_for_event(event_name, labels=()):
+    """Mirror Actions contains(array, value), which is case-insensitive."""
+    return "pr" if event_name == "pull_request" and "ci-full" not in {label.casefold() for label in labels} else "full"
 
 
 def owner(nodeid):

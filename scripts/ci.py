@@ -13,7 +13,8 @@ import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from scripts.ci_groups import GROUPS, MATRIX_GROUPS, expected, inventory
+from scripts.ci_groups import GROUPS, MATRIX_GROUPS, PR_EVENTS, PROFILE_EXPRESSION, expected, inventory
+from scripts.ci_security import SCANS, validate_gitleaksignore, validate_security_reports
 
 REPORTS = ROOT / "test-results" / "ci"
 PINS = {
@@ -126,14 +127,29 @@ def policy(document):
     events = document.get("on", {})
     if set(events) != {"push", "pull_request", "workflow_dispatch"}:
         raise ValueError("Unexpected or missing trigger")
-    for event in ("push", "pull_request"):
-        if events[event] != {"branches": ["main"]}:
-            raise ValueError(f"{event} must target main without filters that omit checks")
-    if document.get("env", {}).get("CI_PROFILE") != "${{ github.event_name == 'pull_request' && 'pr' || 'full' }}":
-        raise ValueError("Only PR events may select the lightweight profile")
+    if events["push"] != {"branches": ["main"]}:
+        raise ValueError("Push checks must target main only")
+    if events["pull_request"] != {"branches": ["main"], "types": list(PR_EVENTS)}:
+        raise ValueError("PR events must reevaluate main PRs on label additions/removals")
+    if document.get("env", {}).get("CI_PROFILE") != PROFILE_EXPRESSION:
+        raise ValueError("Profile selection must honor ci-full on PRs")
     jobs = document["jobs"]
-    if set(jobs) != {"discovery", "python", "terraform", "dashboard", "quality-gate"}:
+    if set(jobs) != {"discovery", "python", "terraform", "dashboard", "security", "quality-gate"}:
         raise ValueError("Unexpected workflow job structure")
+    security = jobs["security"]
+    if security.get("if") or security.get("strategy", {}).get("matrix") != {"scan": list(SCANS)}:
+        raise ValueError("All security scans must run on both profiles")
+    if security.get("strategy", {}).get("fail-fast") is not False:
+        raise ValueError("A security finding must not cancel the other scanners")
+    checkouts = [step for step in security.get("steps", []) if step.get("uses", "").startswith("actions/checkout@")]
+    if len(checkouts) != 1 or checkouts[0].get("with", {}).get("fetch-depth") != 0:
+        raise ValueError("Secret scanning requires complete Git history")
+    if not any(step.get("run") == "python scripts/ci_security.py bootstrap --scan $env:CI_SCAN" and not step.get("if")
+               for step in security.get("steps", [])):
+        raise ValueError("Required pinned scanner setup is missing or conditional")
+    if not any(step.get("run") == "python scripts/ci_security.py run --scan $env:CI_SCAN" and not step.get("if")
+               for step in security.get("steps", [])):
+        raise ValueError("Required scanner execution is missing or conditional")
     gate = jobs["quality-gate"]
     if set(gate["needs"]) != set(jobs) - {"quality-gate"} or gate.get("if", "").strip() not in {"always()", "${{ always() }}"}:
         raise ValueError("Quality gate must always depend on every job family")
@@ -171,6 +187,7 @@ def check_workflows():
     if len(files) != 1:
         raise ValueError("Review security policy before adding another workflow")
     policy(yaml.safe_load(files[0].read_text(encoding="utf-8")))
+    validate_gitleaksignore()
     summary("### Workflow policy\nTrigger, permission, action-pin and aggregate-gate checks passed.\n")
     return 0
 
@@ -212,7 +229,7 @@ def validate_gate(data, reports, profile, needs):
     if data != inventory([n for values in data["groups"].values() for n in values] +
                          [n for values in data["excluded"].values() for n in values], profile):
         raise ValueError("Inventory ownership/profile integrity mismatch")
-    if set(needs) != {"discovery", "python", "terraform", "dashboard"} or any(v["result"] != "success" for v in needs.values()):
+    if set(needs) != {"discovery", "python", "terraform", "dashboard", "security"} or any(v["result"] != "success" for v in needs.values()):
         raise ValueError("A required job failed, was cancelled, or was skipped")
     wanted_groups = {g for g in GROUPS if expected(data, g)}
     if profile == "full":
@@ -272,6 +289,7 @@ def gate(args):
             validation = read(paths[0])
             if validation.get("valid") is not True or validation.get("error_count") != 0:
                 raise ValueError(f"Terraform validation report failed: {root}")
+    validate_security_reports([read(path) for path in Path(args.artifacts).rglob("scan.json")])
     output = REPORTS / "aggregate"
     output.mkdir(parents=True, exist_ok=True)
     if args.profile == "full":
