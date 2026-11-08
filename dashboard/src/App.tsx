@@ -6,6 +6,7 @@ import { AiProvider } from '@/api/AiProvider';
 import { ApiProvider } from '@/api/ApiProvider';
 import {
   createDisabledCopilotQueryClient,
+  createLocalDevCopilotQueryClient,
   type CopilotQueryClient,
 } from '@/api/aiClient';
 import { createOperationalApiClient } from '@/api/operationalApi';
@@ -38,10 +39,17 @@ export function App({ config = configResult, aiClient }: AppProps) {
     [config.config],
   );
 
-  const copilotClient = useMemo(
-    () => aiClient ?? createDisabledCopilotQueryClient(),
-    [aiClient],
-  );
+  const copilotClient = useMemo(() => {
+    if (aiClient) {
+      return aiClient;
+    }
+
+    if (config.config?.localDevCopilotEnabled) {
+      return createLocalDevCopilotQueryClient();
+    }
+
+    return createDisabledCopilotQueryClient();
+  }, [aiClient, config.config]);
 
   if (config.config === null || client === null) {
     return <ConfigurationError errors={config.errors} />;

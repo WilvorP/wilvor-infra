@@ -12,6 +12,7 @@ every AWS data-plane name.
 
 from __future__ import annotations
 
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
@@ -98,6 +99,34 @@ def _as_proposal(value: object, context: MasterPlanningContext) -> MasterRoutePr
     return proposal
 
 
+_TERMINAL_CODE = re.compile(r"[A-Za-z0-9_]{1,64}")
+_TERMINAL_REASON = re.compile(r"(?:UNSUPPORTED|REFUSAL)(?::[A-Za-z0-9_]{1,64})?")
+
+
+def sanitized_terminal_reason(raw: object) -> str | None:
+    """Closed kind and code for a planner terminal decision.
+
+    Free-form refusal prose is dropped. The code is not an authorization.
+    """
+
+    decision = raw
+    if isinstance(raw, Mapping):
+        try:
+            decision = ModelDecision.from_dict(raw)
+        except ContractValidationError:
+            return None
+    if not isinstance(decision, ModelDecision):
+        return None
+    if decision.kind is ModelDecisionKind.UNSUPPORTED and decision.unsupported_reason is not None:
+        return "UNSUPPORTED:%s" % decision.unsupported_reason.value
+    if decision.kind is ModelDecisionKind.REFUSAL:
+        code = decision.refusal_code
+        if isinstance(code, str) and _TERMINAL_CODE.fullmatch(code):
+            return "REFUSAL:%s" % code
+        return "REFUSAL"
+    return None
+
+
 def _reject_model_decision_as_proposal(decision: ModelDecision) -> Sprint4PlanningStatus:
     inspect_untrusted_tool_calls(decision)
     if decision.kind is ModelDecisionKind.TOOL_CALLS:
@@ -146,6 +175,7 @@ class Sprint4MasterPlanningResult:
     source_authenticity: MasterSourceAuthenticity = MasterSourceAuthenticity.NOT_ESTABLISHED
     understanding_limitation: str = REQUEST_UNDERSTANDING_LIMITATION
     schema_version: str = SPRINT4_MASTER_PLANNING_SCHEMA_VERSION
+    terminal_reason: str | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version != SPRINT4_MASTER_PLANNING_SCHEMA_VERSION:
@@ -172,6 +202,11 @@ class Sprint4MasterPlanningResult:
         )
         if self.understanding_limitation != REQUEST_UNDERSTANDING_LIMITATION:
             _fail("invalid_understanding_limitation")
+        if self.terminal_reason is not None and (
+            not isinstance(self.terminal_reason, str)
+            or _TERMINAL_REASON.fullmatch(self.terminal_reason) is None
+        ):
+            _fail("invalid_terminal_reason")
         if self.instruction_ref != MASTER_PLANNING_INSTRUCTION_REF:
             _fail("unknown_instruction_ref")
         if self.decision is not None:
@@ -233,7 +268,10 @@ def plan_master_request(
         _fail("invalid_planning_context")
     wrapped = planner if type(planner) is Sprint4InjectedRoutePlanner else Sprint4InjectedRoutePlanner(planner)
     raw = wrapped.propose(context)
-    from wilvor_ai.sprint5_master_planning import decode_planner_model_output
+    from wilvor_ai.sprint5_master_planning import (
+        decode_planner_model_output,
+        mismatched_executable_step_tokens,
+    )
 
     try:
         decoded = decode_planner_model_output(raw, context)
@@ -254,6 +292,7 @@ def plan_master_request(
                 decision=None,
                 status=status,
                 untrusted_hints=(),
+                terminal_reason=sanitized_terminal_reason(raw),
             )
         if exc.errors == ("invalid_master_route_proposal",) or "invalid_" in exc.errors[0]:
             return Sprint4MasterPlanningResult(
@@ -271,6 +310,7 @@ def plan_master_request(
             decision=None,
             status=decoded,
             untrusted_hints=(),
+            terminal_reason=sanitized_terminal_reason(raw),
         )
     try:
         proposal = _as_proposal(decoded, context)
@@ -287,7 +327,14 @@ def plan_master_request(
             )
         raise
     hints = collect_untrusted_hints(proposal)
-    decision = authorize_route(proposal, context)
+    try:
+        decision = authorize_route(proposal, context)
+    except ContractValidationError as exc:
+        if "capability_step_mismatch" in exc.errors:
+            details = mismatched_executable_step_tokens(proposal)
+            if details:
+                raise ContractValidationError((*exc.errors, *details)) from exc
+        raise
     return Sprint4MasterPlanningResult(
         context=context,
         proposal=proposal,

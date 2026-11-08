@@ -14,6 +14,24 @@ describe('resolveConfig', () => {
     );
     expect(result.config?.apiTimeoutMs).toBe(30_000);
     expect(result.config?.mapStyleUrl).toBeNull();
+    expect(result.config?.localDevCopilotEnabled).toBe(false);
+  });
+
+  it('enables the loopback copilot preview only for a development build', () => {
+    const production = resolveConfig({
+      VITE_WILVOR_API_BASE_URL: 'https://api.example.test',
+      VITE_WILVOR_LOCAL_DEV_COPILOT: '1',
+    });
+    const development = resolveConfig(
+      {
+        VITE_WILVOR_API_BASE_URL: 'https://api.example.test',
+        VITE_WILVOR_LOCAL_DEV_COPILOT: '1',
+      },
+      { developmentBuild: true },
+    );
+
+    expect(production.config?.localDevCopilotEnabled).toBe(false);
+    expect(development.config?.localDevCopilotEnabled).toBe(true);
   });
 
   it('strips trailing slashes so route joining stays predictable', () => {

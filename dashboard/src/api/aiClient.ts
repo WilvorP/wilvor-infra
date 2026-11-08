@@ -1,5 +1,7 @@
 import {
   AI_QUERY_ROUTE_KEY,
+  LOCAL_DEV_COPILOT_PATH,
+  LOCAL_DEV_PREVIEW_STANDING,
   assertCopilotQueryRequest,
   assertCopilotQueryResult,
   createRouteDisabledResult,
@@ -116,6 +118,65 @@ export function createHostContractCopilotQueryClient(
   handler: InjectedCopilotHandler,
 ): CopilotQueryClient {
   return new HostContractCopilotQueryClient(handler);
+}
+
+/**
+ * Loopback developer preview. The browser posts only to the Vite-proxied
+ * local path. It never posts `POST /ai/query` and never receives an API key.
+ */
+export class LocalDevCopilotQueryClient implements CopilotQueryClient {
+  readonly standing: CopilotRouteStanding = LOCAL_DEV_PREVIEW_STANDING;
+
+  async query(
+    request: CopilotQueryRequest,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<CopilotQueryResult> {
+    assertCopilotQueryRequest(request);
+
+    const controller = new AbortController();
+    const timer = setTimeout(() => {
+      controller.abort(new DOMException('Timeout', 'TimeoutError'));
+    }, 180_000);
+
+    if (options.signal?.aborted) {
+      controller.abort(options.signal.reason);
+    } else {
+      options.signal?.addEventListener(
+        'abort',
+        () => controller.abort(options.signal?.reason),
+        { once: true },
+      );
+    }
+
+    try {
+      const response = await fetch(LOCAL_DEV_COPILOT_PATH, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(request),
+        signal: controller.signal,
+      });
+      const payload: unknown = await response.json();
+
+      if (!response.ok || !isRecord(payload)) {
+        throw new Error('Local developer preview did not return a Copilot result.');
+      }
+
+      return assertCopilotQueryResult({
+        ...(payload as unknown as CopilotQueryResult),
+        standing: LOCAL_DEV_PREVIEW_STANDING,
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
+}
+
+export function createLocalDevCopilotQueryClient(): CopilotQueryClient {
+  return new LocalDevCopilotQueryClient();
 }
 
 /**

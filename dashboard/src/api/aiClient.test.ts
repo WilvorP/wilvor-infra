@@ -5,11 +5,17 @@ import {
   createDisabledCopilotQueryClient,
   createHostContractCopilotQueryClient,
   createInjectedCopilotQueryClient,
+  createLocalDevCopilotQueryClient,
 } from './aiClient';
-import { CopilotContractError, MASTER_RESPONSE_STATUS_TEXT } from './aiContracts';
+import {
+  CopilotContractError,
+  LOCAL_DEV_COPILOT_PATH,
+  MASTER_RESPONSE_STATUS_TEXT,
+} from './aiContracts';
 import {
   evidenceDisplayResult,
   testRequest,
+  unavailableResult,
   unsupportedResult,
 } from '@/features/ai/fixtures';
 
@@ -81,6 +87,59 @@ describe('Copilot query client', () => {
     expect(result.standing.transport).toBe('HOST_CONTRACT');
     expect(result.standing.routeEnabled).toBe(false);
     expect(result.productionAiActive).toBe(false);
+  });
+
+  it('posts the loopback preview path and keeps production claims closed', async () => {
+    const request = testRequest();
+    const fetchImpl = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        ...unavailableResult(request),
+        developerPreview: {
+          notProduction: true,
+          evidenceProvenance: 'OPERATOR_AUTHENTICATED_DEV',
+          sourceAuthenticity: 'NOT_ESTABLISHED',
+          claimsAdmitted: false,
+          notice: 'NOT PRODUCTION. Loopback developer preview.',
+          answer: 'GetItem returned no item. The record is missing.',
+          specialistStatusText: null,
+          routeStatus: 'AUTHORIZED_PLAN',
+          specialists: ['LIVE_OPS'],
+          blockedSpecialists: [],
+          toolResults: [],
+          awsOperations: [
+            {
+              operation: 'GetItem',
+              table: 'wilvor-dev-aircraft-current-state',
+              keyAttributes: ['aircraft_id'],
+              bounded: true,
+              provenance: 'OPERATOR_AUTHENTICATED_DEV',
+            },
+          ],
+          modelOperations: [],
+          principalLabel: null,
+          missingEvidence: ['adb65b'],
+          staleEvidence: [],
+          partialEvidence: [],
+          toolErrors: [],
+          modelErrors: [],
+        },
+      }),
+    }));
+    vi.stubGlobal('fetch', fetchImpl);
+
+    const result = await createLocalDevCopilotQueryClient().query(request);
+
+    expect(fetchImpl).toHaveBeenCalledWith(
+      LOCAL_DEV_COPILOT_PATH,
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(LOCAL_DEV_COPILOT_PATH).not.toContain('/ai/query');
+    expect(result.standing.transport).toBe('LOCAL_DEV_PREVIEW');
+    expect(result.standing.routeEnabled).toBe(false);
+    expect(result.claimsAdmitted).toBe(false);
+    expect(result.sourceAuthenticity).toBe('NOT_ESTABLISHED');
+    expect(result.developerPreview?.answer).toContain('missing');
   });
 
   it('honours caller abort before invoking an injected handler', async () => {
