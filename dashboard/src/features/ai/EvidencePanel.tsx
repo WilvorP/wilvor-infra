@@ -21,6 +21,12 @@ export interface EvidencePanelProps {
   result: CopilotQueryResult | null;
 }
 
+function observedFields(result: CopilotQueryResult, toolCallId: string) {
+  return (result.developerPreview?.toolResults ?? [])
+    .filter((tool) => tool.toolCallId === toolCallId)
+    .flatMap((tool) => tool.observations ?? []);
+}
+
 /**
  * Display-only aircraft and hazard evidence.
  *
@@ -54,6 +60,9 @@ export function EvidencePanel({ result }: EvidencePanelProps) {
         <p className={styles.authenticity}>
           Source authenticity: not established. Production authority: denied.
         </p>
+        {result.developerPreview ? (
+          <Notice tone="warning">{result.developerPreview.notice}</Notice>
+        ) : null}
         {result.truncated || result.hasMore ? (
           <Notice tone="warning">
             Evidence is truncated or has additional pages. A partial page is
@@ -90,6 +99,17 @@ export function EvidencePanel({ result }: EvidencePanelProps) {
                     />
                   )}
                 </header>
+
+                {observedFields(result, item.toolCallId).length > 0 ? (
+                  <ul className={styles.itemLimits} aria-label="Observed aircraft fields">
+                    {observedFields(result, item.toolCallId).map((observation) => (
+                      <li key={observation.field}>
+                        {observation.label}: {observation.value}. Developer
+                        observation, not an admitted operational claim.
+                      </li>
+                    ))}
+                  </ul>
+                ) : null}
 
                 <DataFieldGrid columns={2}>
                   <DataField label="Entity id" value={item.entityId} numeric />

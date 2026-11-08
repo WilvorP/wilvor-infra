@@ -13,10 +13,16 @@ from collections.abc import Mapping
 from typing import Any
 
 from wilvor_ai.contracts import ContractValidationError
+from wilvor_ai.master_contracts import MasterRequirement
 from wilvor_ai.master_routing import (
+    EXECUTABLE_ROUTE_KIND_TABLE,
     MASTER_ROUTE_PROPOSAL_SCHEMA_VERSION,
     MasterPlanningContext,
     MasterRouteProposal,
+    MasterRouteTemporalIntent,
+    _PAIR_CAPABILITIES,
+    _SYNTHESIS_CAPABILITIES,
+    _VISUALIZATION,
 )
 from wilvor_ai.model_contracts import (
     MODEL_DECISION_SCHEMA_VERSION,
@@ -45,17 +51,113 @@ def _fail(code: str) -> None:
     raise ContractValidationError(code)
 
 
+def _closed_enum(values: object) -> dict[str, object]:
+    return {"type": "string", "enum": [str(item) for item in values]}
+
+
+def _const(value: str) -> dict[str, object]:
+    return {"const": value}
+
+
+def _sorted_names(values: object) -> list[str]:
+    return sorted(str(item) for item in values)
+
+
+_STEP_IDENTITY_FIELDS = ("specialist", "purpose", "capability")
+# Anthropic structured outputs reject a request whose strict schemas exceed
+# 24 optional parameters or 16 union-typed parameters, and they also reject
+# a compiled grammar that is too large. Five copies of this step object put
+# the same optional fields on every anyOf branch and cross that limit.
+ANTHROPIC_MAX_OPTIONAL_PARAMETERS = 24
+ANTHROPIC_MAX_UNION_TYPED_PARAMETERS = 16
+
+
+def _proposal_capability_names() -> list[str]:
+    """Capabilities the proposal may name. Route selection is not this list.
+
+    Synthesis and visualization stay out of ``route_kind``. The proposal
+    array can still name them so the host can defer synthesis.
+    """
+
+    executable = {
+        capability.value
+        for capabilities in _PAIR_CAPABILITIES.values()
+        for capability in capabilities
+    }
+    synthesis = {item.value for item in _SYNTHESIS_CAPABILITIES}
+    return _sorted_names(executable | synthesis | {_VISUALIZATION.value})
+
+
+def _step_schema(
+    *,
+    string: dict[str, object],
+    requirement: dict[str, object],
+    temporal_intent: dict[str, object],
+    hints: dict[str, object],
+) -> dict[str, object]:
+    """One step object. ``route_kind`` is the only executable combination."""
+
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["step_id", "route_kind", "requirement"],
+        "properties": {
+            "step_id": string,
+            "route_kind": _closed_enum(EXECUTABLE_ROUTE_KIND_TABLE),
+            "requirement": requirement,
+            "depends_on": {"type": "array", "items": string},
+            "temporal_intent": temporal_intent,
+            "historical_start_utc": string,
+            "historical_end_utc": string,
+            "hints": hints,
+            "needs_persisted_evidence": {"type": "boolean"},
+        },
+    }
+
+
+def mismatched_executable_step_tokens(proposal: MasterRouteProposal) -> tuple[str, ...]:
+    """Sanitized tokens for steps whose capability is outside the pair table.
+
+    Each mismatched allowed pair contributes specialist, purpose, and
+    capability. Step ids, hints, prompts, and aircraft identifiers are omitted.
+    """
+
+    if not isinstance(proposal, MasterRouteProposal):
+        _fail("invalid_master_route_proposal")
+    tokens: list[str] = []
+    for step in proposal.steps:
+        allowed = _PAIR_CAPABILITIES.get((step.specialist, step.purpose))
+        if allowed is not None and step.capability not in allowed:
+            tokens.extend(
+                (
+                    "specialist:%s" % step.specialist.value,
+                    "purpose:%s" % step.purpose.value,
+                    "capability:%s" % step.capability.value,
+                )
+            )
+    return tuple(tokens)
+
+
 def master_planning_json_schema() -> dict[str, object]:
-    """Structured output for Master planning. Tools are not in this schema."""
+    """Structured output for Master planning. Tools are not in this schema.
+
+    Each executable step carries one ``route_kind`` from
+    ``EXECUTABLE_ROUTE_KIND_TABLE``. The host decodes that token into
+    specialist, purpose, and capability. Synthesis capabilities stay on the
+    proposal ``capabilities`` array and are not route kinds. ``user_text``
+    stays host-owned. ``authorize_route`` remains the authorization step.
+    """
 
     string = {"type": "string"}
+    requirement = _closed_enum(item.value for item in MasterRequirement)
+    temporal_intent = _closed_enum(item.value for item in MasterRouteTemporalIntent)
     capability = {
         "type": "object",
         "additionalProperties": False,
         "required": ["capability", "requirement"],
         "properties": {
-            "capability": string,
-            "requirement": string,
+            "capability": _closed_enum(_proposal_capability_names()),
+            "requirement": requirement,
         },
     }
     hints = {
@@ -72,39 +174,20 @@ def master_planning_json_schema() -> dict[str, object]:
             },
         },
     }
-    step = {
-        "type": "object",
-        "additionalProperties": False,
-        "required": [
-            "step_id",
-            "specialist",
-            "purpose",
-            "requirement",
-            "capability",
-        ],
-        "properties": {
-            "step_id": string,
-            "specialist": string,
-            "purpose": string,
-            "requirement": string,
-            "capability": string,
-            "depends_on": {"type": "array", "items": string},
-            "temporal_intent": string,
-            "historical_start_utc": string,
-            "historical_end_utc": string,
-            "hints": hints,
-            "needs_persisted_evidence": {"type": "boolean"},
-        },
-    }
+    step = _step_schema(
+        string=string,
+        requirement=requirement,
+        temporal_intent=temporal_intent,
+        hints=hints,
+    )
     return {
         "anyOf": [
             {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["schema_version", "user_text", "capabilities", "steps"],
+                "required": ["schema_version", "capabilities", "steps"],
                 "properties": {
                     "schema_version": {"const": MASTER_ROUTE_PROPOSAL_SCHEMA_VERSION},
-                    "user_text": string,
                     "capabilities": {"type": "array", "items": capability},
                     "steps": {"type": "array", "items": step},
                 },
@@ -133,6 +216,45 @@ def master_planning_json_schema() -> dict[str, object]:
             },
         ]
     }
+
+
+def _expand_model_step(step: object) -> dict[str, Any]:
+    """Map one model step's route_kind onto the host triple.
+
+    Specialist, purpose, and capability are not accepted from the model.
+    Supplying them beside route_kind, or omitting route_kind, fails closed.
+    """
+
+    if not isinstance(step, Mapping):
+        _fail("invalid_master_route_proposal")
+    has_identity = any(name in step for name in _STEP_IDENTITY_FIELDS)
+    if "route_kind" in step and has_identity:
+        _fail("invalid_route_kind_conflict")
+    if has_identity or "route_kind" not in step:
+        _fail("invalid_route_kind")
+    token = step.get("route_kind")
+    resolved = EXECUTABLE_ROUTE_KIND_TABLE.get(token) if isinstance(token, str) else None
+    if resolved is None:
+        _fail("invalid_route_kind")
+    specialist, purpose, capability = resolved
+    expanded = {key: value for key, value in step.items() if key != "route_kind"}
+    expanded["specialist"] = specialist.value
+    expanded["purpose"] = purpose.value
+    expanded["capability"] = capability.value
+    return expanded
+
+
+def expand_model_route_proposal(payload: Mapping[str, Any]) -> dict[str, Any]:
+    """Decode route_kind tokens. This does not authorize the proposal."""
+
+    if not isinstance(payload, Mapping):
+        _fail("invalid_master_route_proposal")
+    steps = payload.get("steps")
+    if not isinstance(steps, list):
+        _fail("invalid_master_route_proposal")
+    expanded = dict(payload)
+    expanded["steps"] = [_expand_model_step(step) for step in steps]
+    return expanded
 
 
 def looks_like_route_proposal(value: object) -> bool:
@@ -183,6 +305,11 @@ def decode_planner_model_output(
             return decode_planner_model_output(ModelDecision.from_dict(raw), context)
         if looks_like_route_proposal(raw):
             payload = dict(raw)
+            steps = payload.get("steps")
+            if isinstance(steps, list) and any(
+                isinstance(step, Mapping) and "route_kind" in step for step in steps
+            ):
+                payload = expand_model_route_proposal(payload)
             payload.setdefault("schema_version", MASTER_ROUTE_PROPOSAL_SCHEMA_VERSION)
             payload.setdefault("user_text", context.canonical_user_text)
             proposal = MasterRouteProposal.from_dict(payload)
@@ -211,7 +338,7 @@ def decode_master_planning_json(payload: Mapping[str, Any]) -> object:
     if not isinstance(payload, Mapping):
         _fail("invalid_master_route_proposal")
     if looks_like_route_proposal(payload):
-        return dict(payload)
+        return expand_model_route_proposal(payload)
     if payload.get("kind") in {
         ModelDecisionKind.UNSUPPORTED.value,
         ModelDecisionKind.REFUSAL.value,
@@ -326,9 +453,13 @@ __all__ = [
     "SPRINT5_MASTER_PLANNING_SCHEMA",
     "build_master_planning_converse_kwargs",
     "build_master_planning_messages_kwargs",
+    "ANTHROPIC_MAX_OPTIONAL_PARAMETERS",
+    "ANTHROPIC_MAX_UNION_TYPED_PARAMETERS",
     "decode_master_planning_json",
     "decode_planner_model_output",
+    "expand_model_route_proposal",
     "looks_like_route_proposal",
     "master_planning_json_schema",
+    "mismatched_executable_step_tokens",
     "parse_master_planning_text_blocks",
 ]

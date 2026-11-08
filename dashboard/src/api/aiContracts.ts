@@ -84,7 +84,8 @@ export const ROUTE_DISABLED_NOTICE =
 export type CopilotTransport =
   | 'LOCAL_DISABLED'
   | 'INJECTED_TEST'
-  | 'HOST_CONTRACT';
+  | 'HOST_CONTRACT'
+  | 'LOCAL_DEV_PREVIEW';
 
 export type CopilotEvidenceEntityKind = 'AIRCRAFT' | 'HAZARD' | 'ENCOUNTER';
 
@@ -119,6 +120,23 @@ export const HOST_CONTRACT_COPILOT_STANDING: CopilotRouteStanding = {
   transport: 'HOST_CONTRACT',
   backendRouteOwner: 'integration_owner',
 };
+
+/**
+ * Loopback developer preview. The production route stays disabled.
+ * Evidence from this transport is operator-authenticated development
+ * evidence, not an established production source.
+ */
+export const LOCAL_DEV_PREVIEW_STANDING: CopilotRouteStanding = {
+  routeKey: AI_QUERY_ROUTE_KEY,
+  routeEnabled: false,
+  productionAiActive: false,
+  transport: 'LOCAL_DEV_PREVIEW',
+  backendRouteOwner: 'integration_owner',
+};
+
+export const LOCAL_DEV_COPILOT_PATH = '/local-dev/copilot/query' as const;
+
+export const OPERATOR_AUTHENTICATED_DEV = 'OPERATOR_AUTHENTICATED_DEV' as const;
 
 export interface CopilotPriorTurn {
   readonly role: 'user' | 'assistant';
@@ -199,6 +217,75 @@ export interface CopilotQueryResult {
   readonly truncated: boolean;
   readonly hasMore: boolean;
   readonly verifiedZeroMinted: false;
+  /** Present only for the loopback developer preview. */
+  readonly developerPreview?: CopilotDeveloperPreview;
+}
+
+export interface CopilotDeveloperPreview {
+  readonly notProduction: true;
+  readonly evidenceProvenance: typeof OPERATOR_AUTHENTICATED_DEV;
+  readonly sourceAuthenticity: 'NOT_ESTABLISHED';
+  readonly claimsAdmitted: false;
+  readonly notice: string;
+  readonly answer: string;
+  readonly specialistStatusText: string | null;
+  readonly routeStatus: string;
+  readonly routeKinds?: readonly string[];
+  readonly terminalDecision?: string | null;
+  readonly specialists: readonly string[];
+  readonly blockedSpecialists: readonly {
+    readonly specialist: string;
+    readonly reason: string;
+  }[];
+  readonly toolResults: readonly CopilotDeveloperToolResult[];
+  readonly awsOperations: readonly CopilotDeveloperAwsOperation[];
+  readonly modelOperations: readonly CopilotDeveloperModelOperation[];
+  readonly principalLabel: string | null;
+  readonly missingEvidence: readonly string[];
+  readonly staleEvidence: readonly string[];
+  readonly partialEvidence: readonly string[];
+  readonly toolErrors: readonly string[];
+  readonly modelErrors: readonly string[];
+}
+
+export interface CopilotDeveloperObservation {
+  readonly field: string;
+  readonly label: string;
+  readonly value: string;
+}
+
+export interface CopilotDeveloperToolResult {
+  readonly toolName: string;
+  readonly toolCallId: string;
+  readonly status: string;
+  readonly recordState: string;
+  readonly aircraftId: string | null;
+  readonly callsign: string | null;
+  readonly positionTimeUtc: string | null;
+  readonly freshnessStatus?: string | null;
+  readonly observations?: readonly CopilotDeveloperObservation[];
+  readonly encounterCandidateCount?: number | null;
+  readonly asOfUtc: string | null;
+  readonly sourceName: string;
+  readonly limitations: readonly string[];
+}
+
+export interface CopilotDeveloperAwsOperation {
+  readonly operation: string;
+  readonly table: string;
+  readonly indexName?: string | null;
+  readonly limit?: number | null;
+  readonly consistentRead?: boolean | null;
+  readonly keyAttributes: readonly string[];
+  readonly bounded: true;
+  readonly provenance: typeof OPERATOR_AUTHENTICATED_DEV;
+}
+
+export interface CopilotDeveloperModelOperation {
+  readonly model: string;
+  readonly max_tokens: number;
+  readonly stop_reason: string | null;
+  readonly usage: { readonly input_tokens?: number; readonly output_tokens?: number } | null;
 }
 
 export class CopilotContractError extends Error {
@@ -378,7 +465,8 @@ function assertStanding(standing: CopilotRouteStanding): CopilotRouteStanding {
   if (
     standing.transport !== 'LOCAL_DISABLED' &&
     standing.transport !== 'INJECTED_TEST' &&
-    standing.transport !== 'HOST_CONTRACT'
+    standing.transport !== 'HOST_CONTRACT' &&
+    standing.transport !== 'LOCAL_DEV_PREVIEW'
   ) {
     throw new CopilotContractError('invalid_transport');
   }
@@ -533,7 +621,79 @@ export function assertCopilotQueryResult(
     throw new CopilotContractError('invalid_pagination_flags');
   }
 
+  if (result.standing.transport === 'LOCAL_DEV_PREVIEW') {
+    assertDeveloperPreview(result.developerPreview);
+  } else if (result.developerPreview !== undefined) {
+    throw new CopilotContractError('developer_preview_not_allowed');
+  }
+
   return result;
+}
+
+function assertDeveloperPreview(preview: CopilotDeveloperPreview | undefined): void {
+  if (preview === undefined) {
+    throw new CopilotContractError('developer_preview_required');
+  }
+
+  if (
+    preview.notProduction !== true ||
+    preview.evidenceProvenance !== OPERATOR_AUTHENTICATED_DEV ||
+    preview.sourceAuthenticity !== 'NOT_ESTABLISHED'
+  ) {
+    throw new CopilotContractError('developer_preview_not_production');
+  }
+
+  assertBooleanFalse(preview.claimsAdmitted, 'operational_claim_not_admitted');
+
+  if (typeof preview.notice !== 'string' || !preview.notice.includes('NOT PRODUCTION')) {
+    throw new CopilotContractError('developer_preview_not_production');
+  }
+
+  if (typeof preview.answer !== 'string' || preview.answer.trim().length === 0) {
+    throw new CopilotContractError('invalid_developer_preview_answer');
+  }
+
+  if (
+    preview.specialistStatusText !== null &&
+    (typeof preview.specialistStatusText !== 'string' ||
+      preview.specialistStatusText.length > 4000)
+  ) {
+    throw new CopilotContractError('invalid_specialist_status_text');
+  }
+
+  assertToken(preview.routeStatus, 'route_status');
+
+  if (!Array.isArray(preview.specialists) || !Array.isArray(preview.blockedSpecialists)) {
+    throw new CopilotContractError('invalid_developer_preview');
+  }
+
+  if (!Array.isArray(preview.toolResults) || !Array.isArray(preview.awsOperations)) {
+    throw new CopilotContractError('invalid_developer_preview');
+  }
+
+  if (!Array.isArray(preview.modelOperations) || !Array.isArray(preview.modelErrors)) {
+    throw new CopilotContractError('invalid_developer_preview');
+  }
+
+  if (!Array.isArray(preview.toolErrors) || !Array.isArray(preview.missingEvidence)) {
+    throw new CopilotContractError('invalid_developer_preview');
+  }
+
+  if (!Array.isArray(preview.staleEvidence) || !Array.isArray(preview.partialEvidence)) {
+    throw new CopilotContractError('invalid_developer_preview');
+  }
+
+  if (preview.principalLabel !== null) {
+    assertToken(preview.principalLabel, 'principal_label');
+  }
+
+  for (const operation of preview.awsOperations) {
+    assertToken(operation.operation, 'aws_operation');
+    assertToken(operation.table, 'aws_table');
+    if (operation.bounded !== true || operation.provenance !== OPERATOR_AUTHENTICATED_DEV) {
+      throw new CopilotContractError('developer_preview_not_production');
+    }
+  }
 }
 
 export function createRouteDisabledResult(

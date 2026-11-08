@@ -99,6 +99,74 @@ _PAIR_CAPABILITIES = {
 }
 
 
+def _route_kind_names() -> dict[
+    tuple[MasterSpecialist, MasterPurpose, AgentCapability],
+    str,
+]:
+    """Short model tokens. Each one is exactly one host triple."""
+
+    names = {
+        (MasterSpecialist.LIVE_OPS, MasterPurpose.DISCOVERY, _LIVE_OPS_CAPABILITY): (
+            "LIVE_OPS_DISCOVERY"
+        ),
+        (MasterSpecialist.LIVE_OPS, MasterPurpose.ANSWER, _LIVE_OPS_CAPABILITY): "LIVE_OPS_ANSWER",
+        (
+            MasterSpecialist.HISTORICAL_ANALYTICS,
+            MasterPurpose.ANSWER,
+            _HISTORICAL_CAPABILITY,
+        ): "HISTORICAL_ANSWER",
+        (
+            MasterSpecialist.DECISION,
+            MasterPurpose.ANSWER,
+            AgentCapability.EXPLAIN_EXISTING_RISK,
+        ): "DECISION_RISK",
+        (
+            MasterSpecialist.DECISION,
+            MasterPurpose.ANSWER,
+            AgentCapability.EXPLAIN_EXISTING_RECOMMENDATIONS,
+        ): "DECISION_RECOMMENDATION",
+    }
+    expected = {
+        (specialist, purpose, capability)
+        for (specialist, purpose), capabilities in _PAIR_CAPABILITIES.items()
+        for capability in capabilities
+    }
+    if set(names) != expected or len(set(names.values())) != len(names):
+        raise ContractValidationError("route_kind_table_drift")
+    return names
+
+
+_ROUTE_KIND_NAMES = _route_kind_names()
+
+
+def _executable_route_kind_table() -> dict[
+    str,
+    tuple[MasterSpecialist, MasterPurpose, AgentCapability],
+]:
+    """One closed token per permitted specialist, purpose, and capability.
+
+    The token is a decode key. ``authorize_route`` still checks the triple.
+    """
+
+    table = {token: triple for triple, token in _ROUTE_KIND_NAMES.items()}
+    if len(table) != len(_ROUTE_KIND_NAMES):
+        raise ContractValidationError("duplicate_route_kind")
+    return table
+
+
+EXECUTABLE_ROUTE_KIND_TABLE = _executable_route_kind_table()
+
+
+def route_kind_for(
+    specialist: MasterSpecialist,
+    purpose: MasterPurpose,
+    capability: AgentCapability,
+) -> str | None:
+    """Return the model token for a host triple. Unknown triples have none."""
+
+    return _ROUTE_KIND_NAMES.get((specialist, purpose, capability))
+
+
 class MasterRouteTemporalIntent(str, Enum):
     CURRENT = "CURRENT"
     HISTORICAL = "HISTORICAL"

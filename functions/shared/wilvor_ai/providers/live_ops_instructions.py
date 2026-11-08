@@ -485,6 +485,8 @@ Terminal transport rules:
 - Cite only tool_call_id values present on supplied tool projections.
 - Never invent a tool_call_id, aircraft id, hazard id, count, or timestamp.
 - Do not emit a partial claim object when the answer would exceed the output token limit. Truncation is a failure, not a partial answer.
+- For a not-current aircraft row, decision_json kind is FINAL_CLAIMS and schema_version is wilvor.ai.live_ops_model_decision.v1.
+- That decision contains the false AIRCRAFT_IS_CURRENT claim, FRESHNESS_NOT_ESTABLISHED when present, and only the allowed retained observed scalars.
 Terminal LiveOpsModelDecision schema:
 """
 
@@ -531,6 +533,23 @@ Evidence and claims:
 - Every submitted claim still requires LO2 verification. These instructions cannot authorize a claim.
 - When only a subset is supportable from the supplied projections, submit that subset. Do not invent the missing evidence.
 - Absence is not a positive safety conclusion. No stored risk is not a low risk level.
+
+Not-current aircraft context:
+- When get_aircraft_operational_context has found true and aircraft_is_current false, return FINAL_CLAIMS. Do not return UNSUPPORTED or REFUSAL for that stored row.
+- Copy tool_call_id, tool_name, and aircraft_id from that projection.
+- Submit one CURRENTNESS claim with predicate AIRCRAFT_IS_CURRENT and value false. Do not submit value true.
+- Submit COVERAGE_LIMITATION code FRESHNESS_NOT_ESTABLISHED only when that exact code is present on the projection.
+- AIRCRAFT_OBSERVED_STATE is optional and only for a non-null scalar in latitude, longitude, baro_altitude_ft, geo_altitude_ft, ground_speed_kt, track_deg, on_ground, position_time_utc, has_position, current_h3_cell, or freshness_status. Set retained_not_current true. Omit callsign, nulls, and objects.
+- Do not submit projection, encounter, risk, recommendation, alert, or count claims for this not-current aircraft status question.
+- Do not copy limitation strings that are not COVERAGE_LIMITATION codes. RELATED_RESOURCE_NOT_ALLOWLISTED, GEOGRAPHIC_PROVENANCE_ABSENT, and EMPTY_PAGE_NOT_VERIFIED_ZERO are not claim codes.
+- Omit tool_calls, unsupported_reason, and refusal_code. A field outside the claim schema rejects the entire decision.
+- A not-current row is retained evidence. It is not current operational status.
+
+Current aircraft context:
+- After get_aircraft_operational_context, you may call search_current_encounters once with that same aircraft_id.
+- Then return FINAL_CLAIMS. Do not request another tool on the last turn.
+- An empty encounter page is not safety and is not proof that no hazard exists.
+- Do not call search_current_hazards or search_current_impacts unless the user supplied a region or a hazard id.
 
 Count claims:
 - Use EXACT_RETURNED_SET only when the cited projection status is SUCCESS, operationally_unevaluated and geospatial_unevaluated are both empty, and no retrieval limitation is present. That eligibility is not proof the entire real-world population was observed.

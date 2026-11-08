@@ -5,6 +5,7 @@ import {
   DISABLED_COPILOT_STANDING,
   HOST_CONTRACT_COPILOT_STANDING,
   INJECTED_COPILOT_STANDING,
+  LOCAL_DEV_PREVIEW_STANDING,
 } from '@/api/aiContracts';
 
 import { CopilotStatusBanner } from './CopilotStatusBanner';
@@ -29,6 +30,15 @@ describe('CopilotStatusBanner', () => {
       screen.getByText(/fixture data, not a live AWS read/i),
     ).toBeInTheDocument();
     expect(screen.getByText('Not active')).toBeInTheDocument();
+  });
+
+  it('labels the loopback preview as not production', () => {
+    render(<CopilotStatusBanner standing={LOCAL_DEV_PREVIEW_STANDING} />);
+
+    expect(screen.getByText(/NOT PRODUCTION/i)).toBeInTheDocument();
+    expect(screen.getByText(/operator-authenticated DEV evidence/i)).toBeInTheDocument();
+    expect(screen.getByText('Not active')).toBeInTheDocument();
+    expect(screen.getByText('No')).toBeInTheDocument();
   });
 
   it('labels host-contract transport as untrusted browser ids with the route disabled', () => {

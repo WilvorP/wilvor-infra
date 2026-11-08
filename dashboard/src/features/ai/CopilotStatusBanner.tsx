@@ -21,7 +21,9 @@ export function CopilotStatusBanner({ standing }: CopilotStatusBannerProps) {
       ? 'Injected test client. Displayed evidence is fixture data, not a live AWS read.'
       : standing.transport === 'HOST_CONTRACT'
         ? 'Host-contract client. Browser IDs are untrusted labels. POST /ai/query stays disabled.'
-        : ROUTE_DISABLED_NOTICE;
+        : standing.transport === 'LOCAL_DEV_PREVIEW'
+          ? 'NOT PRODUCTION. Loopback developer preview. Evidence is operator-authenticated DEV evidence, not Lambda-role provenance. Source authenticity is not established. POST /ai/query stays disabled.'
+          : ROUTE_DISABLED_NOTICE;
 
   return (
     <div className={styles.banner} data-testid="copilot-status-banner">

@@ -130,9 +130,9 @@ export function CopilotPage({
         <div>
           <h1 className={styles.title}>Operations Copilot</h1>
           <p className={styles.lede}>
-            Conversational inspection of Copilot standing, limitations, and
-            display-only aircraft or hazard evidence. This surface does not
-            activate production AI.
+            {client.standing.transport === 'LOCAL_DEV_PREVIEW'
+              ? 'NOT PRODUCTION. This preview sends the question to the loopback developer backend. Answers stay unadmitted and source authenticity stays not established.'
+              : 'Conversational inspection of Copilot standing, limitations, and display-only aircraft or hazard evidence. This surface does not activate production AI.'}
           </p>
         </div>
         <CopilotStatusBanner standing={client.standing} />
@@ -166,6 +166,69 @@ export function CopilotPage({
           <div className={styles.conversationBody}>
             <div className={styles.transcript}>
               <ConversationTranscript turns={turns} pending={pending} />
+              {latestResult?.developerPreview ? (
+                <div className={styles.preview} data-testid="copilot-developer-preview">
+                  <p className={styles.previewNotice}>
+                    {latestResult.developerPreview.notice}
+                  </p>
+                  <p className={styles.previewAnswer}>
+                    {latestResult.developerPreview.answer}
+                  </p>
+                  {latestResult.developerPreview.modelErrors.length > 0 ? (
+                    <p className={styles.previewMeta}>
+                      Model errors: {latestResult.developerPreview.modelErrors.join(', ')}
+                    </p>
+                  ) : null}
+                  {latestResult.developerPreview.toolErrors.length > 0 ? (
+                    <p className={styles.previewMeta}>
+                      Tool errors: {latestResult.developerPreview.toolErrors.join(', ')}
+                    </p>
+                  ) : null}
+                  {latestResult.developerPreview.missingEvidence.length > 0 ? (
+                    <p className={styles.previewMeta}>
+                      Missing evidence: {latestResult.developerPreview.missingEvidence.join(', ')}
+                    </p>
+                  ) : null}
+                  {latestResult.developerPreview.staleEvidence.length > 0 ? (
+                    <p className={styles.previewMeta}>
+                      Stale evidence: {latestResult.developerPreview.staleEvidence.join(', ')}
+                    </p>
+                  ) : null}
+                  {latestResult.developerPreview.routeKinds &&
+                  latestResult.developerPreview.routeKinds.length > 0 ? (
+                    <p className={styles.previewMeta}>
+                      Authorized route: {latestResult.developerPreview.routeKinds.join(', ')}
+                    </p>
+                  ) : null}
+                  {latestResult.developerPreview.terminalDecision ? (
+                    <p className={styles.previewMeta}>
+                      Planner terminal decision: {latestResult.developerPreview.terminalDecision}
+                    </p>
+                  ) : null}
+                  {latestResult.developerPreview.toolResults.some(
+                    (tool) => (tool.observations?.length ?? 0) > 0,
+                  ) ? (
+                    <ul className={styles.previewList}>
+                      {latestResult.developerPreview.toolResults.flatMap((tool) =>
+                        (tool.observations ?? []).map((observation) => (
+                          <li key={`${tool.toolCallId}-${observation.field}`}>
+                            {observation.label}: {observation.value}
+                          </li>
+                        )),
+                      )}
+                    </ul>
+                  ) : null}
+                  {latestResult.developerPreview.awsOperations.length > 0 ? (
+                    <ul className={styles.previewList}>
+                      {latestResult.developerPreview.awsOperations.map((operation) => (
+                        <li key={`${operation.operation}-${operation.table}`}>
+                          {operation.provenance} {operation.operation} {operation.table}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+              ) : null}
               {error ? (
                 <div className={styles.error}>
                   <ErrorState
