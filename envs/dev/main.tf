@@ -825,12 +825,54 @@ module "ai_host" {
   log_retention_days = 3
   enable_invoke      = false
 
-  # Aircraft mapping is GetItem on the base table. QUERY is not allowed, so
-  # the callsign index is not passed. No reviewed historical DynamoDB table
-  # exists in this root; encounter and Glue tables are not substitutes.
+  # GetItem only. Query stays denied on these base ARNs. The callsign GSI,
+  # TAF forecast periods, projection points, and hazard cell tables are omitted.
   reviewed_getitem_table_arns = [
     module.aircraft_foundation.aircraft_current_state_table_arn,
+    module.sigmet.active_hazards_table_arn,
+    module.encounter.aircraft_hazard_encounter_table_arn,
+    module.airport_status.airport_status_table_arn,
+    module.metar.metar_latest_table_arn,
+    module.taf.taf_latest_table_arn,
+    module.projection.aircraft_projection_table_arn,
+    module.risk.risk_results_table_arn,
+    module.recommendations.recommendations_table_arn,
+    module.active_alerts.active_alerts_table_arn,
+  ]
+
+  # Exact GSIs used by Live Ops and Decision bounded Query. One entry per index.
+  reviewed_query_index_arns = [
+    "${module.sigmet.active_hazards_table_arn}/index/status-valid_to_epoch-index",
+    "${module.encounter.aircraft_hazard_encounter_table_arn}/index/aircraft_id-detected_at_epoch-index",
+    "${module.encounter.aircraft_hazard_encounter_table_arn}/index/hazard_id-detected_at_epoch-index",
+    "${module.projection.aircraft_projection_table_arn}/index/aircraft_id-generated_at_epoch-index",
+    "${module.risk.risk_results_table_arn}/index/aircraft_id-generated_at_epoch-index",
+    "${module.recommendations.recommendations_table_arn}/index/aircraft_id-created_at_epoch-index",
+    "${module.active_alerts.active_alerts_table_arn}/index/aircraft_id-updated_at_epoch-index",
+  ]
+
+  # Base-table hash/range Query. This table has no GSI.
+  reviewed_query_only_table_arns = [
+    module.sigmet.hazard_coordinates_table_arn,
+  ]
+
+  # Persisted Decision evidence queries this table by evaluation_id, the hash key.
+  # The airport_id GSI is not granted.
+  reviewed_getitem_and_query_table_arns = [
+    module.airport_assessment.airport_assessment_table_arn,
   ]
 
   tags = local.common_tags
+}
+
+resource "aws_iam_role_policy_attachment" "ai_host_historical_analytics_query" {
+  role       = module.ai_host.role_name
+  policy_arn = module.historical_analytics.query_policy_arn
+
+  lifecycle {
+    precondition {
+      condition     = module.historical_analytics.query_policy_arn == "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/${local.name_prefix}-historical-analytics-query"
+      error_message = "The AI host may attach only the existing historical analytics query policy."
+    }
+  }
 }

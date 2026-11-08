@@ -4,7 +4,7 @@ import { ROUTES } from '@/routes/routeDefinitions';
 
 import styles from './AppNav.module.css';
 
-/** Primary navigation across the seven operational workflows. */
+/** Primary navigation across the operational workflows, including Copilot. */
 export function AppNav() {
   return (
     <nav className={styles.nav} aria-label="Operational workflows">

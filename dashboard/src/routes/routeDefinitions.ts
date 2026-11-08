@@ -1,10 +1,13 @@
 /**
  * Information architecture for the operations console.
  *
- * All seven workflows are registered so navigation reflects the real product
+ * All eight workflows are registered so navigation reflects the real product
  * shape, but only those marked `implemented` render live data. The rest render
  * an explicit not-yet-built placeholder rather than mock content, which would
  * be indistinguishable from a real but empty operational picture.
+ *
+ * Copilot is implemented as a conversational surface over a disabled AI
+ * route. It does not activate production AI and does not POST `/ai/query`.
  */
 export interface RouteDefinition {
   readonly path: string;
@@ -69,6 +72,14 @@ export const ROUTES: readonly RouteDefinition[] = [
     title: 'Data & System Health',
     description:
       'Wilvor-native health plus the existing CloudWatch infrastructure dashboards.',
+    implemented: true,
+  },
+  {
+    path: '/copilot',
+    navLabel: 'Copilot',
+    title: 'Operations Copilot',
+    description:
+      'Conversational Copilot over reviewed Master response states, limitations, and display-only aircraft or hazard evidence. Production AI is not active. POST /ai/query remains disabled.',
     implemented: true,
   },
 ] as const;

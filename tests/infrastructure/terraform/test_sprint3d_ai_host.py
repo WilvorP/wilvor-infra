@@ -273,12 +273,86 @@ def _reviewed_policy(ai_host_source: str) -> tuple[dict[str, object], ...]:
     assert "not_resources" in unreviewed
     assert "concat(" in unreviewed
     assert "aws_dynamodb_table.ledger.arn" in unreviewed
-    assert "var.reviewed_getitem_table_arns" in unreviewed
+    assert "local.reviewed_dynamodb_arns" in unreviewed
     assert "/index/" not in unreviewed
     assert "DenyOtherDynamoDbTables" not in policy
+    query_indexes = _extract_statement(policy, "QueryReviewedIndexes")
+    query_bases = _extract_statement(policy, "QueryReviewedBaseTables")
+    assessment = _extract_statement(policy, "ReadAndQueryReviewedBaseTables")
+    assert tuple(re.findall(r'"(dynamodb:[^"]+)"', query_indexes)) == ("dynamodb:Query",)
+    assert tuple(re.findall(r'"(dynamodb:[^"]+)"', query_bases)) == ("dynamodb:Query",)
+    assert tuple(re.findall(r'"(dynamodb:[^"]+)"', assessment)) == (
+        "dynamodb:GetItem",
+        "dynamodb:Query",
+    )
+    assert "var.reviewed_query_index_arns" in query_indexes
+    assert "var.reviewed_query_only_table_arns" in query_bases
+    assert "var.reviewed_getitem_and_query_table_arns" in assessment
+    assert "dynamodb:Scan" not in query_indexes
+    assert "dynamodb:Scan" not in query_bases
+    assert "dynamodb:Scan" not in assessment
+    deny_sources = {
+        "DenyReviewedQueryIndexMutations": "local.prohibited_query_target_actions",
+        "DenyQueryOnlyTableNonQuery": "local.prohibited_query_target_actions",
+        "DenyGetItemAndQueryTableMutations": "local.prohibited_getitem_and_query_actions",
+    }
+    for sid, source_name in deny_sources.items():
+        denied = _extract_statement(policy, sid)
+        assert re.search(r'effect\s*=\s*"Deny"', denied)
+        assert source_name in denied
+        assert '"dynamodb:Query"' not in denied
 
-    ledger = f"arn:aws:dynamodb:us-west-1:{INTENDED_ACCOUNT_ID}:table/{LEDGER_TABLE_NAME}"
-    aircraft = f"arn:aws:dynamodb:us-west-1:{INTENDED_ACCOUNT_ID}:table/{AIRCRAFT_TABLE_NAME}"
+    def table(name: str) -> str:
+        return f"arn:aws:dynamodb:us-west-1:{INTENDED_ACCOUNT_ID}:table/{name}"
+
+    def index(name: str, index_name: str) -> str:
+        return f"{table(name)}/index/{index_name}"
+
+    ledger = table(LEDGER_TABLE_NAME)
+    aircraft = table(AIRCRAFT_TABLE_NAME)
+    hazards = table("wilvor-dev-active-hazards")
+    coordinates = table("wilvor-dev-hazard-coordinates")
+    encounters = table("wilvor-dev-aircraft-hazard-encounter")
+    airports = table("wilvor-dev-airport-status")
+    metar = table("wilvor-dev-metar-latest")
+    taf = table("wilvor-dev-taf-latest")
+    projections = table("wilvor-dev-aircraft-projection")
+    risks = table("wilvor-dev-risk-results")
+    recommendations = table("wilvor-dev-recommendations")
+    alerts = table("wilvor-dev-active-alerts")
+    assessments = table("wilvor-dev-airport-assessment")
+    getitem_tables = (
+        aircraft,
+        hazards,
+        encounters,
+        airports,
+        metar,
+        taf,
+        projections,
+        risks,
+        recommendations,
+        alerts,
+    )
+    query_indexes = (
+        index("wilvor-dev-active-hazards", "status-valid_to_epoch-index"),
+        index("wilvor-dev-aircraft-hazard-encounter", "aircraft_id-detected_at_epoch-index"),
+        index("wilvor-dev-aircraft-hazard-encounter", "hazard_id-detected_at_epoch-index"),
+        index("wilvor-dev-aircraft-projection", "aircraft_id-generated_at_epoch-index"),
+        index("wilvor-dev-risk-results", "aircraft_id-generated_at_epoch-index"),
+        index("wilvor-dev-recommendations", "aircraft_id-created_at_epoch-index"),
+        index("wilvor-dev-active-alerts", "aircraft_id-updated_at_epoch-index"),
+    )
+    query_target_actions = _hcl_string_list(ai_host_source, "prohibited_query_target_actions")
+    get_and_query_actions = _hcl_string_list(
+        ai_host_source,
+        "prohibited_getitem_and_query_actions",
+    )
+    assert "dynamodb:Query" not in query_target_actions
+    assert "dynamodb:GetItem" in query_target_actions
+    assert "dynamodb:Query" not in get_and_query_actions
+    assert "dynamodb:GetItem" not in get_and_query_actions
+    assert "dynamodb:Scan" in query_target_actions
+    assert "dynamodb:Scan" in get_and_query_actions
     return (
         {
             "effect": "Allow",
@@ -293,17 +367,47 @@ def _reviewed_policy(ai_host_source: str) -> tuple[dict[str, object], ...]:
         {
             "effect": "Allow",
             "actions": ("dynamodb:GetItem",),
-            "resources": (aircraft,),
+            "resources": getitem_tables,
         },
         {
             "effect": "Deny",
             "actions": specialist_actions,
-            "resources": (aircraft,),
+            "resources": getitem_tables,
+        },
+        {
+            "effect": "Allow",
+            "actions": ("dynamodb:Query",),
+            "resources": query_indexes,
+        },
+        {
+            "effect": "Deny",
+            "actions": query_target_actions,
+            "resources": query_indexes,
+        },
+        {
+            "effect": "Allow",
+            "actions": ("dynamodb:Query",),
+            "resources": (coordinates,),
+        },
+        {
+            "effect": "Deny",
+            "actions": query_target_actions,
+            "resources": (coordinates,),
+        },
+        {
+            "effect": "Allow",
+            "actions": ("dynamodb:GetItem", "dynamodb:Query"),
+            "resources": (assessments,),
+        },
+        {
+            "effect": "Deny",
+            "actions": get_and_query_actions,
+            "resources": (assessments,),
         },
         {
             "effect": "Deny",
             "actions": ("dynamodb:*",),
-            "not_resources": (ledger, aircraft),
+            "not_resources": (ledger, *getitem_tables, *query_indexes, coordinates, assessments),
         },
         {
             "effect": "Deny",
@@ -342,13 +446,36 @@ def test_ai_host_iam_allows_ledger_consume_and_reviewed_getitem_only(
     assert "iam:SimulatePrincipalPolicy" not in ai_host_source
     assert "dynamodb:DescribeTable" not in ai_host_source
     assert "module.aircraft_foundation.aircraft_current_state_table_arn" in ai_host
+    for required in (
+        "module.sigmet.active_hazards_table_arn",
+        "module.encounter.aircraft_hazard_encounter_table_arn",
+        "module.airport_status.airport_status_table_arn",
+        "module.metar.metar_latest_table_arn",
+        "module.taf.taf_latest_table_arn",
+        "module.projection.aircraft_projection_table_arn",
+        "module.risk.risk_results_table_arn",
+        "module.recommendations.recommendations_table_arn",
+        "module.active_alerts.active_alerts_table_arn",
+        "module.sigmet.hazard_coordinates_table_arn",
+        "module.airport_assessment.airport_assessment_table_arn",
+        "/index/status-valid_to_epoch-index",
+        "/index/aircraft_id-detected_at_epoch-index",
+        "/index/hazard_id-detected_at_epoch-index",
+        "/index/aircraft_id-generated_at_epoch-index",
+        "/index/aircraft_id-created_at_epoch-index",
+        "/index/aircraft_id-updated_at_epoch-index",
+    ):
+        assert required in ai_host
     for withheld in (
-        "aircraft_hazard_encounter_table_arn",
-        "risk_results_table_arn",
-        "active_hazards_table_arn",
+        "callsign-position_time_epoch-index",
+        "taf_forecast_periods_table_arn",
+        "hazard_cells_table_arn",
+        "aircraft_projection_points_table_arn",
+        "airport_id-created_at_epoch-index",
+        "encounter_id-generated_at_epoch-index",
+        "projection_id-hazard_version_key-index",
         "historical_facts",
-        "query_index",
-        "/index/",
+        "bedrock:",
     ):
         assert withheld not in ai_host
 
@@ -368,7 +495,7 @@ def test_ai_host_iam_allows_ledger_consume_and_reviewed_getitem_only(
     assert "logs:CreateLogGroup" not in logs
 
 
-def test_effective_iam_matches_the_reviewed_ledger_and_aircraft_getitem(
+def test_effective_iam_allows_reviewed_reads_and_keeps_explicit_denies(
     ai_host_source: str,
     repo_root: Path,
     terraform_dir: Path,
@@ -399,6 +526,20 @@ def test_effective_iam_matches_the_reviewed_ledger_and_aircraft_getitem(
         "wilvor-dev-aircraft-hazard-encounter"
     )
     encounter_index = f"{encounter}/index/aircraft_id-detected_at_epoch-index"
+    encounter_other_index = f"{encounter}/index/projection_id-hazard_version_key-index"
+    coordinates = (
+        f"arn:aws:dynamodb:us-west-1:{INTENDED_ACCOUNT_ID}:table/"
+        "wilvor-dev-hazard-coordinates"
+    )
+    assessments = (
+        f"arn:aws:dynamodb:us-west-1:{INTENDED_ACCOUNT_ID}:table/"
+        "wilvor-dev-airport-assessment"
+    )
+    assessment_index = f"{assessments}/index/airport_id-created_at_epoch-index"
+    cells = (
+        f"arn:aws:dynamodb:us-west-1:{INTENDED_ACCOUNT_ID}:table/"
+        "wilvor-dev-hazard-cells"
+    )
 
     expected = {
         ("dynamodb:GetItem", ledger): "allow",
@@ -428,9 +569,27 @@ def test_effective_iam_matches_the_reviewed_ledger_and_aircraft_getitem(
         ("dynamodb:DescribeTable", aircraft): "implicit_deny",
         ("dynamodb:GetItem", aircraft_index): "explicit_deny",
         ("dynamodb:Query", aircraft_index): "explicit_deny",
-        ("dynamodb:GetItem", encounter): "explicit_deny",
+        ("dynamodb:Scan", aircraft_index): "explicit_deny",
+        ("dynamodb:GetItem", encounter): "allow",
         ("dynamodb:Query", encounter): "explicit_deny",
-        ("dynamodb:Query", encounter_index): "explicit_deny",
+        ("dynamodb:Scan", encounter): "explicit_deny",
+        ("dynamodb:Query", encounter_index): "allow",
+        ("dynamodb:Scan", encounter_index): "explicit_deny",
+        ("dynamodb:GetItem", encounter_index): "explicit_deny",
+        ("dynamodb:PutItem", encounter_index): "explicit_deny",
+        ("dynamodb:Query", encounter_other_index): "explicit_deny",
+        ("dynamodb:Query", coordinates): "allow",
+        ("dynamodb:GetItem", coordinates): "explicit_deny",
+        ("dynamodb:Scan", coordinates): "explicit_deny",
+        ("dynamodb:PutItem", coordinates): "explicit_deny",
+        ("dynamodb:GetItem", assessments): "allow",
+        ("dynamodb:Query", assessments): "allow",
+        ("dynamodb:Scan", assessments): "explicit_deny",
+        ("dynamodb:PutItem", assessments): "explicit_deny",
+        ("dynamodb:Query", assessment_index): "explicit_deny",
+        ("dynamodb:GetItem", cells): "explicit_deny",
+        ("dynamodb:Query", cells): "explicit_deny",
+        ("dynamodb:Scan", cells): "explicit_deny",
         ("dynamodb:TransactWriteItems", encounter): "explicit_deny",
         ("dynamodb:PutItem", encounter): "explicit_deny",
         ("iam:SimulatePrincipalPolicy", ledger): "implicit_deny",

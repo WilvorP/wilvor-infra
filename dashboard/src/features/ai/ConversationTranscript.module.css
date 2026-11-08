@@ -1,0 +1,106 @@
+.list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wv-space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.turn {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wv-space-3);
+  padding: var(--wv-space-5);
+  border: 1px solid var(--wv-border);
+  border-radius: var(--wv-radius-md);
+  background-color: var(--wv-surface-2);
+}
+
+.user {
+  border-left: 2px solid var(--wv-accent);
+}
+
+.assistant {
+  border-left: 2px solid var(--wv-border-strong);
+}
+
+.turnHeader {
+  display: flex;
+  align-items: center;
+  gap: var(--wv-space-4);
+}
+
+.role {
+  font-size: var(--wv-text-2xs);
+  font-weight: var(--wv-weight-semibold);
+  letter-spacing: var(--wv-tracking-wide);
+  text-transform: uppercase;
+  color: var(--wv-text-tertiary);
+}
+
+.text {
+  margin: 0;
+  font-size: var(--wv-text-sm);
+  color: var(--wv-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.meta {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wv-space-3);
+  padding-top: var(--wv-space-3);
+  border-top: 1px solid var(--wv-border);
+}
+
+.claims,
+.notice {
+  margin: 0;
+  font-size: var(--wv-text-2xs);
+  color: var(--wv-text-tertiary);
+  line-height: var(--wv-leading-normal);
+}
+
+.limitations {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--wv-space-2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.limitations li {
+  padding: var(--wv-space-1) var(--wv-space-3);
+  font-size: var(--wv-text-2xs);
+  color: var(--wv-text-secondary);
+  background-color: var(--wv-surface-3);
+  border: 1px solid var(--wv-border);
+  border-radius: var(--wv-radius-xs);
+}
+
+.pending {
+  padding: var(--wv-space-4);
+}
+
+.empty {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wv-space-3);
+  padding: var(--wv-space-6) var(--wv-space-2);
+}
+
+.emptyTitle {
+  margin: 0;
+  font-size: var(--wv-text-sm);
+  color: var(--wv-text-secondary);
+}
+
+.emptyDetail {
+  margin: 0;
+  font-size: var(--wv-text-xs);
+  color: var(--wv-text-tertiary);
+  max-width: 60ch;
+  line-height: var(--wv-leading-normal);
+}

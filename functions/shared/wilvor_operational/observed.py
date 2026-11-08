@@ -273,6 +273,44 @@ def load_encounter_candidates_for_hazards(tables, hazard_ids: Iterable[str]):
     return tuple(candidates), tuple(retrieval)
 
 
+def load_encounter_candidates_for_hazards_bounded(
+    tables,
+    hazard_ids: Iterable[str],
+    *,
+    limit,
+):
+    candidates: list[dict[str, Any]] = []
+    retrieval: list[linking.RetrievalObservation] = []
+    seen: set[str] = set()
+    truncated = False
+    for hazard_id in hazard_ids:
+        normalized = _text(hazard_id)
+        if not normalized:
+            continue
+        page = readers.query_encounter_candidates_by_hazard_page(
+            tables.encounters,
+            normalized,
+            limit=limit,
+        )
+        page_truncated = page.get("last_evaluated_key") is not None
+        truncated = truncated or page_truncated
+        retrieval.append(
+            linking.bounded_query_observation(
+                "query_encounter_candidates_by_hazard",
+                limit=limit,
+                truncated=page_truncated,
+            )
+        )
+        for item in page.get("items", []):
+            encounter_id = _text(item.get("encounter_id"))
+            if encounter_id and encounter_id in seen:
+                continue
+            if encounter_id:
+                seen.add(encounter_id)
+            candidates.append(item)
+    return tuple(candidates), tuple(retrieval), truncated
+
+
 def load_encounter_candidates_for_aircraft(tables, aircraft_ids: Iterable[str]):
     candidates: list[dict[str, Any]] = []
     retrieval: list[linking.RetrievalObservation] = []
@@ -297,6 +335,44 @@ def load_encounter_candidates_for_aircraft(tables, aircraft_ids: Iterable[str]):
     return tuple(candidates), tuple(retrieval)
 
 
+def load_encounter_candidates_for_aircraft_bounded(
+    tables,
+    aircraft_ids: Iterable[str],
+    *,
+    limit,
+):
+    candidates: list[dict[str, Any]] = []
+    retrieval: list[linking.RetrievalObservation] = []
+    seen: set[str] = set()
+    truncated = False
+    for aircraft_id in aircraft_ids:
+        normalized = _text(aircraft_id).lower()
+        if not normalized:
+            continue
+        page = readers.query_encounter_candidates_by_aircraft_page(
+            tables.encounters,
+            normalized,
+            limit=limit,
+        )
+        page_truncated = page.get("last_evaluated_key") is not None
+        truncated = truncated or page_truncated
+        retrieval.append(
+            linking.bounded_query_observation(
+                "query_encounter_candidates_by_aircraft",
+                limit=limit,
+                truncated=page_truncated,
+            )
+        )
+        for item in page.get("items", []):
+            encounter_id = _text(item.get("encounter_id"))
+            if encounter_id and encounter_id in seen:
+                continue
+            if encounter_id:
+                seen.add(encounter_id)
+            candidates.append(item)
+    return tuple(candidates), tuple(retrieval), truncated
+
+
 def load_current_hazard_versions_for_ids(tables, hazard_ids, *, now_epoch):
     requested = tuple(_text(item) for item in hazard_ids if _text(item))
     result = discovery.discover_current_hazards(
@@ -319,6 +395,108 @@ def load_current_hazard_versions_for_ids(tables, hazard_ids, *, now_epoch):
         matches_by_id=MappingProxyType(matches_by_id),
         requested_ids=requested,
         retrieval=result.retrieval,
+    )
+
+
+def load_current_projections_for_aircraft(tables, aircraft_ids, *, now_epoch, limit):
+    indexed: dict[str, str] = {}
+    retrieval: list[linking.RetrievalObservation] = []
+    truncated = False
+    seen: set[str] = set()
+    for aircraft_id in aircraft_ids:
+        normalized = _text(aircraft_id).lower()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        page = readers.query_projection_candidates_by_aircraft_page(
+            tables.projections,
+            normalized,
+            now_epoch=now_epoch,
+            limit=limit,
+        )
+        page_truncated = page.get("last_evaluated_key") is not None
+        truncated = truncated or page_truncated
+        retrieval.append(
+            linking.bounded_query_observation(
+                "query_projection_candidates_by_aircraft",
+                limit=limit,
+                truncated=page_truncated,
+            )
+        )
+        page_index = current_set.index_current_projections(
+            page.get("items", []),
+            now_epoch,
+        )
+        indexed.update(page_index)
+    return MappingProxyType(dict(indexed)), tuple(retrieval), truncated
+
+
+def load_decision_candidates_for_aircraft(
+    tables,
+    aircraft_ids,
+    *,
+    now_epoch,
+    limit,
+) -> DecisionCandidates:
+    now_iso = epoch_to_utc_z(now_epoch)
+    retrieval: list[linking.RetrievalObservation] = []
+    risks: list[dict[str, Any]] = []
+    recommendations: list[dict[str, Any]] = []
+    alerts: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for aircraft_id in aircraft_ids:
+        normalized = _text(aircraft_id).lower()
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        risk_page = readers.query_risk_candidates_by_aircraft_page(
+            tables.risks,
+            normalized,
+            limit=limit,
+        )
+        rec_page = readers.query_recommendation_candidates_by_aircraft_page(
+            tables.recommendations,
+            normalized,
+            now_iso=now_iso,
+            limit=limit,
+        )
+        alert_page = readers.query_alert_candidates_by_aircraft_page(
+            tables.alerts,
+            normalized,
+            now_iso=now_iso,
+            limit=limit,
+        )
+        retrieval.extend(
+            (
+                linking.bounded_query_observation(
+                    "query_risk_candidates_by_aircraft",
+                    limit=limit,
+                    truncated=risk_page.get("last_evaluated_key") is not None,
+                ),
+                linking.bounded_query_observation(
+                    "query_recommendation_candidates_by_aircraft",
+                    linking.ISO_CANDIDATE_LIMITATION,
+                    linking.RECOMMENDATION_ABSENCE_LIMITATION,
+                    limit=limit,
+                    truncated=rec_page.get("last_evaluated_key") is not None,
+                ),
+                linking.bounded_query_observation(
+                    "query_alert_candidates_by_aircraft",
+                    linking.ISO_CANDIDATE_LIMITATION,
+                    linking.ALERT_ABSENCE_LIMITATION,
+                    limit=limit,
+                    truncated=alert_page.get("last_evaluated_key") is not None,
+                ),
+            )
+        )
+        risks.extend(risk_page.get("items", []))
+        recommendations.extend(rec_page.get("items", []))
+        alerts.extend(alert_page.get("items", []))
+    return DecisionCandidates(
+        risk_candidates=tuple(risks),
+        recommendation_candidates=tuple(recommendations),
+        alert_candidates=tuple(alerts),
+        retrieval=tuple(retrieval),
     )
 
 

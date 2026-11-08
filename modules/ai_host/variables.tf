@@ -58,6 +58,59 @@ variable "reviewed_getitem_table_arns" {
   }
 }
 
+variable "reviewed_query_index_arns" {
+  type        = list(string)
+  description = "Exact DynamoDB GSI ARNs that may be queried. Base-table ARNs, wildcards, and the aircraft callsign index are rejected."
+
+  validation {
+    condition = (
+      length(var.reviewed_query_index_arns) > 0
+      && length(var.reviewed_query_index_arns) == length(distinct(var.reviewed_query_index_arns))
+      && alltrue([
+        for arn in var.reviewed_query_index_arns :
+        can(regex("^arn:aws:dynamodb:[a-z0-9-]+:[0-9]{12}:table/[A-Za-z0-9_.-]+/index/[A-Za-z0-9_.-]+$", arn))
+        && !strcontains(arn, "*")
+        && !strcontains(arn, "callsign-position_time_epoch-index")
+      ])
+    )
+    error_message = "reviewed_query_index_arns must be distinct exact index ARNs and must not include the callsign index."
+  }
+}
+
+variable "reviewed_query_only_table_arns" {
+  type        = list(string)
+  description = "Exact DynamoDB base-table ARNs that may be queried and must not allow GetItem. Used for hazard-coordinates hash/range Query."
+
+  validation {
+    condition = (
+      length(var.reviewed_query_only_table_arns) > 0
+      && length(var.reviewed_query_only_table_arns) == length(distinct(var.reviewed_query_only_table_arns))
+      && alltrue([
+        for arn in var.reviewed_query_only_table_arns :
+        can(regex("^arn:aws:dynamodb:[a-z0-9-]+:[0-9]{12}:table/[A-Za-z0-9_.-]+$", arn))
+      ])
+    )
+    error_message = "reviewed_query_only_table_arns must be distinct exact base-table ARNs without wildcards or index suffixes."
+  }
+}
+
+variable "reviewed_getitem_and_query_table_arns" {
+  type        = list(string)
+  description = "Exact DynamoDB base-table ARNs that allow both GetItem and Query. Airport assessment is queried by its evaluation_id hash key, not by its airport_id GSI."
+
+  validation {
+    condition = (
+      length(var.reviewed_getitem_and_query_table_arns) > 0
+      && length(var.reviewed_getitem_and_query_table_arns) == length(distinct(var.reviewed_getitem_and_query_table_arns))
+      && alltrue([
+        for arn in var.reviewed_getitem_and_query_table_arns :
+        can(regex("^arn:aws:dynamodb:[a-z0-9-]+:[0-9]{12}:table/[A-Za-z0-9_.-]+$", arn))
+      ])
+    )
+    error_message = "reviewed_getitem_and_query_table_arns must be distinct exact base-table ARNs without wildcards or index suffixes."
+  }
+}
+
 variable "tags" {
   type    = map(string)
   default = {}

@@ -82,6 +82,64 @@ data "aws_iam_policy_document" "host" {
   }
 
   statement {
+    sid = "QueryReviewedIndexes"
+
+    actions = [
+      "dynamodb:Query",
+    ]
+
+    resources = var.reviewed_query_index_arns
+  }
+
+  statement {
+    sid    = "DenyReviewedQueryIndexMutations"
+    effect = "Deny"
+
+    actions = local.prohibited_query_target_actions
+
+    resources = var.reviewed_query_index_arns
+  }
+
+  statement {
+    sid = "QueryReviewedBaseTables"
+
+    actions = [
+      "dynamodb:Query",
+    ]
+
+    resources = var.reviewed_query_only_table_arns
+  }
+
+  statement {
+    sid    = "DenyQueryOnlyTableNonQuery"
+    effect = "Deny"
+
+    actions = local.prohibited_query_target_actions
+
+    resources = var.reviewed_query_only_table_arns
+  }
+
+  statement {
+    sid = "ReadAndQueryReviewedBaseTables"
+
+    actions = [
+      "dynamodb:GetItem",
+      "dynamodb:Query",
+    ]
+
+    resources = var.reviewed_getitem_and_query_table_arns
+  }
+
+  statement {
+    sid    = "DenyGetItemAndQueryTableMutations"
+    effect = "Deny"
+
+    actions = local.prohibited_getitem_and_query_actions
+
+    resources = var.reviewed_getitem_and_query_table_arns
+  }
+
+  statement {
     sid    = "DenyUnreviewedDynamoDb"
     effect = "Deny"
 
@@ -89,11 +147,13 @@ data "aws_iam_policy_document" "host" {
       "dynamodb:*",
     ]
 
-    # Exact table ARNs only. An index ARN does not match these values, so
-    # this deny still covers every index, including the aircraft callsign GSI.
+    # Every reviewed index and base-table ARN must be excluded. An index ARN
+    # does not match its parent table ARN, so leaving an index out of this
+    # list makes dynamodb:* deny override the Query allow. Unlisted indexes,
+    # including the aircraft callsign GSI, stay denied.
     not_resources = concat(
       [aws_dynamodb_table.ledger.arn],
-      var.reviewed_getitem_table_arns,
+      local.reviewed_dynamodb_arns,
     )
   }
 
@@ -137,14 +197,27 @@ resource "aws_iam_role_policy" "host" {
 
   lifecycle {
     precondition {
-      condition = alltrue([
-        for arn in var.reviewed_getitem_table_arns :
-        startswith(arn, "arn:aws:dynamodb:${var.aws_region}:${var.account_id}:table/")
-        && !strcontains(arn, "*")
-        && !strcontains(arn, "/index/")
-        && arn != aws_dynamodb_table.ledger.arn
-      ])
-      error_message = "Reviewed GetItem tables must be exact base-table ARNs in this account and region, and must not be the execution ledger."
+      condition = (
+        length(local.reviewed_dynamodb_arns) == length(distinct(local.reviewed_dynamodb_arns))
+        && alltrue([
+          for arn in local.reviewed_dynamodb_arns :
+          startswith(arn, "arn:aws:dynamodb:${var.aws_region}:${var.account_id}:table/")
+          && !strcontains(arn, "*")
+          && arn != aws_dynamodb_table.ledger.arn
+          && !strcontains(arn, "callsign-position_time_epoch-index")
+        ])
+        && alltrue([
+          for arn in concat(
+            var.reviewed_getitem_table_arns,
+            var.reviewed_query_only_table_arns,
+            var.reviewed_getitem_and_query_table_arns,
+          ) : !strcontains(arn, "/index/")
+        ])
+        && alltrue([
+          for arn in var.reviewed_query_index_arns : strcontains(arn, "/index/")
+        ])
+      )
+      error_message = "Reviewed DynamoDB reads must be disjoint exact ARNs in this account and region, must not be the ledger, and must not include the callsign index."
     }
   }
 }

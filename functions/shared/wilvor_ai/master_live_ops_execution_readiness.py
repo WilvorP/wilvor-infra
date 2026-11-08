@@ -428,6 +428,9 @@ _SOURCE_FILTERS = (
     _param("hazard_type", _KW, _ROLE.UNTRUSTED_FILTER, required=False),
     _param("hazard_ids", _KW, _ROLE.AUTHORIZED_SELECTOR, required=False),
 )
+# Host-owned Sprint 4 bounds. Not model selectors and not California coverage.
+_SOURCE_PAGE_BOUND = _param("max_items", _KW, _ROLE.BUDGET, required=False)
+_TAF_PERIOD_READ_SCOPE = _param("include_taf_periods", _KW, _ROLE.BUDGET, required=False)
 
 
 def _tool(
@@ -756,13 +759,14 @@ LIVE_OPS_REAL_INVOCATIONS: tuple[LiveOpsRealInvocation, ...] = (
             _param("region_query", _PK, _ROLE.AUTHORIZED_SELECTOR),
             _SOURCE_CLOCK,
             *_SOURCE_FILTERS,
+            _SOURCE_PAGE_BOUND,
         ),
     ),
     _source(
         "wilvor_operational.discovery",
         "discover_current_hazards",
         None,
-        (_SOURCE_TABLES, _SOURCE_CLOCK, *_SOURCE_FILTERS),
+        (_SOURCE_TABLES, _SOURCE_CLOCK, *_SOURCE_FILTERS, _SOURCE_PAGE_BOUND),
     ),
     _source(
         "wilvor_operational.discovery",
@@ -832,6 +836,7 @@ LIVE_OPS_REAL_INVOCATIONS: tuple[LiveOpsRealInvocation, ...] = (
             _SOURCE_TABLES,
             _param("airport_id", _PK, _ROLE.AUTHORIZED_SELECTOR),
             _SOURCE_CLOCK,
+            _TAF_PERIOD_READ_SCOPE,
         ),
     ),
     _invocation(

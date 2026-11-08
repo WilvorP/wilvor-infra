@@ -3,6 +3,12 @@
 These tools wrap committed Phase 1 public domain functions and return Phase 0
 ToolResult envelopes. They do not implement an agent, call AWS, or decide
 operational currentness, geography, or source-version authority.
+
+Host-authorized DynamoDB integration for the same eight tools lives in
+``sprint4_live_ops_authorization``, ``sprint4_live_ops_source``, and
+``sprint4_live_ops_tools``. Those modules stay gated: they do not open live
+AWS, mint verified-zero from empty pages, or treat a region label as a
+SIGMET polygon.
 """
 
 from __future__ import annotations

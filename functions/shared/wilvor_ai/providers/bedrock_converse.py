@@ -28,6 +28,7 @@ from wilvor_ai.providers.errors import (
     ModelProviderMalformedDecisionError,
 )
 from wilvor_ai.providers.instructions import resolve_instruction
+from wilvor_ai.providers.master_instructions import MASTER_PLANNING_INSTRUCTION_REF
 from wilvor_ai.specialist_contracts import UnsupportedReason
 from wilvor_ai.tool_schema import FORBIDDEN_TOOL_SCHEMA_FIELD_NAMES, ToolSchema
 
@@ -254,6 +255,10 @@ def build_converse_kwargs(request: ModelTurnRequest, model_id: str) -> dict[str,
 
     if not isinstance(request, ModelTurnRequest):
         raise TypeError("request must be a ModelTurnRequest")
+    if request.instruction_ref == MASTER_PLANNING_INSTRUCTION_REF:
+        from wilvor_ai.sprint5_master_planning import build_master_planning_converse_kwargs
+
+        return build_master_planning_converse_kwargs(request, model_id)
     messages: list[dict[str, object]] = [
         {"role": "user", "content": [{"text": request.user_text}]},
     ]
@@ -496,12 +501,44 @@ class BedrockConverseModelProvider:
     def model_id(self) -> str:
         return self._model_id
 
-    def complete(self, request: ModelTurnRequest) -> ModelDecision:
-        """Return exactly one ModelDecision for this reconstructed turn."""
+    def complete(self, request: ModelTurnRequest) -> object:
+        """Return a ModelDecision, or a Master route-proposal mapping."""
 
         kwargs = build_converse_kwargs(request, self._model_id)
         response = self._client.converse(**kwargs)
+        if request.instruction_ref == MASTER_PLANNING_INSTRUCTION_REF:
+            return parse_master_converse_response(response)
         return parse_converse_response(response)
+
+
+def parse_master_converse_response(response: object) -> object:
+    """Parse Master planning JSON. TOOL_CALLS are forbidden."""
+
+    from wilvor_ai.sprint5_master_planning import parse_master_planning_text_blocks
+
+    payload = _require_mapping(response, "malformed_content")
+    stop_reason = payload.get("stopReason")
+    if not isinstance(stop_reason, str) or not stop_reason:
+        raise _malformed("unexpected_stop_reason")
+    if stop_reason == "content_filtered":
+        return ModelDecision(
+            kind=ModelDecisionKind.REFUSAL,
+            refusal_code=REFUSAL_CONTENT_FILTERED,
+        )
+    if stop_reason == "guardrail_intervened":
+        return ModelDecision(
+            kind=ModelDecisionKind.REFUSAL,
+            refusal_code=REFUSAL_GUARDRAIL_INTERVENED,
+        )
+    if stop_reason == "model_context_window_exceeded":
+        raise ModelProviderContextLengthError("model_context_window_exceeded")
+    if stop_reason in {"max_tokens", "malformed_model_output", "malformed_tool_use", "stop_sequence"}:
+        raise _malformed(stop_reason if stop_reason != "stop_sequence" else "stop_sequence_not_configured")
+    if stop_reason == "tool_use":
+        raise _malformed("master_planner_tools_rejected")
+    if stop_reason != "end_turn":
+        raise _malformed("unexpected_stop_reason")
+    return parse_master_planning_text_blocks(_content_blocks(payload))
 
 
 __all__ = [
@@ -517,6 +554,7 @@ __all__ = [
     "BedrockConverseModelProvider",
     "build_converse_kwargs",
     "parse_converse_response",
+    "parse_master_converse_response",
     "serialize_terminal_schema",
     "terminal_decision_json_schema",
     "tool_spec_from_schema",
