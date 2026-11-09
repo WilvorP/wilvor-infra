@@ -295,3 +295,143 @@ output "operational_api_log_group_name" {
     module.operational_api.lambda_log_group_name
   )
 }
+
+output "enable_historical_facts" {
+  value = module.historical_facts.enable_historical_facts
+}
+
+output "historical_facts_bucket_name" {
+  value = module.historical_facts.historical_bucket_name
+}
+
+output "historical_facts_bucket_arn" {
+  value = module.historical_facts.historical_bucket_arn
+}
+
+output "historical_facts_firehose_stream_name" {
+  value = module.historical_facts.facts_firehose_stream_name
+}
+
+output "historical_facts_firehose_stream_arn" {
+  value = module.historical_facts.facts_firehose_stream_arn
+}
+
+output "historical_geometry_firehose_stream_name" {
+  value = module.historical_facts.geometry_firehose_stream_name
+}
+
+output "historical_geometry_firehose_stream_arn" {
+  value = module.historical_facts.geometry_firehose_stream_arn
+}
+
+output "historical_facts_transform_lambda_name" {
+  value = module.historical_facts.transform_lambda_name
+}
+
+output "historical_facts_transform_lambda_arn" {
+  value = module.historical_facts.transform_lambda_arn
+}
+
+output "historical_facts_dlq_url" {
+  value = module.historical_facts.dlq_url
+}
+
+output "historical_facts_dlq_arn" {
+  value = module.historical_facts.dlq_arn
+}
+
+output "historical_facts_rule_names" {
+  value = module.historical_facts.historical_rule_names
+}
+
+output "historical_facts_coverage_lambda_name" {
+  value = module.historical_facts.coverage_lambda_name
+}
+
+output "historical_facts_coverage_lambda_arn" {
+  value = module.historical_facts.coverage_lambda_arn
+}
+
+output "historical_facts_dashboard_name" {
+  value = module.historical_facts.dashboard_name
+}
+
+output "enable_historical_analytics" {
+  value = module.historical_analytics.enable_historical_analytics
+}
+
+output "historical_analytics_results_bucket_name" {
+  value = module.historical_analytics.results_bucket_name
+}
+
+output "historical_analytics_glue_database_name" {
+  value = module.historical_analytics.database_name
+}
+
+output "historical_analytics_encounter_table_name" {
+  value = module.historical_analytics.encounter_table_name
+}
+
+output "historical_analytics_risk_table_name" {
+  value = module.historical_analytics.risk_table_name
+}
+
+output "historical_analytics_hazard_version_table_name" {
+  value = module.historical_analytics.hazard_version_table_name
+}
+
+output "historical_analytics_hazard_geometry_table_name" {
+  value = module.historical_analytics.hazard_geometry_table_name
+}
+
+output "historical_analytics_workgroup_name" {
+  value = module.historical_analytics.workgroup_name
+}
+
+output "historical_analytics_query_policy_arn" {
+  value = module.historical_analytics.query_policy_arn
+}
+
+output "historical_analytics_query_policy_name" {
+  value = module.historical_analytics.query_policy_name
+}
+
+output "historical_analytics_dashboard_name" {
+  value = module.historical_analytics.dashboard_name
+}
+
+output "ai_host_function_name" {
+  value = module.ai_host.function_name
+}
+
+output "ai_host_function_arn" {
+  value = module.ai_host.function_arn
+}
+
+output "ai_host_log_group_name" {
+  value = module.ai_host.log_group_name
+}
+
+output "ai_host_role_arn" {
+  value = module.ai_host.role_arn
+}
+
+output "ai_ledger_table_name" {
+  value = module.ai_host.ledger_table_name
+}
+
+output "ai_ledger_table_arn" {
+  value = module.ai_host.ledger_table_arn
+}
+
+output "ai_host_enable_invoke" {
+  value = module.ai_host.enable_invoke
+}
+
+output "ai_host_reserved_concurrent_executions" {
+  value = module.ai_host.reserved_concurrent_executions
+}
+
+output "ai_query_route_enabled" {
+  value = module.ai_host.ai_query_route_enabled
+}

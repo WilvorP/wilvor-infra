@@ -143,6 +143,24 @@ Examples:
 - EventBridge event structures
 - Compatibility between producers and consumers
 
+The dependency-free AI Operations Copilot Phase 0 contracts are tested in:
+
+```text
+tests/contracts/test_ai_copilot_contracts.py
+```
+
+Their synthetic examples are defined in:
+
+```text
+tests/fixtures/ai_copilot_contract_examples.py
+```
+
+Run them without AWS credentials, network access, or an AI model:
+
+```powershell
+python -m pytest tests/contracts -q -p no:cacheprovider
+```
+
 ### `helpers/`
 
 Reusable test utilities.

@@ -27,6 +27,8 @@ const EXPECTED_AWS_NAMES = [
   'wilvor-dev-recommendations',
   'wilvor-dev-active-alerts',
   'wilvor-dev-runway-metadata',
+  'wilvor-dev-historical-facts',
+  'wilvor-dev-historical-analytics',
 ] as const;
 
 describe('CloudWatch dashboard catalog', () => {
@@ -34,9 +36,9 @@ describe('CloudWatch dashboard catalog', () => {
     const names = CLOUDWATCH_DASHBOARDS.map((entry) => entry.name);
 
     expect(names).toEqual([...EXPECTED_AWS_NAMES]);
-    expect(new Set(names).size).toBe(14);
+    expect(new Set(names).size).toBe(16);
     expect(new Set(CLOUDWATCH_DASHBOARDS.map((entry) => entry.id)).size).toBe(
-      14,
+      16,
     );
   });
 
@@ -75,12 +77,16 @@ describe('CloudWatch dashboard catalog', () => {
       ],
       airports: ['airport-status', 'airport-assessment'],
       decision: ['risk-pipeline', 'recommendations', 'active-alerts'],
-      supporting: ['runway-metadata'],
+      supporting: [
+        'runway-metadata',
+        'historical-facts',
+        'historical-analytics',
+      ],
     });
   });
 
   it('keeps the All filter as the complete catalog', () => {
-    expect(filterDashboards(CLOUDWATCH_DASHBOARDS, 'all', '')).toHaveLength(14);
+    expect(filterDashboards(CLOUDWATCH_DASHBOARDS, 'all', '')).toHaveLength(16);
   });
 
   it('filters by label, AWS name, category and description', () => {
@@ -125,6 +131,18 @@ describe('CloudWatch dashboard catalog', () => {
     );
     expect(resolveDashboardSelection(null).id).toBe(
       DEFAULT_CLOUDWATCH_DASHBOARD_ID,
+    );
+  });
+
+  it('keeps historical-analytics as supporting observability without query UI', () => {
+    const entry = dashboardById('historical-analytics');
+
+    expect(entry).not.toBeNull();
+    expect(entry?.category).toBe('supporting');
+    expect(entry?.name).toBe('wilvor-dev-historical-analytics');
+    expect(entry?.embedUrl).toBeNull();
+    expect(JSON.stringify(CLOUDWATCH_DASHBOARDS)).not.toMatch(
+      /execute_sql|run_query|StartQueryExecution|textarea|sql editor/i,
     );
   });
 

@@ -3,6 +3,7 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $FunctionDir = Join-Path $RepoRoot "functions\weather\sigmet\processor"
 $SharedWeatherDir = Join-Path $RepoRoot "functions\shared\wilvor_weather"
+$SharedHistoricalDir = Join-Path $RepoRoot "functions\shared\wilvor_historical"
 $DistDir = Join-Path $FunctionDir "dist"
 $ZipPath = Join-Path $DistDir "sigmet_processor.zip"
 
@@ -15,6 +16,10 @@ if (-not (Test-Path $FunctionDir)) {
 
 if (-not (Test-Path $SharedWeatherDir)) {
     throw "Shared weather package not found: $SharedWeatherDir"
+}
+
+if (-not (Test-Path $SharedHistoricalDir)) {
+    throw "Shared historical package not found: $SharedHistoricalDir"
 }
 
 try {
@@ -62,6 +67,24 @@ try {
         -Path "$SharedWeatherDir\*" `
         -Destination $SharedTargetDir `
         -Recurse `
+        -Force
+
+    $SharedHistoricalTargetDir = Join-Path $PackageDir "wilvor_historical"
+
+    New-Item `
+        -ItemType Directory `
+        -Force `
+        $SharedHistoricalTargetDir | Out-Null
+
+    Copy-Item `
+        -Path "$SharedHistoricalDir\*" `
+        -Destination $SharedHistoricalTargetDir `
+        -Recurse `
+        -Force
+
+    Copy-Item `
+        (Join-Path $RepoRoot "functions\historical_facts\runtime\gap_writer.py") `
+        (Join-Path $PackageDir "gap_writer.py") `
         -Force
 
     Compress-Archive `

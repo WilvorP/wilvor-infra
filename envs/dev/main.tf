@@ -89,7 +89,58 @@ module "sigmet" {
   event_bus_name = local.default_event_bus_name
   event_bus_arn  = local.default_event_bus_arn
 
+  historical_geometry_firehose_stream_name = (
+    module.historical_facts.geometry_firehose_stream_name
+  )
+  historical_geometry_firehose_stream_arn = (
+    module.historical_facts.geometry_firehose_stream_arn
+  )
+
+  historical_facts_bucket_name = (
+    module.historical_facts.historical_bucket_name
+  )
+  historical_facts_bucket_arn = (
+    module.historical_facts.historical_bucket_arn
+  )
+
   tags = local.common_tags
+}
+
+module "historical_facts" {
+  source = "../../modules/historical_facts"
+
+  name_prefix = local.name_prefix
+  aws_region  = var.aws_region
+  account_id  = data.aws_caller_identity.current.account_id
+  tags        = local.common_tags
+
+  enable_historical_facts = true
+
+  event_bus_name = local.default_event_bus_name
+  event_bus_arn  = local.default_event_bus_arn
+
+  transform_zip_path = (
+    "${path.root}/../../functions/historical_facts/transform/dist/historical_facts_transform.zip"
+  )
+
+  coverage_zip_path = (
+    "${path.root}/../../functions/historical_facts/coverage_control/dist/historical_facts_coverage.zip"
+  )
+
+  dlq_consumer_zip_path = (
+    "${path.root}/../../functions/historical_facts/dlq_gap_consumer/dist/historical_facts_dlq_consumer.zip"
+  )
+}
+
+module "historical_analytics" {
+  source = "../../modules/historical_analytics"
+
+  name_prefix = local.name_prefix
+  aws_region  = var.aws_region
+  account_id  = data.aws_caller_identity.current.account_id
+  tags        = local.common_tags
+
+  enable_historical_analytics = true
 }
 
 module "metar" {
@@ -419,6 +470,13 @@ module "encounter" {
   event_bus_name = local.default_event_bus_name
   event_bus_arn  = local.default_event_bus_arn
 
+  historical_facts_bucket_name = (
+    module.historical_facts.historical_bucket_name
+  )
+  historical_facts_bucket_arn = (
+    module.historical_facts.historical_bucket_arn
+  )
+
   enable_encounter_event_trigger = true
 
   dynamodb_read_capacity  = 5
@@ -455,6 +513,13 @@ module "risk" {
 
   event_bus_arn = (
     local.default_event_bus_arn
+  )
+
+  historical_facts_bucket_name = (
+    module.historical_facts.historical_bucket_name
+  )
+  historical_facts_bucket_arn = (
+    module.historical_facts.historical_bucket_arn
   )
 
   # Keep disabled until manual Risk Processor
@@ -631,6 +696,10 @@ module "operational_api" {
 
   name_prefix = local.name_prefix
 
+  # POST /ai/query stays absent. The AI host module owns the separate
+  # function, and its ARN is intentionally not passed into this module.
+  enable_ai_query_route = false
+
   api_zip_path = (
     "${path.root}/../../functions/operational_api/dist/operational_api.zip"
   )
@@ -737,5 +806,73 @@ module "operational_api" {
 
   api_throttling_rate_limit = 25
 
+  enable_historical_facts = true
+
+  enable_historical_analytics_dashboard = (
+    module.historical_analytics.enable_historical_analytics
+  )
+
   tags = local.common_tags
+}
+
+module "ai_host" {
+  source = "../../modules/ai_host"
+
+  name_prefix = local.name_prefix
+  aws_region  = var.aws_region
+  account_id  = data.aws_caller_identity.current.account_id
+
+  log_retention_days = 3
+  enable_invoke      = false
+
+  # GetItem only. Query stays denied on these base ARNs. The callsign GSI,
+  # TAF forecast periods, projection points, and hazard cell tables are omitted.
+  reviewed_getitem_table_arns = [
+    module.aircraft_foundation.aircraft_current_state_table_arn,
+    module.sigmet.active_hazards_table_arn,
+    module.encounter.aircraft_hazard_encounter_table_arn,
+    module.airport_status.airport_status_table_arn,
+    module.metar.metar_latest_table_arn,
+    module.taf.taf_latest_table_arn,
+    module.projection.aircraft_projection_table_arn,
+    module.risk.risk_results_table_arn,
+    module.recommendations.recommendations_table_arn,
+    module.active_alerts.active_alerts_table_arn,
+  ]
+
+  # Exact GSIs used by Live Ops and Decision bounded Query. One entry per index.
+  reviewed_query_index_arns = [
+    "${module.sigmet.active_hazards_table_arn}/index/status-valid_to_epoch-index",
+    "${module.encounter.aircraft_hazard_encounter_table_arn}/index/aircraft_id-detected_at_epoch-index",
+    "${module.encounter.aircraft_hazard_encounter_table_arn}/index/hazard_id-detected_at_epoch-index",
+    "${module.projection.aircraft_projection_table_arn}/index/aircraft_id-generated_at_epoch-index",
+    "${module.risk.risk_results_table_arn}/index/aircraft_id-generated_at_epoch-index",
+    "${module.recommendations.recommendations_table_arn}/index/aircraft_id-created_at_epoch-index",
+    "${module.active_alerts.active_alerts_table_arn}/index/aircraft_id-updated_at_epoch-index",
+  ]
+
+  # Base-table hash/range Query. This table has no GSI.
+  reviewed_query_only_table_arns = [
+    module.sigmet.hazard_coordinates_table_arn,
+  ]
+
+  # Persisted Decision evidence queries this table by evaluation_id, the hash key.
+  # The airport_id GSI is not granted.
+  reviewed_getitem_and_query_table_arns = [
+    module.airport_assessment.airport_assessment_table_arn,
+  ]
+
+  tags = local.common_tags
+}
+
+resource "aws_iam_role_policy_attachment" "ai_host_historical_analytics_query" {
+  role       = module.ai_host.role_name
+  policy_arn = module.historical_analytics.query_policy_arn
+
+  lifecycle {
+    precondition {
+      condition     = module.historical_analytics.query_policy_arn == "arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/${local.name_prefix}-historical-analytics-query"
+      error_message = "The AI host may attach only the existing historical analytics query policy."
+    }
+  }
 }

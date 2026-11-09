@@ -17,6 +17,10 @@ if (-not $Force) {
     throw "Reset was not started. Run this script with -Force because it destroys the current dev environment."
 }
 
+if ($TerraformDirectory -match "dev-historical-data") {
+    throw "dev-reset.ps1 must not target the persistent historical data plane (envs/dev-historical-data)."
+}
+
 $downParameters = @{
     AwsProfile = $AwsProfile
     AwsRegion = $AwsRegion

@@ -169,6 +169,10 @@ def sigmet_processor(
         "BAD_RECORDS_PREFIX",
         "bad-records/source=sigmet_processor",
     )
+    monkeypatch.setenv(
+        "HISTORICAL_GEOMETRY_FIREHOSE_STREAM_NAME",
+        "",
+    )
 
     return load_repo_module(
         "unit_sigmet_processor_app",

@@ -10,6 +10,10 @@ $FunctionDir = Join-Path `
     $RepoRoot `
     "functions\operational_api"
 
+$SharedPackageDir = Join-Path `
+    $RepoRoot `
+    "functions\shared\wilvor_operational"
+
 $DistDir = Join-Path `
     $FunctionDir `
     "dist"
@@ -60,6 +64,22 @@ Copy-Item `
 Copy-Item `
     "$FunctionDir\cloudwatch_dashboards.py" `
     "$BuildDir\cloudwatch_dashboards.py"
+
+$SharedPackageBuildDir = Join-Path `
+    $BuildDir `
+    "wilvor_operational"
+
+New-Item `
+    -ItemType Directory `
+    -Force `
+    $SharedPackageBuildDir |
+    Out-Null
+
+Copy-Item `
+    "$SharedPackageDir\*" `
+    $SharedPackageBuildDir `
+    -Recurse `
+    -Force
 
 Compress-Archive `
     -Path "$BuildDir\*" `

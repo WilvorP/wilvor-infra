@@ -12,6 +12,7 @@ from typing import Any
 import boto3
 import h3
 from botocore.exceptions import BotoCoreError, ClientError
+from wilvor_historical.from_events import build_hazard_geometry_fact
 from wilvor_weather.monitoring import emit_metric
 
 
@@ -118,6 +119,18 @@ EVENT_BUS_NAME = os.environ.get(
     "default",
 )
 
+HISTORICAL_GEOMETRY_FIREHOSE_STREAM_NAME = os.environ.get(
+    "HISTORICAL_GEOMETRY_FIREHOSE_STREAM_NAME",
+    "",
+).strip()
+
+HISTORICAL_FACTS_BUCKET_NAME = os.environ.get(
+    "HISTORICAL_FACTS_BUCKET_NAME",
+    "",
+).strip()
+
+FIREHOSE_PUT_RECORD_MAX_BYTES = 1_024_000
+
 
 # ---------------------------------------------------------------------------
 # AWS clients/resources
@@ -126,6 +139,7 @@ EVENT_BUS_NAME = os.environ.get(
 dynamodb = boto3.resource("dynamodb")
 s3 = boto3.client("s3")
 events_client = boto3.client("events")
+firehose_client = boto3.client("firehose")
 
 
 active_hazards_table = dynamodb.Table(
@@ -3273,6 +3287,12 @@ def publish_hazard_materialized(
         )
     )
 
+    materialized_at_utc = (
+        active_hazard[
+            "materialized_at_utc"
+        ]
+    )
+
     detail = {
         "hazard_id": (
             active_hazard["hazard_id"]
@@ -3332,9 +3352,135 @@ def publish_hazard_materialized(
             ]
         ),
 
-        "published_at_utc": (
-            now_utc_iso()
+        "materialized_at_utc": (
+            materialized_at_utc
         ),
+
+        "published_at_utc": (
+            materialized_at_utc
+        ),
+
+        "geometry_hash": (
+            active_hazard[
+                "geometry_hash"
+            ]
+        ),
+
+        "geometry_type": (
+            active_hazard[
+                "geometry_type"
+            ]
+        ),
+
+        "geometry_point_count": (
+            active_hazard[
+                "geometry_point_count"
+            ]
+        ),
+
+        "product_type": (
+            active_hazard.get(
+                "product_type",
+                "SIGMET",
+            )
+        ),
+
+        "hazard_type": (
+            active_hazard[
+                "hazard_type"
+            ]
+        ),
+
+        "valid_from_utc": (
+            active_hazard[
+                "valid_from_utc"
+            ]
+        ),
+
+        "valid_to_utc": (
+            active_hazard[
+                "valid_to_utc"
+            ]
+        ),
+
+        "amendment_type": (
+            active_hazard.get(
+                "amendment_type"
+            )
+        ),
+
+        "created_at_utc": (
+            active_hazard.get(
+                "created_at_utc"
+            )
+        ),
+
+        "received_at_utc": (
+            active_hazard.get(
+                "received_at_utc"
+            )
+        ),
+
+        "source_product_id": (
+            active_hazard.get(
+                "source_product_id"
+            )
+        ),
+
+        "source_system": (
+            active_hazard.get(
+                "source_system",
+                SOURCE_SYSTEM,
+            )
+        ),
+
+        "severity": (
+            active_hazard.get(
+                "severity"
+            )
+        ),
+
+        "minimum_lower_altitude_ft": (
+            active_hazard.get(
+                "minimum_lower_altitude_ft"
+            )
+        ),
+
+        "maximum_upper_altitude_ft": (
+            active_hazard.get(
+                "maximum_upper_altitude_ft"
+            )
+        ),
+
+        "source_icao_id": (
+            active_hazard.get(
+                "source_icao_id"
+            )
+        ),
+
+        "series_id": (
+            active_hazard.get(
+                "series_id"
+            )
+        ),
+
+        "alpha_char": (
+            active_hazard.get(
+                "alpha_char"
+            )
+        ),
+
+        "raw_s3_uri": (
+            active_hazard.get(
+                "raw_s3_uri"
+            )
+        ),
+    }
+
+    detail = {
+        key: value
+        for key, value in detail.items()
+        if value is not None
     }
 
     response = events_client.put_events(
@@ -3368,6 +3514,9 @@ def publish_hazard_materialized(
         )
         or 0
     ):
+        _record_historical_source_put_failure(
+            hazard_version_key=hazard_version_key,
+        )
         raise RuntimeError(
             "Failed to publish "
             f"hazard.materialized: {response}"
@@ -3375,6 +3524,202 @@ def publish_hazard_materialized(
 
     return 1
 
+
+def _canonical_now_z() -> str:
+    return now_utc_iso().replace("+00:00", "Z")
+
+
+def _record_historical_source_put_failure(*, hazard_version_key: str) -> None:
+    emit_metric(
+        pipeline="sigmet",
+        component="sigmet_processor",
+        stage="historical_source",
+        metrics={"HistoricalSourcePutFailure": 1},
+        properties={"hazard_version_key": hazard_version_key},
+    )
+    log_event(
+        "HistoricalSourcePutFailure",
+        hazard_version_key=hazard_version_key,
+    )
+    _write_historical_gap_fail_open(
+        datasets=("hazard_version",),
+        gap_domain="DOMAIN_1",
+        reason="PRODUCER_PUT_EVENTS_FAILURE",
+        identity=hazard_version_key,
+        producer_detail_type="hazard.materialized",
+    )
+
+
+def _write_historical_gap_fail_open(
+    *,
+    datasets: tuple[str, ...],
+    gap_domain: str,
+    reason: str,
+    identity: str,
+    producer_detail_type: str,
+) -> None:
+    try:
+        from gap_writer import write_unbound_incident_fail_open
+        from wilvor_historical.coverage_contracts import (
+            CONTROL_SCHEMA_VERSION,
+            STAGING_STATE,
+            ControlRecordType,
+            GapDomain,
+            UncertaintyClass,
+            UnboundCollectionIncident,
+        )
+
+        now_utc = _canonical_now_z()
+        end_utc = (
+            datetime.fromisoformat(now_utc.replace("Z", "+00:00"))
+            + timedelta(seconds=1)
+        ).isoformat().replace("+00:00", "Z")
+        incident = UnboundCollectionIncident(
+            control_schema_version=CONTROL_SCHEMA_VERSION,
+            record_type=ControlRecordType.UNBOUND_COLLECTION_INCIDENT,
+            staging_state=STAGING_STATE,
+            affected_datasets=datasets,
+            gap_domain=GapDomain(gap_domain),
+            reason=reason,
+            uncertainty_class=UncertaintyClass.KNOWN_MISSING,
+            detected_at_utc=now_utc,
+            interval_start_utc=now_utc,
+            interval_end_utc=end_utc,
+            created_at_utc=now_utc,
+            dedup_id=f"sigmet|{reason}|{identity}|{now_utc}",
+            identity=identity or None,
+            source_subsystem="sigmet",
+            producer_source="wilvor.weather",
+            producer_detail_type=producer_detail_type,
+        )
+        write_unbound_incident_fail_open(incident)
+    except Exception:
+        pass
+
+
+def _emit_historical_geometry_metric(
+    metric_name: str,
+    *,
+    hazard_version_key: str,
+    extra_properties: dict[str, Any] | None = None,
+) -> None:
+    properties = {
+        "hazard_version_key": hazard_version_key,
+    }
+    if extra_properties:
+        properties.update(extra_properties)
+    emit_metric(
+        pipeline="sigmet",
+        component="sigmet_processor",
+        stage="historical_geometry",
+        metrics={metric_name: 1},
+        properties=properties,
+    )
+
+
+def publish_historical_geometry_fact(
+    *,
+    active_hazard: dict[str, Any],
+    geometry_points: list[dict[str, Any]] | tuple[dict[str, Any], ...],
+) -> None:
+    """Accept a HazardGeometryFact for bounded Firehose delivery.
+
+    PutRecord success is ACCEPTED_FOR_BOUNDED_DELIVERY_RETRY, not
+    DURABLY_PERSISTED. Failures never fail live SIGMET processing.
+    """
+
+    stream_name = (
+        HISTORICAL_GEOMETRY_FIREHOSE_STREAM_NAME
+    )
+    if not stream_name:
+        return
+
+    hazard_id = str(
+        active_hazard.get("hazard_id") or ""
+    ).strip()
+    source_version = str(
+        active_hazard.get("source_version") or ""
+    ).strip()
+    hazard_version_key = str(
+        active_hazard.get("hazard_version_key") or ""
+    ).strip() or (
+        f"{hazard_id}#{source_version}"
+        if hazard_id and source_version
+        else ""
+    )
+
+    try:
+        fact = build_hazard_geometry_fact(
+            active_hazard=active_hazard,
+            geometry_points=geometry_points,
+        )
+        serialized = json.dumps(
+            fact.to_dict(),
+            separators=(",", ":"),
+        ).encode("utf-8")
+        serialized_bytes = len(serialized)
+
+        if serialized_bytes > FIREHOSE_PUT_RECORD_MAX_BYTES:
+            log_event(
+                "Historical geometry fact exceeds Firehose PutRecord limit",
+                hazard_version_key=hazard_version_key or fact.hazard_version_key,
+                serialized_bytes=serialized_bytes,
+                firehose_put_record_max_bytes=(
+                    FIREHOSE_PUT_RECORD_MAX_BYTES
+                ),
+            )
+            _emit_historical_geometry_metric(
+                "HistoricalGeometryOversized",
+                hazard_version_key=(
+                    hazard_version_key or fact.hazard_version_key
+                ),
+                extra_properties={
+                    "serialized_bytes": serialized_bytes,
+                },
+            )
+            _write_historical_gap_fail_open(
+                datasets=("hazard_geometry",),
+                gap_domain="GEOMETRY",
+                reason="GEOMETRY_OVERSIZED",
+                identity=hazard_version_key or fact.hazard_version_key,
+                producer_detail_type="hazard_geometry.directput",
+            )
+            return
+
+        firehose_client.put_record(
+            DeliveryStreamName=stream_name,
+            Record={"Data": serialized},
+        )
+        _emit_historical_geometry_metric(
+            "HistoricalGeometryPutSuccess",
+            hazard_version_key=fact.hazard_version_key,
+            extra_properties={
+                "acceptance": (
+                    "ACCEPTED_FOR_BOUNDED_DELIVERY_RETRY"
+                ),
+            },
+        )
+    except Exception as exc:
+        log_event(
+            "Historical geometry Firehose PutRecord failed",
+            hazard_version_key=hazard_version_key,
+            error_type=exc.__class__.__name__,
+            error=str(exc),
+        )
+        _emit_historical_geometry_metric(
+            "HistoricalGeometryPutFailure",
+            hazard_version_key=hazard_version_key,
+            extra_properties={
+                "error_type": exc.__class__.__name__,
+            },
+        )
+        _write_historical_gap_fail_open(
+            datasets=("hazard_geometry",),
+            gap_domain="GEOMETRY",
+            reason="GEOMETRY_PUT_FAILURE",
+            identity=hazard_version_key,
+            producer_detail_type="hazard_geometry.directput",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -3579,6 +3924,11 @@ def process_decoded_record(
             mark_hazard_ready(
                 item
             )
+        )
+
+        publish_historical_geometry_fact(
+            active_hazard=ready_hazard,
+            geometry_points=geometry_points,
         )
 
         #

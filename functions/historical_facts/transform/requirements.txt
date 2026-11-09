@@ -1,0 +1,2 @@
+# Historical facts Firehose transform is stdlib-only plus the packaged
+# wilvor_historical package. Do not pip-install runtime dependencies.
