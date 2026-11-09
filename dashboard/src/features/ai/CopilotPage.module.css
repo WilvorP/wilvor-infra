@@ -76,33 +76,6 @@
   padding-top: var(--wv-space-4);
 }
 
-.preview {
-  display: flex;
-  flex-direction: column;
-  gap: var(--wv-space-2);
-  padding: var(--wv-space-4);
-  border: 1px solid var(--wv-border);
-  background-color: var(--wv-surface-2);
-}
-
-.previewNotice,
-.previewAnswer,
-.previewMeta {
-  margin: 0;
-  font-size: var(--wv-text-xs);
-  line-height: var(--wv-leading-normal);
-}
-
-.previewNotice {
-  font-weight: var(--wv-weight-semibold);
-}
-
-.previewList {
-  margin: 0;
-  padding-left: var(--wv-space-4);
-  font-size: var(--wv-text-xs);
-}
-
 .errorCode {
   margin: var(--wv-space-3) 0 0;
   font-size: var(--wv-text-2xs);

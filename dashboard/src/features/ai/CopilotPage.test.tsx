@@ -2,14 +2,23 @@ import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { CopilotQueryClient } from '@/api/aiClient';
 import { createInjectedCopilotQueryClient } from '@/api/aiClient';
-import { MASTER_RESPONSE_STATUS_TEXT } from '@/api/aiContracts';
+import {
+  assertCopilotQueryResult,
+  LOCAL_DEV_PREVIEW_STANDING,
+  MASTER_RESPONSE_STATUS_TEXT,
+} from '@/api/aiContracts';
 import { ApiError } from '@/api/errors';
 import { renderWithProviders } from '@/test/renderWithProviders';
 
 import { CopilotPage } from './CopilotPage';
 import {
+  AIRCRAFT_EVIDENCE,
+  developerTool,
+  encounterTool,
   evidenceDisplayResult,
+  localPreviewResult,
   TEST_APPLICATION_TIME,
   TEST_SESSION,
   unavailableResult,
@@ -211,6 +220,67 @@ describe('CopilotPage', () => {
       screen.getByText(/This console does not call that route/i),
     ).toBeInTheDocument();
     vi.unstubAllGlobals();
+  });
+
+  it('keeps a completed local preview readable and unadmitted', async () => {
+    const client: CopilotQueryClient = {
+      standing: LOCAL_DEV_PREVIEW_STANDING,
+      query: async (request) =>
+        assertCopilotQueryResult(
+          localPreviewResult(
+            request,
+            {
+              toolResults: [developerTool(), encounterTool()],
+            },
+            {
+              evidence: [
+                {
+                  ...AIRCRAFT_EVIDENCE,
+                  entityId: '407d6c',
+                  aircraftId: '407d6c',
+                  callsign: 'UAL407',
+                  toolName: 'get_aircraft_operational_context',
+                  toolCallId: 'tool-aircraft-1',
+                  observationTimeUtc: '2026-11-07T17:48:18Z',
+                  evaluationTimeUtc: '2026-11-07T18:00:05Z',
+                  sourceName: 'wilvor-dev-aircraft-current-state',
+                },
+              ],
+            },
+          ),
+        ),
+    };
+
+    renderCopilot(client);
+    expect(screen.getByText(/Loopback developer preview/i)).toBeInTheDocument();
+
+    await ask('What is stored for aircraft 407d6c?');
+
+    await waitFor(() => {
+      expect(screen.getByText(/Stored aircraft 407d6c/)).toBeInTheDocument();
+    });
+
+    expect(
+      screen.getByText(MASTER_RESPONSE_STATUS_TEXT.INSUFFICIENT_EVIDENCE),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText('37.62').length).toBeGreaterThan(0);
+    expect(screen.getByText(/11m 42s before the request/)).toBeInTheDocument();
+    expect(screen.getByText(/Stored freshness label: FRESH/)).toBeInTheDocument();
+    expect(screen.getByText(/0 returned candidate rows/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/does not mean the aircraft is free from hazards/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Source authenticity: not established/),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText(/Claims admitted: no/).length).toBeGreaterThan(0);
+    expect(screen.getByText(/Production authority: DENIED/)).toBeInTheDocument();
+    const details = screen
+      .getByText('Specialist verification and technical details')
+      .closest('details');
+    expect(details).not.toHaveAttribute('open');
+    expect(details).toHaveTextContent('DIAGNOSTIC_NARRATIVE_ONLY');
+    expect(screen.queryByText(/The aircraft is free from hazards/)).not.toBeInTheDocument();
   });
 
   it('does not submit blank operator text', async () => {

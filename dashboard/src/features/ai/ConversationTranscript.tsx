@@ -2,6 +2,7 @@ import { LoadingState } from '@/components/QueryState';
 import { StatusPill } from '@/components/StatusPill';
 import type { CopilotQueryResult } from '@/api/aiContracts';
 import { presentLimitationCode, presentCopilotState } from './display';
+import { LocalDevPreviewAnswer } from './LocalDevPreviewAnswer';
 
 import styles from './ConversationTranscript.module.css';
 
@@ -51,6 +52,7 @@ export function ConversationTranscript({
           </header>
           <p className={styles.text}>{turn.text}</p>
           {turn.result ? <AssistantMeta result={turn.result} /> : null}
+          {turn.result ? <LocalDevPreviewAnswer result={turn.result} /> : null}
         </li>
       ))}
       {pending ? (
