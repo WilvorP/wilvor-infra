@@ -183,6 +183,12 @@ def test_lambda_handler_writes_airport_status(
     )
 
     output_table = FakeTable()
+    published = []
+    monkeypatch.setattr(
+        airport_status_materializer,
+        "publish_airport_status_updated",
+        lambda item: published.append(item),
+    )
 
     monkeypatch.setattr(
         airport_status_materializer,
@@ -225,6 +231,7 @@ def test_lambda_handler_writes_airport_status(
     assert result["processed"] == 1
     assert result["written"] == ["KOAK"]
     assert output_table.puts[0]["airport_id"] == "KOAK"
+    assert published == output_table.puts
 
 
 def test_bootstrap_scans_weather_tables(

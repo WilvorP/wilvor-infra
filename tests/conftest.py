@@ -93,6 +93,8 @@ def raw_opensky_event(valid_opensky_state_vector: list[Any]) -> dict[str, Any]:
         "source": "opensky",
         "poll_id": "poll-test-001",
         "fetched_at_utc": "2026-07-18T12:00:00+00:00",
+        "raw_s3_bucket": "test-aircraft-archive",
+        "raw_s3_key": "raw/source=opensky/synthetic-poll.json.gz",
         "opensky_response_time": int(time.time()),
         "raw_index": 0,
         "raw_state_vector": valid_opensky_state_vector,
@@ -104,7 +106,7 @@ def clean_aircraft_record() -> dict[str, Any]:
     now = int(time.time())
 
     return {
-        "icao24": "abc123",
+        "aircraft_id": "abc123",
         "callsign": "UAL123",
         "origin_country": "United States",
         "position_time_epoch": now - 2,
@@ -127,8 +129,20 @@ def clean_aircraft_record() -> dict[str, Any]:
         "squawk": "1200",
         "spi": False,
         "position_source": 0,
-        "schema_version": "aircraft_current_state.v1",
-        "ttl_epoch": now + 1800,
+        "position_age_seconds": 2,
+        "freshness_status": "FRESH",
+        "current_h3_cell": "8428309ffffffff",
+        "h3_resolution": 4,
+        "state_version": f"abc123#{now - 2}",
+        "idempotency_key": f"abc123#{now - 2}",
+        "source_system": "OPEN_SKY",
+        "source_event_time_utc": "2026-07-18T11:59:58+00:00",
+        "received_at_utc": "2026-07-18T12:00:00+00:00",
+        "processed_at_utc": "2026-07-18T12:00:01+00:00",
+        "correlation_id": "synthetic-aircraft-correlation",
+        "raw_s3_uri": "s3://test-aircraft-archive/raw/source=opensky/synthetic-poll.json.gz",
+        "schema_version": "aircraft_current_state.v2",
+        "expires_at_epoch": now + 1800,
     }
 
 

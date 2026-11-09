@@ -1,0 +1,15 @@
+[run]
+branch = True
+relative_files = True
+source = functions,scripts
+omit =
+    functions/**/package/**
+    functions/**/dist/**
+    functions/**/build/**
+
+[report]
+show_missing = True
+include_namespace_packages = True
+
+[xml]
+output = test-results/ci/coverage.xml

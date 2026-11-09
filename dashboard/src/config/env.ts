@@ -13,6 +13,11 @@ export interface AppConfig {
   readonly apiTimeoutMs: number;
   /** Optional MapLibre style URL. `null` selects the built-in dark basemap. */
   readonly mapStyleUrl: string | null;
+  /**
+   * Loopback Copilot preview. Stays false unless this is a development
+   * build and `VITE_WILVOR_LOCAL_DEV_COPILOT` is exactly `1`.
+   */
+  readonly localDevCopilotEnabled: boolean;
 }
 
 export interface ConfigResult {
@@ -70,7 +75,10 @@ function parseTimeout(raw: string | null, errors: string[]): number {
  * Exported separately from {@link appConfig} so it can be tested without
  * mutating `import.meta.env`.
  */
-export function resolveConfig(env: RawEnv): ConfigResult {
+export function resolveConfig(
+  env: RawEnv,
+  options: { developmentBuild?: boolean } = {},
+): ConfigResult {
   const errors: string[] = [];
 
   const rawBaseUrl = readString(env, 'VITE_WILVOR_API_BASE_URL');
@@ -116,6 +124,9 @@ export function resolveConfig(env: RawEnv): ConfigResult {
       apiBaseUrl: normalisedBaseUrl,
       apiTimeoutMs,
       mapStyleUrl,
+      localDevCopilotEnabled:
+        options.developmentBuild === true &&
+        readString(env, 'VITE_WILVOR_LOCAL_DEV_COPILOT') === '1',
     },
     errors,
   };
@@ -123,4 +134,5 @@ export function resolveConfig(env: RawEnv): ConfigResult {
 
 export const configResult: ConfigResult = resolveConfig(
   import.meta.env as unknown as RawEnv,
+  { developmentBuild: import.meta.env.DEV },
 );

@@ -125,7 +125,8 @@ describe('OperationalApiClient routes', () => {
   });
 
   it('forwards airport weather filters and an opaque nextToken', async () => {
-    const token = 'eyJhaXJwb3J0X2lkIjp7IlMiOiJLREVOIn19';
+    // Synthetic unsigned pagination data; fetch is stubbed in this test.
+    const token = btoa(JSON.stringify({"airport_id":{"S":"KDEN"}}));
     const fetchImpl = stubFetch();
 
     await clientWith(fetchImpl).listAirports({
@@ -206,7 +207,8 @@ describe('OperationalApiClient guard rails', () => {
   });
 
   it('forwards an opaque nextToken unchanged on current list routes', async () => {
-    const token = 'eyJvZmZzZXQiOnsiTiI6IjIifX0=';
+    // Synthetic unsigned pagination data; fetch is stubbed in this test.
+    const token = btoa(JSON.stringify({"offset":{"N":"2"}}));
     const fetchImpl = stubFetch();
 
     await clientWith(fetchImpl).listActiveEncounters({

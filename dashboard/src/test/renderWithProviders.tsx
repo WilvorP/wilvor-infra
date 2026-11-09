@@ -1,8 +1,14 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, type RenderResult } from '@testing-library/react';
 import type { ReactElement, ReactNode } from 'react';
+import type { Mock } from 'vitest';
 
+import { AiProvider } from '@/api/AiProvider';
 import { ApiProvider } from '@/api/ApiProvider';
+import {
+  createDisabledCopilotQueryClient,
+  type CopilotQueryClient,
+} from '@/api/aiClient';
 import type { OperationalApiClient } from '@/api/operationalApi';
 
 /**
@@ -24,12 +30,25 @@ export function createTestQueryClient(): QueryClient {
   });
 }
 
-/** Only the methods a test exercises need to be provided. */
-export type StubApiClient = Partial<OperationalApiClient>;
+/**
+ * Only the methods a test exercises need to be provided.
+ * Vitest 4 mocks are both callable and constructable, and that union is not
+ * assignable to a plain client method.
+ */
+type Procedure = (...args: any[]) => any;
+type Constructable = new (...args: any[]) => any;
+
+export type StubApiClient = {
+  [K in keyof OperationalApiClient]?:
+    | OperationalApiClient[K]
+    | Mock<Procedure | Constructable>
+    | Procedure;
+};
 
 export interface RenderOptions {
   client?: StubApiClient;
   queryClient?: QueryClient;
+  aiClient?: CopilotQueryClient;
 }
 
 export function renderWithProviders(
@@ -38,11 +57,14 @@ export function renderWithProviders(
 ): RenderResult {
   const queryClient = options.queryClient ?? createTestQueryClient();
   const client = (options.client ?? {}) as OperationalApiClient;
+  const aiClient = options.aiClient ?? createDisabledCopilotQueryClient();
 
   function Wrapper({ children }: { children: ReactNode }) {
     return (
       <QueryClientProvider client={queryClient}>
-        <ApiProvider client={client}>{children}</ApiProvider>
+        <ApiProvider client={client}>
+          <AiProvider client={aiClient}>{children}</AiProvider>
+        </ApiProvider>
       </QueryClientProvider>
     );
   }

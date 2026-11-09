@@ -16,17 +16,18 @@ def test_terraform_formatting(
     terraform_binary,
     repo_root: Path,
 ):
-    result = run_command(
-        [terraform_binary, "fmt", "-recursive", "-check"],
-        cwd=repo_root,
-        check=False,
-    )
-
-    assert result.returncode == 0, (
-        "Terraform files are not formatted. Run:\n"
-        "terraform fmt -recursive\n\n"
-        f"{result.stdout}\n{result.stderr}"
-    )
+    # All Terraform source lives in these trees. Avoid traversing ignored
+    # Lambda packages, local tooling and generated validation workspaces.
+    for directory in ("envs", "modules"):
+        result = run_command(
+            [terraform_binary, "fmt", "-recursive", "-check", directory],
+            cwd=repo_root,
+            check=False,
+        )
+        assert result.returncode == 0, (
+            f"Terraform formatting failed in {directory}:\n"
+            f"{result.stdout}\n{result.stderr}"
+        )
 
 
 def test_terraform_configuration_validates(

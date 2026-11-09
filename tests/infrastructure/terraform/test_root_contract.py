@@ -4,8 +4,9 @@ import re
 from pathlib import Path
 from typing import Any
 
-import hcl2
 import pytest
+
+from tests.helpers.hcl_compat import loads
 
 
 pytestmark = pytest.mark.infrastructure
@@ -17,6 +18,19 @@ EXPECTED_MODULES = {
     "sigmet": "../../modules/sigmet",
     "metar": "../../modules/metar",
     "taf": "../../modules/taf",
+    "historical_facts": "../../modules/historical_facts",
+    "historical_analytics": "../../modules/historical_analytics",
+    "runway_metadata": "../../modules/runway_metadata",
+    "station_reference": "../../modules/station_reference",
+    "airport_status": "../../modules/airport_status",
+    "projection": "../../modules/projection",
+    "encounter": "../../modules/encounter",
+    "risk": "../../modules/risk",
+    "airport_assessment": "../../modules/airport_assessment",
+    "recommendations": "../../modules/recommendations",
+    "active_alerts": "../../modules/active_alerts",
+    "operational_api": "../../modules/operational_api",
+    "ai_host": "../../modules/ai_host",
 }
 
 EXPECTED_OUTPUTS = {
@@ -110,7 +124,7 @@ def normalize_hcl(value: Any) -> Any:
 
 def load_hcl(path: Path) -> dict[str, Any]:
     with path.open("r", encoding="utf-8") as handle:
-        return normalize_hcl(hcl2.load(handle))
+        return normalize_hcl(loads(handle.read()))
 
 
 def named_blocks(

@@ -21,11 +21,17 @@ from wilvor_ai.live_ops_answer_renderer import (
     LiveOpsRenderErrorCode,
 )
 from wilvor_ai.live_ops_claims import (
+    AircraftObservedStateClaim,
     CallsignMatchSetClaim,
     ConfirmedImpactClaim,
+    CoverageLimitationClaim,
+    CurrentnessClaim,
     LiveOpsCountMetric,
     LiveOpsCountMode,
+    LiveOpsCurrentnessPredicate,
     LiveOpsExecutedScope,
+    LiveOpsLimitationCode,
+    LiveOpsObservedField,
     LiveOpsRiskMode,
     QueryResultZeroClaim,
     RiskStateClaim,
@@ -38,6 +44,14 @@ from wilvor_ai.live_ops_model_contracts import (
     LiveOpsModelDecisionKind,
     LiveOpsProviderFailureKind,
     LiveOpsUnsupportedReason,
+)
+from wilvor_ai.providers.anthropic_live_ops_messages import (
+    DEFAULT_MODEL_ID,
+    parse_live_ops_messages_response,
+)
+from wilvor_ai.providers.live_ops_instructions import (
+    LIVE_OPS_TERMINAL_TRANSPORT_VERSION,
+    resolve_live_ops_instruction,
 )
 from wilvor_ai.live_ops_public_contracts import (
     LIVE_OPS_ANSWER_CANCELLED,
@@ -443,6 +457,102 @@ def test_one_tool_verified_completion_on_final_turn():
     assert len(provider.requests[1].tool_results) == 1
     _assert_model_boundary(provider)
     assert _PROSE not in result.answer
+
+
+def test_stale_aircraft_getitem_reaches_a_terminal_specialist_outcome():
+    instruction = resolve_live_ops_instruction(LIVE_OPS_INSTRUCTION_REF)
+    assert "aircraft_is_current false, return FINAL_CLAIMS" in instruction
+    assert "predicate AIRCRAFT_IS_CURRENT and value false" in instruction
+    assert "It is not current operational status." in instruction
+
+    def finish(turn):
+        projection = turn.tool_results[-1]
+        assert projection.data["found"] is True
+        assert projection.data["aircraft_is_current"] is False
+        decision = _claims(
+            CurrentnessClaim(
+                tool_call_id=projection.tool_call_id,
+                tool_name=projection.tool_name,
+                predicate=LiveOpsCurrentnessPredicate.AIRCRAFT_IS_CURRENT,
+                value=False,
+                aircraft_id="b",
+            ),
+            CoverageLimitationClaim(
+                tool_call_id=projection.tool_call_id,
+                tool_name=projection.tool_name,
+                code=LiveOpsLimitationCode.FRESHNESS_NOT_ESTABLISHED,
+            ),
+            AircraftObservedStateClaim(
+                tool_call_id=projection.tool_call_id,
+                tool_name=projection.tool_name,
+                aircraft_id="b",
+                field=LiveOpsObservedField.ON_GROUND,
+                value=False,
+                retained_not_current=True,
+            ),
+        )
+        parsed = parse_live_ops_messages_response(
+            {
+                "type": "message",
+                "role": "assistant",
+                "model": DEFAULT_MODEL_ID,
+                "stop_reason": "end_turn",
+                "content": [
+                    {
+                        "type": "text",
+                        "text": json.dumps(
+                            {
+                                "transport_version": LIVE_OPS_TERMINAL_TRANSPORT_VERSION,
+                                "kind": decision.kind.value,
+                                "decision_json": json.dumps(
+                                    decision.to_dict(),
+                                    sort_keys=True,
+                                    separators=(",", ":"),
+                                ),
+                            }
+                        ),
+                    }
+                ],
+            },
+            DEFAULT_MODEL_ID,
+        )
+        assert parsed.kind is LiveOpsModelDecisionKind.FINAL_CLAIMS
+        assert parsed.claims[0].value is False
+        return parsed
+
+    result, provider, log = _run(
+        [
+            _tools(("get_aircraft_operational_context", {"aircraft_id": "b"})),
+            finish,
+        ],
+        req=_request("What is the current operational status of aircraft b?"),
+        max_model_turns=2,
+    )
+    assert result.execution_status is LiveOpsRunStatus.COMPLETED
+    assert result.failure is None
+    assert result.verification_outcome is LiveOpsPublicVerificationOutcome.ALL_VERIFIED
+    assert result.answer_origin is LiveOpsAnswerOrigin.DETERMINISTIC_RENDERER
+    current = next(
+        item
+        for item in result.verified_claims
+        if item.kind is LiveOpsPublicClaimKind.CURRENTNESS
+    )
+    assert current.currentness_value is False
+    assert current.predicate.value == "AIRCRAFT_IS_CURRENT"
+    observed = next(
+        item
+        for item in result.verified_claims
+        if item.kind is LiveOpsPublicClaimKind.AIRCRAFT_OBSERVED_STATE
+    )
+    assert observed.retained_not_current is True
+    assert "FRESHNESS_NOT_ESTABLISHED" in result.mandatory_limitations
+    assert "is false" in result.answer
+    assert "retained and not current" in result.answer
+    assert "Source freshness is not established." in result.answer
+    assert "is true" not in result.answer
+    assert _tool_names(log) == ["get_aircraft_operational_context"]
+    assert len(provider.requests) == 2
+    _assert_model_boundary(provider)
 
 
 def test_multi_tool_batch_verifies_count_and_callsign():

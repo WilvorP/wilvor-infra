@@ -1,19 +1,37 @@
 import base64
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from decimal import Decimal
 from typing import Any
 
 import boto3
-from boto3.dynamodb.conditions import Attr
+from boto3.dynamodb.types import TypeSerializer
+from botocore.config import Config
 from botocore.exceptions import ClientError
 
 from wilvor_aircraft.monitoring import emit_metric
 from wilvor_aircraft.schemas import AIRCRAFT_CURRENT_STATE_SCHEMA_VERSION
 
 
-dynamodb = boto3.resource("dynamodb")
-events = boto3.client("events")
+# One clean batch is 100 records. Each successful write also publishes one
+# EventBridge event. Different aircraft are independent and run concurrently.
+# Records for one aircraft stay on one thread, in batch order, and the
+# DynamoDB condition still rejects an older position.
+#
+# Clients are created once and shared. A boto3 Session or resource per
+# worker reloads the DynamoDB service model on every batch, which is
+# CPU-heavy, uses hundreds of MB, and leaves the workers waiting on that
+# setup instead of overlapping the network calls. Low-level clients are
+# thread-safe.
+DEFAULT_WRITE_WORKERS = 10
+MAX_WRITE_WORKERS = 20
+
+_CLIENT_CONFIG = Config(max_pool_connections=MAX_WRITE_WORKERS + 4)
+_serializer = TypeSerializer()
+
+dynamodb = boto3.client("dynamodb", config=_CLIENT_CONFIG)
+events = boto3.client("events", config=_CLIENT_CONFIG)
 
 
 def decode_kinesis_record(record: dict[str, Any]) -> dict[str, Any]:
@@ -129,39 +147,68 @@ def convert_for_dynamodb(value: Any) -> Any:
     return value
 
 
-def put_current_state_item(item: dict[str, Any]) -> str:
-    table_name = os.environ["AIRCRAFT_CURRENT_STATE_TABLE_NAME"]
-    table = dynamodb.Table(table_name)
+def configured_write_workers(group_count: int) -> int:
+    if group_count <= 0:
+        return 0
 
-    dynamodb_item = convert_for_dynamodb(item)
+    if group_count == 1:
+        return 1
+
+    raw_value = os.environ.get("AIRCRAFT_WRITER_MAX_WORKERS", "")
+
+    try:
+        requested = int(raw_value) if raw_value else DEFAULT_WRITE_WORKERS
+    except ValueError:
+        requested = DEFAULT_WRITE_WORKERS
+
+    requested = max(1, min(requested, MAX_WRITE_WORKERS))
+    return min(requested, group_count)
+
+
+def _to_dynamodb_item(item: dict[str, Any]) -> dict[str, Any]:
+    converted = convert_for_dynamodb(item)
+    return {
+        key: _serializer.serialize(value)
+        for key, value in converted.items()
+    }
+
+
+def put_current_state_item(item: dict[str, Any]) -> str:
     incoming_position_time = Decimal(
         str(item["position_time_epoch"])
     )
-
-    ordering_condition = (
-        Attr("position_time_epoch").not_exists()
-        | Attr("position_time_epoch").lt(incoming_position_time)
+    names = {
+        "#position_time_epoch": "position_time_epoch",
+    }
+    values = {
+        ":incoming_position_time": _serializer.serialize(
+            incoming_position_time
+        ),
+    }
+    condition_expression = (
+        "attribute_not_exists(#position_time_epoch) OR "
+        "#position_time_epoch < :incoming_position_time"
     )
-
-    condition_expression = ordering_condition
 
     # A record without a usable position may create a new no-position item,
     # or replace another no-position item, but it must not overwrite a valid
     # positioned aircraft record.
     if item["has_position"] is False:
-        position_protection = (
-            Attr("has_position").not_exists()
-            | Attr("has_position").eq(False)
-        )
-
+        names["#has_position"] = "has_position"
+        values[":stored_has_position_false"] = {"BOOL": False}
         condition_expression = (
-            ordering_condition & position_protection
+            f"({condition_expression}) AND ("
+            "attribute_not_exists(#has_position) OR "
+            "#has_position = :stored_has_position_false)"
         )
 
     try:
-        table.put_item(
-            Item=dynamodb_item,
+        dynamodb.put_item(
+            TableName=os.environ["AIRCRAFT_CURRENT_STATE_TABLE_NAME"],
+            Item=_to_dynamodb_item(item),
             ConditionExpression=condition_expression,
+            ExpressionAttributeNames=names,
+            ExpressionAttributeValues=values,
         )
 
         return "written"
@@ -175,6 +222,71 @@ def put_current_state_item(item: dict[str, Any]) -> str:
         raise
 
 
+def _failure_outcome(
+    sequence_number: str,
+    exc: Exception,
+) -> dict[str, str]:
+    print(
+        json.dumps(
+            {
+                "event": "aircraft_current_state_write_failed",
+                "sequence_number": sequence_number,
+                "error_type": type(exc).__name__,
+                "message": str(exc),
+            }
+        )
+    )
+
+    return {
+        "outcome": "failed",
+        "sequence_number": sequence_number,
+    }
+
+
+def apply_clean_record(
+    sequence_number: str,
+    clean_record: dict[str, Any],
+) -> dict[str, str]:
+    try:
+        result = put_current_state_item(clean_record)
+
+        if result == "written":
+            publish_aircraft_state_updated(clean_record)
+            return {
+                "outcome": "written",
+                "sequence_number": sequence_number,
+            }
+
+        if result == "skipped_stale_duplicate_or_position_protected":
+            return {
+                "outcome": "skipped",
+                "sequence_number": sequence_number,
+            }
+
+        raise RuntimeError(
+            f"unexpected_current_state_write_result:{result}"
+        )
+
+    except Exception as exc:
+        return _failure_outcome(sequence_number, exc)
+
+
+def apply_aircraft_group(
+    records: list[tuple[str, dict[str, Any]]],
+) -> list[dict[str, str]]:
+    # One aircraft is applied in arrival order so an older position in this
+    # batch cannot race ahead of a newer one. Kinesis partial-batch retry
+    # restarts at the lowest failed sequence and includes every later
+    # record. The less-than condition skips an equal or older position, so
+    # a sibling written in this batch is not republished and an older state
+    # is not restored. A record whose PutItem succeeded and whose PutEvents
+    # then failed is skipped on that retry as well, and its event is not sent.
+    return [
+        apply_clean_record(sequence_number, clean_record)
+        for sequence_number, clean_record in records
+    ]
+
+
 def handler(event, context):
     batch_item_failures: list[dict[str, str]] = []
 
@@ -186,6 +298,7 @@ def handler(event, context):
     rejected_records = 0
     failed_records = 0
     published_events = 0
+    groups: dict[str, list[tuple[str, dict[str, Any]]]] = {}
 
     for record in event.get("Records", []):
         total_records += 1
@@ -212,20 +325,16 @@ def handler(event, context):
                 continue
 
             valid_records += 1
-            result = put_current_state_item(clean_record)
-
-            if result == "written":
-                publish_aircraft_state_updated(clean_record)
-                written_records += 1
-                published_events += 1
-
-            elif result == "skipped_stale_duplicate_or_position_protected":
-                skipped_stale_records += 1
+            aircraft_id = str(clean_record["aircraft_id"])
+            groups.setdefault(aircraft_id, []).append(
+                (sequence_number, clean_record)
+            )
 
         except Exception as exc:
             failed_records += 1
-            batch_item_failures.append({"itemIdentifier": sequence_number})
-
+            batch_item_failures.append(
+                {"itemIdentifier": sequence_number}
+            )
             print(
                 json.dumps(
                     {
@@ -236,6 +345,42 @@ def handler(event, context):
                     }
                 )
             )
+
+    write_workers = configured_write_workers(len(groups))
+
+    if groups:
+        with ThreadPoolExecutor(max_workers=write_workers) as executor:
+            futures = {
+                executor.submit(apply_aircraft_group, group): group
+                for group in groups.values()
+            }
+
+            for future in as_completed(futures):
+                group = futures[future]
+
+                try:
+                    outcomes = future.result()
+                except Exception as exc:
+                    outcomes = [
+                        _failure_outcome(sequence_number, exc)
+                        for sequence_number, _clean_record in group
+                    ]
+
+                for outcome in outcomes:
+                    if outcome["outcome"] == "written":
+                        written_records += 1
+                        published_events += 1
+                    elif outcome["outcome"] == "skipped":
+                        skipped_stale_records += 1
+                    else:
+                        failed_records += 1
+                        batch_item_failures.append(
+                            {
+                                "itemIdentifier": outcome[
+                                    "sequence_number"
+                                ]
+                            }
+                        )
 
     summary = {
         "event": "aircraft_current_state_batch_processed",
@@ -248,6 +393,7 @@ def handler(event, context):
         "failed_records": failed_records,
         "batch_item_failures": len(batch_item_failures),
         "published_events": published_events,
+        "write_workers": write_workers,
     }
 
     print(json.dumps(summary))
