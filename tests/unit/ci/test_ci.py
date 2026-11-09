@@ -1,6 +1,7 @@
 """Regression checks for omissions, duplicate execution and unsafe workflow changes."""
 
 from argparse import Namespace
+import ast
 from copy import deepcopy
 import json
 from pathlib import Path
@@ -9,8 +10,16 @@ import xml.etree.ElementTree as ET
 import pytest
 import yaml
 
-from scripts.ci import clean_junit, dashboard_cases, gate, policy, validate_gate
-from scripts.ci_groups import GROUPS, expected, inventory, owner
+from scripts.ci import clean_junit, dashboard_cases, execution_selection, gate, policy, run_group, validate_gate
+from scripts.ci_groups import (
+    GROUPS,
+    OPERATOR_EVIDENCE_EXCLUSION,
+    OPERATOR_EVIDENCE_FILE,
+    OPERATOR_EVIDENCE_NODEIDS,
+    expected,
+    inventory,
+    owner,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 NODES = [
@@ -161,6 +170,79 @@ def test_workflow_policy_rejects_security_regressions(mutation):
                 step.pop("env")
         with pytest.raises(ValueError, match="offline guard"):
             policy(candidate)
+
+
+def aws_nonproduction_cases():
+    tree = ast.parse((ROOT / OPERATOR_EVIDENCE_FILE).read_text(encoding="utf-8"))
+    module_tests = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name.startswith("test_")]
+    nested = [
+        node for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name.startswith("test_") and node not in module_tests
+    ]
+    assert not nested
+    live, offline = [], []
+    for node in module_tests:
+        nodeid = f"{OPERATOR_EVIDENCE_FILE}::{node.name}"
+        if "operator_evidence" in [arg.arg for arg in node.args.args]:
+            live.append(nodeid)
+        else:
+            offline.append(nodeid)
+    return live, offline
+
+
+def test_only_operator_evidence_cases_are_live_aws_exclusions():
+    live, offline = aws_nonproduction_cases()
+    assert live and set(live) == set(OPERATOR_EVIDENCE_NODEIDS) and len(live) == 9
+    assert offline
+    assert all(owner(nodeid) == f"excluded:{OPERATOR_EVIDENCE_EXCLUSION}" for nodeid in live)
+    assert all(owner(nodeid) == "copilot" for nodeid in offline)
+    data = inventory([*live, *offline], "full")
+    assert data["excluded"] == {OPERATOR_EVIDENCE_EXCLUSION: sorted(live)}
+    assert expected(data, "copilot") == sorted(offline)
+    wanted, files, removed = execution_selection(data, "copilot")
+    assert wanted == sorted(offline)
+    assert files == [OPERATOR_EVIDENCE_FILE]
+    assert removed == sorted(live)
+
+
+def test_operator_evidence_deselection_keeps_offline_execution_accountable(tmp_path, monkeypatch):
+    live, offline = aws_nonproduction_cases()
+    data = inventory([*live, *offline], "full")
+    inventory_path = tmp_path / "inventory.json"
+    inventory_path.write_text(json.dumps(data), encoding="utf-8")
+    reports = tmp_path / "reports"
+    monkeypatch.setattr("scripts.ci.REPORTS", reports)
+    captured = {}
+
+    def record(cases, exit_code):
+        def fake_call(command, cwd, env):
+            captured["command"] = command
+            results = next(part.split("=", 1)[1] for part in command if part.startswith("--ci-results="))
+            Path(results).write_text(json.dumps({
+                "group": "copilot", "exit_code": exit_code, "cases": cases,
+            }), encoding="utf-8")
+            return exit_code
+        return fake_call
+
+    monkeypatch.setattr("scripts.ci.subprocess.call", record(dict.fromkeys(offline, "passed"), 0))
+    assert run_group("copilot", inventory_path) == 0
+    deselected = [captured["command"][index + 1] for index, part in enumerate(captured["command"]) if part == "--deselect"]
+    assert deselected == sorted(live)
+    assert OPERATOR_EVIDENCE_FILE in captured["command"]
+    assert not set(offline).intersection(deselected)
+    passed = [
+        {"group": "copilot", "exit_code": 0, "cases": dict.fromkeys(offline, "passed")},
+        {"group": "dashboard", "exit_code": 0, "cases": {"src/test.ts::test": "passed"}},
+    ]
+    assert validate_gate(data, passed, "full", NEEDS) == len(offline)
+    monkeypatch.setattr("scripts.ci.subprocess.call", record({offline[0]: "skipped"}, 0))
+    assert run_group("copilot", inventory_path) == 1
+    with pytest.raises(ValueError, match="Failed, skipped"):
+        validate_gate(data, [{"group": "copilot", "exit_code": 0, "cases": {offline[0]: "skipped"}}, passed[1]], "full", NEEDS)
+    monkeypatch.setattr("scripts.ci.subprocess.call", record({offline[0]: "failed"}, 1))
+    assert run_group("copilot", inventory_path) == 1
+    with pytest.raises(ValueError, match="Failed, skipped"):
+        validate_gate(data, [{"group": "copilot", "exit_code": 1, "cases": {offline[0]: "failed"}}, passed[1]], "full", NEEDS)
 
 
 def test_junit_upload_removes_captured_output_and_redacts_tokens(tmp_path):

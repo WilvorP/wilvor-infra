@@ -88,12 +88,25 @@ def discover(profile, path):
     return 0
 
 
+def execution_selection(data, group):
+    """Return selected cases, their files, and excluded node IDs in those files."""
+    wanted = expected(data, group)
+    files = sorted({nodeid.split("::", 1)[0].replace("\\", "/") for nodeid in wanted})
+    present = set(files)
+    removed = sorted({
+        nodeid.replace("\\", "/")
+        for values in data["excluded"].values()
+        for nodeid in values
+        if nodeid.split("::", 1)[0].replace("\\", "/") in present
+    })
+    return wanted, files, removed
+
+
 def run_group(group, inventory_path):
     data = read(inventory_path)
-    wanted = expected(data, group)
-    if not wanted:
+    wanted, files, removed = execution_selection(data, group)
+    if not files:
         raise ValueError(f"No selected cases for {group}")
-    files = sorted({nodeid.split("::", 1)[0] for nodeid in wanted})
     directory = REPORTS / group
     directory.mkdir(parents=True, exist_ok=True)
     junit = directory / "junit.xml"
@@ -109,6 +122,7 @@ def run_group(group, inventory_path):
             "-q", "-ra", "--tb=short", "-p", "tests.ci_plugin",
             f"--ci-group={group}", f"--ci-expected={Path(inventory_path).resolve()}",
             f"--ci-results={directory / 'results.json'}", f"--junitxml={junit}",
+            *[part for nodeid in removed for part in ("--deselect", nodeid)],
             *coverage_args,
         ], cwd=ROOT, env=environment)
     finally:

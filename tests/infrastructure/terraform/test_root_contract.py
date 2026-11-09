@@ -30,6 +30,7 @@ EXPECTED_MODULES = {
     "recommendations": "../../modules/recommendations",
     "active_alerts": "../../modules/active_alerts",
     "operational_api": "../../modules/operational_api",
+    "ai_host": "../../modules/ai_host",
 }
 
 EXPECTED_OUTPUTS = {

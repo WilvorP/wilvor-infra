@@ -7,6 +7,22 @@ PIPELINES = frozenset({
     "projection", "recommendations", "risk", "runway_metadata", "sigmet", "taf",
 })
 CLI_FILE = "tests/infrastructure/terraform/test_terraform_cli.py"
+OPERATOR_EVIDENCE_FILE = "tests/contracts/test_sprint3d_aws_nonproduction.py"
+OPERATOR_EVIDENCE_EXCLUSION = "operator-evidence-live-aws"
+OPERATOR_EVIDENCE_TESTS = (
+    "test_sts_account_identity_is_the_reviewed_account_and_not_the_ai_role",
+    "test_ledger_table_schema_matches_the_agent_c_contract",
+    "test_aircraft_current_state_schema_matches_the_reviewed_mapping",
+    "test_deployed_ai_host_permissions_match_the_agent_c_matrix",
+    "test_ai_lambda_reserved_concurrency_remains_zero",
+    "test_post_ai_query_route_remains_absent",
+    "test_bounded_getitem_uses_operator_credentials_on_the_probe_key",
+    "test_unauthorized_live_mappings_are_denied_for_the_ai_role",
+    "test_operator_readonly_pass_is_not_production_and_not_an_ai_role_pass",
+)
+OPERATOR_EVIDENCE_NODEIDS = frozenset(
+    f"{OPERATOR_EVIDENCE_FILE}::{name}" for name in OPERATOR_EVIDENCE_TESTS
+)
 PR_EVENTS = ("opened", "synchronize", "reopened", "labeled", "unlabeled")
 PROFILE_EXPRESSION = "${{ github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'ci-full') && 'pr' || 'full' }}"
 
@@ -17,7 +33,10 @@ def profile_for_event(event_name, labels=()):
 
 
 def owner(nodeid):
-    file = nodeid.split("::", 1)[0].replace("\\", "/")
+    normalized = nodeid.replace("\\", "/")
+    if normalized in OPERATOR_EVIDENCE_NODEIDS:
+        return f"excluded:{OPERATOR_EVIDENCE_EXCLUSION}"
+    file = normalized.split("::", 1)[0]
     if file.startswith("tests/contracts/"):
         return "copilot"
     if file.startswith("tests/unit/"):
