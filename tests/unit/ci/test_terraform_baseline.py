@@ -33,20 +33,21 @@ def terraform_report(findings, **changes):
 
 def test_exact_baseline_passes_and_records_raw_findings():
     findings = reviewed()
+    reviewed_count = len(findings)
     policy = security.assess_terraform(findings)
-    assert len(findings) == policy["baseline_entries"] == policy["raw_findings"] == 99
+    assert len(findings) == policy["baseline_entries"] == policy["raw_findings"] == reviewed_count
     assert policy["decision"] == "deferred" and not policy["unexpected"] and not policy["resolved"]
     assert policy["risk_acceptance"] is False
     summary = security.validate_security_reports(bundle(terraform_report(findings)))
-    assert summary["raw_status"] == "findings" and summary["raw_exit"] == 1 and summary["raw_findings"] == 99
-    assert summary["deferred"] == 99 and summary["resolved"] == 0
+    assert summary["raw_status"] == "findings" and summary["raw_exit"] == 1 and summary["raw_findings"] == reviewed_count
+    assert summary["deferred"] == reviewed_count and summary["resolved"] == 0
 
 
 def test_resolved_finding_is_allowed_without_rewriting_the_baseline(tmp_path):
     before = security.TERRAFORM_BASELINE.read_bytes()
     findings = reviewed()[1:]
     policy = security.assess_terraform(findings)
-    assert policy["decision"] == "deferred" and len(policy["resolved"]) == 1 and len(policy["deferred"]) == 98
+    assert policy["decision"] == "deferred" and len(policy["resolved"]) == 1 and len(policy["deferred"]) == len(reviewed()) - 1
     security.validate_security_reports(bundle(terraform_report(findings)))
     assert security.TERRAFORM_BASELINE.read_bytes() == before
     assert not any(path == security.TERRAFORM_BASELINE for path in tmp_path.rglob("*"))
@@ -62,7 +63,7 @@ def test_new_terraform_finding_fails():
 def test_same_count_with_a_different_finding_fails():
     findings = reviewed()
     findings[-1] = {**findings[-1], "rule": "AWS-9999"}
-    assert len(findings) == 99
+    assert len(findings) == len(reviewed())
     policy = security.assess_terraform(findings)
     assert policy["decision"] == "failed" and policy["unexpected"] and len(policy["resolved"]) == 1
     with pytest.raises(ValueError, match="outside the temporary"):
@@ -100,7 +101,7 @@ def test_malformed_baseline_fails(monkeypatch, tmp_path, mutation):
     if mutation == "json":
         text = "{not json"
     elif mutation == "entries":
-        payload["entries"] = 98
+        payload["entries"] = len(reviewed()) - 1
         text = json.dumps(payload)
     elif mutation == "duplicate":
         payload["findings"].append(payload["findings"][0])
@@ -179,13 +180,14 @@ def test_policy_deferral_does_not_hide_or_rewrite_the_raw_scan(tmp_path, monkeyp
     before = security.TERRAFORM_BASELINE.read_bytes()
     assert security.run("terraform-security") == 0
     report = json.loads((tmp_path / "terraform-security" / "scan.json").read_text(encoding="utf-8"))
-    assert report["status"] == "findings" and report["exit_code"] == 1 and len(report["findings"]) == 99
-    assert report["policy"]["decision"] == "deferred" and report["policy"]["raw_findings"] == 99
+    reviewed_count = len(reviewed())
+    assert report["status"] == "findings" and report["exit_code"] == 1 and len(report["findings"]) == reviewed_count
+    assert report["policy"]["decision"] == "deferred" and report["policy"]["raw_findings"] == reviewed_count
     assert security.TERRAFORM_BASELINE.read_bytes() == before
     findings.append({"rule": "AWS-9999", "file": "modules/new.tf", "resource": "module.new", "line": 1, "severity": "HIGH"})
     assert security.run("terraform-security") == 1
     failed = json.loads((tmp_path / "terraform-security" / "scan.json").read_text(encoding="utf-8"))
-    assert failed["exit_code"] == 1 and len(failed["findings"]) == 100 and failed["policy"]["unexpected"]
+    assert failed["exit_code"] == 1 and len(failed["findings"]) == reviewed_count + 1 and failed["policy"]["unexpected"]
 
 
 def test_new_secret_candidate_fails_and_dependency_audits_stay_closed():
