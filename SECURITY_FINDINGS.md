@@ -232,7 +232,9 @@ separate baseline debt already present on `ci-step1` from any later regression.
 
 ### Temporary development deferral, 2026-11-07
 
-**Warning:** `security/terraform-security-baseline.json` is not a permanent replacement for infrastructure hardening. It does not accept security risk, does not clear production, and does not mean an infrastructure owner has reviewed these controls. The 99 findings remain unresolved: 2 high, 25 medium, and 72 low. They must be remediated or formally accepted after AI Copilot infrastructure development is finished.
+**Warning:** `security/terraform-security-baseline.json` is not a permanent replacement for infrastructure hardening. It does not accept security risk, does not clear production, and does not mean an infrastructure owner has reviewed these controls. The baseline now records 103 findings: 2 high, 26 medium, and 75 low. They must be remediated or formally accepted after AI Copilot infrastructure development is finished.
+
+On 2026-11-09, GitHub run `42557121579` reported 71 current Trivy findings, 5 of which were outside the 99-entry baseline. Four are the new `module.ai_host` resources and match controls already deferred above: CloudWatch log encryption (AWS-0017), Lambda X-Ray (AWS-0066), ledger point-in-time recovery left false on the disposable development table (AWS-0024), and DynamoDB encryption without a customer-managed key (AWS-0025). The fifth is the existing API Gateway stage access-log finding (AWS-0001), whose resource start moved from line 479 to line 488. No Terraform resource, Trivy ignore, or severity threshold was changed for these five. The ledger keeps AWS-owned encryption and point-in-time recovery disabled, as written for the disposable development root.
 
 Trivy 0.76.1 still scans every `envs/**/*.tf` and `modules/**/*.tf` file at every severity, with built-in rules and an empty ignore file. Its raw result stays in `scan.json` with status `findings`, exit 1, and all 99 finding records. The CI policy then compares those records to the baseline. A match lets the security job and the quality gate continue. The gate repeats that comparison itself and rejects a report whose policy block does not match the findings.
 
@@ -313,7 +315,7 @@ Exact source locations:
 | AWS-0066 | `modules/metar/processor.tf:114` | `module.metar` |
 | AWS-0024 | `modules/metar/tables.tf:35` | `module.metar` |
 | AWS-0025 | `modules/metar/tables.tf:1` | `module.metar` |
-| AWS-0001 | `modules/operational_api/api.tf:479` | `module.operational_api` |
+| AWS-0001 | `modules/operational_api/api.tf:488` | `module.operational_api` |
 | AWS-0017 | `modules/operational_api/api.tf:207` | `module.operational_api` |
 | AWS-0066 | `modules/operational_api/api.tf:310` | `module.operational_api` |
 | AWS-0017 | `modules/projection/processor.tf:218` | `module.projection` |

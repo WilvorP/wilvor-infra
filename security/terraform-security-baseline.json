@@ -5,7 +5,7 @@
   "purpose": "temporary-development-deferral",
   "risk_acceptance": false,
   "note": "Temporary development CI deferral. Not an infrastructure-owner risk acceptance and not production security clearance.",
-  "entries": 99,
+  "entries": 103,
   "findings": [
     {
       "rule": "AWS-0017",
@@ -33,6 +33,34 @@
       "file": "modules/active_alerts/tables.tf",
       "resource": "module.active_alerts",
       "line": 61,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0017",
+      "file": "modules/ai_host/lambda.tf",
+      "resource": "module.ai_host",
+      "line": 7,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0066",
+      "file": "modules/ai_host/lambda.tf",
+      "resource": "module.ai_host",
+      "line": 19,
+      "severity": "LOW"
+    },
+    {
+      "rule": "AWS-0024",
+      "file": "modules/ai_host/ledger.tf",
+      "resource": "module.ai_host",
+      "line": 26,
+      "severity": "MEDIUM"
+    },
+    {
+      "rule": "AWS-0025",
+      "file": "modules/ai_host/ledger.tf",
+      "resource": "module.ai_host",
+      "line": 29,
       "severity": "LOW"
     },
     {
@@ -361,7 +389,7 @@
       "rule": "AWS-0001",
       "file": "modules/operational_api/api.tf",
       "resource": "module.operational_api",
-      "line": 479,
+      "line": 488,
       "severity": "MEDIUM"
     },
     {

@@ -25,8 +25,8 @@ resource "aws_lambda_function" "host" {
   runtime          = "python3.12"
   # Task 2C diagnostic host size. Reserved concurrency stays 0 unless a
   # separately approved window raises it to 1. Production AI flags stay false.
-  memory_size      = 256
-  timeout          = 30
+  memory_size = 256
+  timeout     = 30
 
   # Closed by default. Zero concurrency rejects invokes before the handler.
   # There is no function URL and no API Gateway permission in this module.
