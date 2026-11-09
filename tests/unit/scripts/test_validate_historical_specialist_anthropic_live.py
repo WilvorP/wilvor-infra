@@ -1147,15 +1147,13 @@ def test_targeted_c_second_list_execution_remains_failure(runner: ModuleType):
     )
 
 
-def test_recorded_targeted_report_reevaluates_without_mutation(runner: ModuleType):
+def test_targeted_report_fixture_reevaluates_without_mutation(runner: ModuleType):
     path = (
         REPO_ROOT
-        / "test-results"
-        / "live-anthropic"
-        / "20260930T000804Z-targeted.json"
+        / "tests"
+        / "fixtures"
+        / "historical_targeted_retest_summary.json"
     )
-    if not path.is_file():
-        pytest.skip("recorded targeted artifact is not present")
     original = path.read_text(encoding="utf-8")
     payload = json.loads(original)
     assert payload["action"] == "run-targeted"

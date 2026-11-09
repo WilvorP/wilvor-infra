@@ -1,19 +1,16 @@
-import importlib
-import os
-import sys
-from pathlib import Path
+import pytest
 
 
-os.environ.setdefault("HAZARD_COORDINATES_TABLE_NAME", "test-hazard-coordinates")
-os.environ.setdefault("SCHEMA_VERSION", "wilvor.hazard_coordinates.v4.0")
-os.environ.setdefault("EVENT_BUS_NAME", "default")
-os.environ.setdefault("RETENTION_AFTER_VALID_TO_HOURS", "6")
-
-REPO_ROOT = Path(__file__).resolve().parents[3]
-MODULE_DIR = REPO_ROOT / "functions" / "weather" / "sigmet" / "hazard_coordinates_processor"
-sys.path.insert(0, str(MODULE_DIR))
-
-app = importlib.import_module("app")
+@pytest.fixture
+def app(load_repo_module, monkeypatch):
+    monkeypatch.setenv("HAZARD_COORDINATES_TABLE_NAME", "test-hazard-coordinates")
+    monkeypatch.setenv("SCHEMA_VERSION", "wilvor.hazard_coordinates.v4.0")
+    monkeypatch.setenv("EVENT_BUS_NAME", "default")
+    monkeypatch.setenv("RETENTION_AFTER_VALID_TO_HOURS", "6")
+    return load_repo_module(
+        "unit_sigmet_hazard_coordinates_processor_app",
+        "functions/weather/sigmet/hazard_coordinates_processor/app.py",
+    )
 
 
 class FakeBatchWriter:
@@ -82,7 +79,7 @@ def sample_raw_event(geometry):
     }
 
 
-def test_polygon_creates_required_coordinate_rows(monkeypatch):
+def test_polygon_creates_required_coordinate_rows(app, monkeypatch):
     fake_table = FakeHazardCoordinatesTable(existing_count=0)
     fake_events = FakeEventsClient()
 
@@ -155,7 +152,7 @@ def test_polygon_creates_required_coordinate_rows(monkeypatch):
     assert "valid_to_utc" in event_detail
 
 
-def test_multipolygon_preserves_polygon_ring_sequence(monkeypatch):
+def test_multipolygon_preserves_polygon_ring_sequence(app, monkeypatch):
     fake_table = FakeHazardCoordinatesTable(existing_count=0)
     fake_events = FakeEventsClient()
 
@@ -204,7 +201,7 @@ def test_multipolygon_preserves_polygon_ring_sequence(monkeypatch):
     assert all(item["geometry_type"] == "MULTIPOLYGON" for item in fake_table.items)
 
 
-def test_existing_materialization_upserts_rows_and_publishes_event(monkeypatch):
+def test_existing_materialization_upserts_rows_and_publishes_event(app, monkeypatch):
     fake_table = FakeHazardCoordinatesTable(existing_count=3)
     fake_events = FakeEventsClient()
 
@@ -234,7 +231,7 @@ def test_existing_materialization_upserts_rows_and_publishes_event(monkeypatch):
     assert "UPSERTED_EXISTING_VERSION" in fake_events.entries[0]["Detail"]
 
 
-def test_invalid_geometry_raises_permanent_error():
+def test_invalid_geometry_raises_permanent_error(app):
     raw_event = sample_raw_event(
         {
             "type": "LineString",

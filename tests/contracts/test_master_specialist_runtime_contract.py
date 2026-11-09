@@ -129,7 +129,7 @@ def _envelope(
         "identity": owner,
         "accepted_at_utc": ACCEPTED,
         "deadline_utc": DEADLINE,
-        "idempotency_key": "idempotency-1",
+        "idempotency_key": "test-idem",
         "max_model_turns": turns,
         "max_tool_calls": calls,
         "max_executions": executions,

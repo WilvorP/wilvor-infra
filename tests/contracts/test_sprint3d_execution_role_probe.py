@@ -79,6 +79,20 @@ def _run(sts: _Recorder, dynamodb: _Recorder, event: object | None = None, **kwa
     )
 
 
+def _drop_inherited_chain_fallbacks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Remove process chain-fallback variables for one assertion.
+
+    The offline runner sets AWS_SHARED_CREDENTIALS_FILE to os.devnull so SDK
+    tests cannot read a developer credentials file. That value is non-empty,
+    so credential_source_refusal correctly returns
+    credential_chain_fallback_refused before later checks. Clearing it here
+    does not change that refusal.
+    """
+
+    for name in probe._CHAIN_FALLBACK_ENV:
+        monkeypatch.delenv(name, raising=False)
+
+
 def _capture(backup: bytes) -> dict[str, object]:
     return {
         "function_name": window.FUNCTION_NAME,
@@ -367,7 +381,7 @@ def test_credential_factory_has_no_profile_or_assume_role_fallback(monkeypatch):
     monkeypatch.setenv("AWS_ROLE_ARN", "arn:aws:iam::396037508959:role/other")
     with pytest.raises(ContractValidationError, match="credential_chain_fallback_refused"):
         probe.build_execution_role_clients(os.environ)
-    monkeypatch.delenv("AWS_ROLE_ARN")
+    _drop_inherited_chain_fallbacks(monkeypatch)
     monkeypatch.delenv("AWS_LAMBDA_FUNCTION_NAME", raising=False)
     with pytest.raises(ContractValidationError, match="execution_role_function_required"):
         probe.build_execution_role_clients(os.environ)
@@ -396,6 +410,7 @@ def test_credential_factory_has_no_profile_or_assume_role_fallback(monkeypatch):
 def test_opened_handler_uses_the_injected_factory_and_still_withholds_safety_claims(monkeypatch, capsys):
     monkeypatch.setattr(probe, "PROBE_LIVE_CALLS_ENABLED", True)
     monkeypatch.delenv("AWS_PROFILE", raising=False)
+    _drop_inherited_chain_fallbacks(monkeypatch)
     monkeypatch.setenv("AWS_LAMBDA_FUNCTION_NAME", probe.FUNCTION_NAME)
     monkeypatch.setenv("AWS_REGION", probe.REGION)
     monkeypatch.setenv("AWS_DEFAULT_REGION", probe.REGION)

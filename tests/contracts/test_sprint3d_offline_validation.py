@@ -1490,7 +1490,7 @@ def test_native_live_ops_historical_and_decision_contracts():
             resource_id="historical.encounters",
             operation=ReadOperation.QUERY,
             arguments=(("window_label", "historical-window"),),
-            idempotency_key="idem-policy-hist-3d",
+            idempotency_key="idem-h3d",
         ),
     )
     issuer = LocalHarnessGrantIssuer(GrantEvaluationClock(datetime(2026, 1, 15, 0, 2, tzinfo=timezone.utc)))

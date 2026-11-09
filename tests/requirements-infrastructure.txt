@@ -1,4 +1,5 @@
 -r requirements-test.txt
 
 # HCL parsing for static Terraform contract assertions
-python-hcl2>=4.3
+# Pin the grammar/postlexer API used by tests.helpers.hcl_compat.
+python-hcl2==8.1.2

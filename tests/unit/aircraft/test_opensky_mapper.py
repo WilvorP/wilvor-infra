@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime, timezone
 
 import pytest
 
@@ -159,6 +160,13 @@ def test_map_raw_event_builds_canonical_current_state(
 ):
     monkeypatch.setattr(opensky_mapper, "now_epoch", lambda: 2_000_000_000)
 
+    class FixedDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime.fromtimestamp(2_000_000_000, tz=tz or timezone.utc)
+
+    monkeypatch.setattr(opensky_mapper, "datetime", FixedDatetime)
+
     item, reasons = opensky_mapper.map_raw_event_to_current_state(
         raw_opensky_event,
         ttl_seconds=900,
@@ -166,7 +174,7 @@ def test_map_raw_event_builds_canonical_current_state(
 
     assert reasons == []
     assert item is not None
-    assert item["icao24"] == "abc123"
+    assert item["aircraft_id"] == "abc123"
     assert item["callsign"] == "UAL123"
     assert item["schema_version"] == AIRCRAFT_CURRENT_STATE_SCHEMA_VERSION
     assert item["has_position"] is True
@@ -182,7 +190,7 @@ def test_map_raw_event_builds_canonical_current_state(
     assert item["vertical_rate_fpm"] == pytest.approx(
         2.5 * MPS_TO_FPM
     )
-    assert item["ttl_epoch"] == 2_000_000_900
+    assert item["expires_at_epoch"] == 2_000_000_900
 
 
 def test_map_raw_event_returns_reasons_instead_of_partial_item(

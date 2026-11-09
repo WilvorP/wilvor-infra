@@ -423,7 +423,7 @@ def _issued_envelope_placeholder() -> MasterExecutionGrantEnvelope:
         accepted_at_utc=ACCEPTED,
         deadline_utc=DEADLINE,
         expires_at_utc=DEADLINE,
-        idempotency_key="idem-placeholder-3d",
+        idempotency_key="idem-3d",
         max_model_turns=turns,
         max_tool_calls=calls,
         correlation_id="corr-placeholder-3d",

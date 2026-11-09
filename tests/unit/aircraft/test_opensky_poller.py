@@ -213,6 +213,8 @@ def test_publish_raw_records_builds_one_event_per_state(
         poll_id="poll-1",
         opensky_response=response,
         fetched_at_utc="2026-07-18T12:00:00+00:00",
+        raw_s3_bucket="test-aircraft-archive",
+        raw_s3_key="raw/source=opensky/synthetic-poll.json.gz",
     )
 
     assert published == 1
@@ -232,6 +234,8 @@ def test_publish_raw_records_builds_one_event_per_state(
     assert first_event["poll_id"] == "poll-1"
     assert first_event["raw_index"] == 0
     assert first_event["raw_state_vector"] == ["abc123"]
+    assert first_event["raw_s3_bucket"] == "test-aircraft-archive"
+    assert first_event["raw_s3_key"] == "raw/source=opensky/synthetic-poll.json.gz"
 
 
 def test_handler_success_returns_poll_summary(

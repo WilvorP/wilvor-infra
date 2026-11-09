@@ -71,5 +71,15 @@ export default defineConfig({
     setupFiles: ['./src/test/setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
     restoreMocks: true,
+    // Keep jsdom + V8 coverage within the CPU/memory budget of CI runners.
+    // Retain normal test deadlines; do not hide contention with retries.
+    maxWorkers: process.env.CI ? 2 : undefined,
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: ['src/**/*.test.{ts,tsx}', 'src/test/**', 'src/types/**', 'src/**/*.d.ts'],
+      reportsDirectory: '../test-results/ci/dashboard/coverage',
+      reporter: ['text-summary', 'json-summary', 'lcov', 'cobertura'],
+    },
   },
 });
