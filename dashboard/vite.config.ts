@@ -3,6 +3,22 @@ import { fileURLToPath, URL } from 'node:url';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
+function localDevProxyTarget(): string {
+  const raw = process.env.WILVOR_LOCAL_DEV_COPILOT_ORIGIN ?? 'http://127.0.0.1:8765';
+  const url = new URL(raw);
+
+  if (
+    url.protocol !== 'http:' ||
+    (url.hostname !== '127.0.0.1' && url.hostname !== 'localhost')
+  ) {
+    throw new Error(
+      'WILVOR_LOCAL_DEV_COPILOT_ORIGIN must be an http loopback origin.',
+    );
+  }
+
+  return url.origin;
+}
+
 export default defineConfig({
   plugins: [react()],
 
@@ -19,6 +35,12 @@ export default defineConfig({
     // producing opaque CORS errors against the real API.
     port: 5173,
     strictPort: true,
+    proxy: {
+      '/local-dev': {
+        target: localDevProxyTarget(),
+        changeOrigin: false,
+      },
+    },
   },
 
   preview: {

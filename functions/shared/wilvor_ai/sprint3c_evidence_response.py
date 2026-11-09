@@ -10,6 +10,10 @@ A receipt is accepted for this join only when its adapter identity matches
 the host-owned scoped-read adapter recorded on the consumed attempt and the
 I3 consumption identity equals the I5 invocation identity. Matching those
 ids is not source authentication.
+
+A Sprint 3D ``TrustedAwsSourceReceipt`` is not promoted here. This join does
+not read it as production MA4 admission, and it does not flip the closed
+admission constants.
 """
 
 from __future__ import annotations
@@ -92,6 +96,7 @@ from wilvor_ai.master_trusted_read_executor import (
     ReadReceiptCandidate,
 )
 from wilvor_ai.specialist_runtime_contracts import HistoricalSpecialistRunResult
+from wilvor_ai.sprint3d_source_evidence import TrustedAwsSourceReceipt
 
 
 SPRINT3C_EVIDENCE_RESPONSE_SCHEMA_VERSION = "wilvor.ai.sprint3c.evidence_response.v1"
@@ -182,6 +187,7 @@ class Sprint3cJoinDefect(str, Enum):
     QUERY_ID_ABSENT = "QUERY_ID_ABSENT"
     SOURCE_VERSION_MISMATCH = "SOURCE_VERSION_MISMATCH"
     FORGED_OR_UNTRUSTED_RECEIPT = "FORGED_OR_UNTRUSTED_RECEIPT"
+    TRUSTED_AWS_RECEIPT_NOT_3C_ADMISSION = "TRUSTED_AWS_RECEIPT_NOT_3C_ADMISSION"
     PRODUCTION_AUTHENTICITY_UNAVAILABLE = "PRODUCTION_AUTHENTICITY_UNAVAILABLE"
 
 
@@ -658,22 +664,25 @@ def join_sprint3c_evidence_response(payload: Sprint3cEvidenceResponseInput) -> S
             defects,
             authorization_bound=authorization_bound,
         )
-        host_evidence = integrate_host_read_evidence(
-            payload.read_receipt,
-            authorization,
-            local_host=payload.local_host,
-            expected_clocks=payload.expected_clocks,
-            expected_source_version=payload.expected_source_version,
-            expected_aircraft_id=_expected_aircraft(payload),
-            expected_step_id=payload.expected_step_id or attempt.step_id,
-            expected_tool_call_id=payload.expected_tool_call_id or attempt.tool_call_id,
-            untrusted_claim=payload.untrusted_claim,
-        )
-        provenance = _provenance_from_receipt(payload.read_receipt, authorization, attempt, defects)
-        _receipt_claim_defects(payload, host_evidence, defects)
-        if host_evidence.admission.admission_status is MasterAdmissionStatus.REJECTED:
-            if admission is None:
-                admission = host_evidence.admission
+        if type(payload.read_receipt) is TrustedAwsSourceReceipt:
+            host_evidence = None
+        else:
+            host_evidence = integrate_host_read_evidence(
+                payload.read_receipt,
+                authorization,
+                local_host=payload.local_host,
+                expected_clocks=payload.expected_clocks,
+                expected_source_version=payload.expected_source_version,
+                expected_aircraft_id=_expected_aircraft(payload),
+                expected_step_id=payload.expected_step_id or attempt.step_id,
+                expected_tool_call_id=payload.expected_tool_call_id or attempt.tool_call_id,
+                untrusted_claim=payload.untrusted_claim,
+            )
+            provenance = _provenance_from_receipt(payload.read_receipt, authorization, attempt, defects)
+            _receipt_claim_defects(payload, host_evidence, defects)
+            if host_evidence.admission.admission_status is MasterAdmissionStatus.REJECTED:
+                if admission is None:
+                    admission = host_evidence.admission
 
     native_inputs = _native_admission_inputs(payload, defects, native_limitations)
     if native_inputs:
@@ -762,6 +771,9 @@ def _bind_receipt(
     attempt = payload.consumed_attempt
     consumed_bound = authorization_bound
     adapter_accepted = False
+    if type(receipt) is TrustedAwsSourceReceipt:
+        defects.add(Sprint3cJoinDefect.TRUSTED_AWS_RECEIPT_NOT_3C_ADMISSION)
+        return False, False
     if type(receipt) is HostIssuedReadReceipt:
         defects.add(Sprint3cJoinDefect.LOCAL_ADAPTER_NOT_SCOPED_READ)
         if receipt.adapter_identity != attempt.adapter_identity:
@@ -1379,6 +1391,7 @@ def production_admission_gaps() -> tuple[str, ...]:
         "geospatial polygon proof is unresolved",
         "Decision host proofs remain unissued",
         "Historical native correlation fields remain absent",
+        "sprint3c join does not promote a TrustedAwsSourceReceipt",
     )
 
 

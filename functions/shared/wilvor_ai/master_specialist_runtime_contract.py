@@ -305,6 +305,7 @@ DECISION_TOOLS_RUNTIME_FIELDS = (
     "now_epoch",
     "query_timestamp_utc",
     "correlation_id",
+    "context_builder",
 )
 DECISION_NATIVE_REQUEST_TYPE = "DecisionSpecialistRequest"
 HISTORICAL_FINALIZATION_ENTRYPOINT = "finalize_historical_specialist_run"

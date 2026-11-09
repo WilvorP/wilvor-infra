@@ -732,8 +732,9 @@ def authority_from_durable_attempt(
 class Sprint3CNativeSpecialistOrchestrator:
     """Dispatch one retained specialist after consumed grant and current fence.
 
-    Live Ops is the only specialist that calls native ``run`` in this slice.
-    Historical and Decision stop at correlation and target-proof gates.
+    Live Ops calls native ``run`` here. Historical correlation and Decision
+    target resolution stay closed in this module. Sprint 3D reserves the same
+    consumed fence, then calls those specialists from its own module.
     """
 
     def __init__(
@@ -915,6 +916,53 @@ class Sprint3CNativeSpecialistOrchestrator:
         if resolution.host_proofs_satisfied != ():
             _fail("caller_proof_not_host_issued")
         return Sprint3CDecisionNativePath(identity=identity, resolution=resolution)
+
+    def reserve_native_dispatch(
+        self,
+        invocation: MasterInvocationAuthorization,
+        authority: Sprint3CConsumedDispatchAuthority,
+        *,
+        expected: MasterSpecialist,
+        now_utc: str,
+    ) -> tuple[Sprint3CBoundInvocationIdentity, BoundedDispatchContext]:
+        """Consume the grant and current fence. This does not call a specialist."""
+
+        return self._admit(
+            invocation,
+            authority,
+            expected=expected,
+            now_utc=now_utc,
+        )
+
+    def reject_closed_before_native_run(
+        self,
+        identity: Sprint3CBoundInvocationIdentity,
+        *,
+        now_utc: str,
+        cancelled: Callable[[], bool] | None = None,
+        deadline_epoch: int | None = None,
+        observed_epoch: int | None = None,
+    ) -> None:
+        """Reject an expired or cancelled dispatch before a specialist runs."""
+
+        if not isinstance(identity, Sprint3CBoundInvocationIdentity):
+            _fail("request_identity_mismatch")
+        if now_utc >= identity.deadline_utc:
+            _fail("deadline_expired")
+        if cancelled is not None:
+            if not callable(cancelled):
+                _fail("invalid_cancelled")
+            try:
+                cancelled_now = cancelled()
+            except Exception as exc:
+                raise ContractValidationError("schedule_cancelled") from exc
+            if cancelled_now is True:
+                _fail("schedule_cancelled")
+        if deadline_epoch is not None or observed_epoch is not None:
+            if type(deadline_epoch) is not int or type(observed_epoch) is not int:
+                _fail("deadline_expired")
+            if observed_epoch >= deadline_epoch:
+                _fail("deadline_expired")
 
     def _admit(
         self,

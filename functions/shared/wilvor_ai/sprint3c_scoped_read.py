@@ -1685,6 +1685,36 @@ def _jsonable(value: object) -> object:
     return str(value)
 
 
+def plan_server_owned_aws_read(
+    resource_id: str,
+    operation: ReadOperation,
+    executed: dict[str, object],
+) -> AwsReadPlan:
+    """Build the server key and limit for one allowlisted read.
+
+    The logical resource id is the allowlist id. It is not a caller-selected
+    physical table, an ARN, or permission to scan.
+    """
+
+    if type(executed) is not dict:
+        raise ContractValidationError("invalid_executed_arguments")
+    return _plan_from_executed(resource_id, operation, executed)
+
+
+def interpret_server_owned_aws_page(
+    response: object,
+    plan: AwsReadPlan,
+    *,
+    now_utc: str,
+    row_limit: int,
+) -> NonproductionReadPage:
+    """Translate one DynamoDB response into a page. Not a source receipt."""
+
+    if type(plan) is not AwsReadPlan:
+        raise ContractValidationError("invalid_read_plan")
+    return _page_from_response(response, plan, now_utc=now_utc, row_limit=row_limit)
+
+
 def supported_read_catalog() -> dict[str, tuple[tuple[str, str], ...]]:
     """Published allowlisted tool/resource/operation pairs. Scan is absent."""
 
@@ -1726,7 +1756,9 @@ __all__ = [
     "Sprint3CScopedReadPort",
     "bind_offline_aws_read_client",
     "describe_consumed_attempt_read_binding",
+    "interpret_server_owned_aws_page",
     "issue_production_scoped_aws_read",
     "open_production_scoped_aws_read",
+    "plan_server_owned_aws_read",
     "supported_read_catalog",
 ]

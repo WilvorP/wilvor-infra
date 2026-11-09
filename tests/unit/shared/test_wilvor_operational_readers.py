@@ -728,6 +728,39 @@ def test_page_helpers_remain_bounded_after_drain_additions():
     assert table.calls[0][1]["Limit"] == 20
 
 
+def test_keyed_live_ops_page_helpers_use_gsi_and_limit():
+    table = RecordingTable([{"Items": [{"encounter_id": "enc-1"}]}])
+
+    encounter_page = readers.query_encounter_candidates_by_aircraft_page(
+        table,
+        "ac1",
+        limit=25,
+        key=Key,
+        attr=Attr,
+    )
+    projection_page = readers.query_projection_candidates_by_aircraft_page(
+        RecordingTable([{"Items": [{"projection_id": "p1"}]}]),
+        "ac1",
+        now_epoch=NOW,
+        limit=25,
+        key=Key,
+        attr=Attr,
+    )
+    coordinate_page = readers.query_hazard_coordinate_rows_page(
+        RecordingTable([{"Items": [{"sequence_number": 0}]}]),
+        "H1#v1",
+        limit=25,
+        key=Key,
+    )
+
+    assert encounter_page["items"] == [{"encounter_id": "enc-1"}]
+    assert table.calls[0][1]["IndexName"] == readers.IDX_ENCOUNTER_AIRCRAFT_TIME
+    assert table.calls[0][1]["Limit"] == 25
+    assert projection_page["items"] == [{"projection_id": "p1"}]
+    assert coordinate_page["items"] == [{"sequence_number": 0}]
+    assert "scan" not in {call[0] for call in table.calls}
+
+
 def test_hazard_encounter_query_honors_injected_query_all():
     captured = []
 

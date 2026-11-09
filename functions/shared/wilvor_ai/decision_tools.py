@@ -174,6 +174,7 @@ class DecisionToolsRuntime:
     now_epoch: int
     query_timestamp_utc: str
     correlation_id: str | None = None
+    context_builder: Any = None
 
     def __post_init__(self) -> None:
         if self.tables is None:
@@ -299,6 +300,7 @@ def _execute(
             now_epoch=runtime.now_epoch,
             tool_call_id=tool_call_id,
             correlation_id=runtime.correlation_id,
+            context_builder=runtime.context_builder,
         )
         aircraft_id = arguments["aircraft_id"]
         if tool_name == "get_current_decision_context":

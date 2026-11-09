@@ -3,7 +3,12 @@ import { render, type RenderResult } from '@testing-library/react';
 import type { ReactElement, ReactNode } from 'react';
 import type { Mock } from 'vitest';
 
+import { AiProvider } from '@/api/AiProvider';
 import { ApiProvider } from '@/api/ApiProvider';
+import {
+  createDisabledCopilotQueryClient,
+  type CopilotQueryClient,
+} from '@/api/aiClient';
 import type { OperationalApiClient } from '@/api/operationalApi';
 
 /**
@@ -43,6 +48,7 @@ export type StubApiClient = {
 export interface RenderOptions {
   client?: StubApiClient;
   queryClient?: QueryClient;
+  aiClient?: CopilotQueryClient;
 }
 
 export function renderWithProviders(
@@ -51,11 +57,14 @@ export function renderWithProviders(
 ): RenderResult {
   const queryClient = options.queryClient ?? createTestQueryClient();
   const client = (options.client ?? {}) as OperationalApiClient;
+  const aiClient = options.aiClient ?? createDisabledCopilotQueryClient();
 
   function Wrapper({ children }: { children: ReactNode }) {
     return (
       <QueryClientProvider client={queryClient}>
-        <ApiProvider client={client}>{children}</ApiProvider>
+        <ApiProvider client={client}>
+          <AiProvider client={aiClient}>{children}</AiProvider>
+        </ApiProvider>
       </QueryClientProvider>
     );
   }

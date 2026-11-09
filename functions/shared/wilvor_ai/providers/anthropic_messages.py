@@ -29,6 +29,7 @@ from wilvor_ai.providers.errors import (
     ModelProviderMalformedDecisionError,
 )
 from wilvor_ai.providers.instructions import resolve_instruction
+from wilvor_ai.providers.master_instructions import MASTER_PLANNING_INSTRUCTION_REF
 from wilvor_ai.specialist_contracts import UnsupportedReason
 from wilvor_ai.tool_schema import FORBIDDEN_TOOL_SCHEMA_FIELD_NAMES, ToolSchema
 
@@ -242,6 +243,10 @@ def build_messages_kwargs(request: ModelTurnRequest, model_id: str) -> dict[str,
 
     if not isinstance(request, ModelTurnRequest):
         raise TypeError("request must be a ModelTurnRequest")
+    if request.instruction_ref == MASTER_PLANNING_INSTRUCTION_REF:
+        from wilvor_ai.sprint5_master_planning import build_master_planning_messages_kwargs
+
+        return build_master_planning_messages_kwargs(request, model_id)
     messages: list[dict[str, object]] = [
         {
             "role": "user",
@@ -481,12 +486,44 @@ class AnthropicMessagesModelProvider:
     def model_id(self) -> str:
         return self._model_id
 
-    def complete(self, request: ModelTurnRequest) -> ModelDecision:
-        """Return exactly one ModelDecision for this reconstructed turn."""
+    def complete(self, request: ModelTurnRequest) -> object:
+        """Return a ModelDecision, or a Master route-proposal mapping."""
 
         kwargs = build_messages_kwargs(request, self._model_id)
         response = self._client.messages_create(**kwargs)
+        if request.instruction_ref == MASTER_PLANNING_INSTRUCTION_REF:
+            return parse_master_messages_response(response, self._model_id)
         return parse_messages_response(response, self._model_id)
+
+
+def parse_master_messages_response(response: object, expected_model_id: str) -> object:
+    """Parse Master planning JSON. TOOL_CALLS are forbidden."""
+
+    from wilvor_ai.sprint5_master_planning import parse_master_planning_text_blocks
+
+    payload = _require_mapping(response, "malformed_content")
+    _validate_envelope(payload, expected_model_id)
+    stop_reason = payload.get("stop_reason")
+    if not isinstance(stop_reason, str) or not stop_reason:
+        raise _malformed("unexpected_stop_reason")
+    if stop_reason == "refusal":
+        if "content" in payload:
+            _content_blocks(payload)
+        return ModelDecision(
+            kind=ModelDecisionKind.REFUSAL,
+            refusal_code=REFUSAL_PROVIDER,
+        )
+    if stop_reason == "model_context_window_exceeded":
+        raise ModelProviderContextLengthError("model_context_window_exceeded")
+    if stop_reason in {"max_tokens", "stop_sequence", "pause_turn"}:
+        raise _malformed(
+            "stop_sequence_not_configured" if stop_reason == "stop_sequence" else stop_reason
+        )
+    if stop_reason == "tool_use":
+        raise _malformed("master_planner_tools_rejected")
+    if stop_reason != "end_turn":
+        raise _malformed("unexpected_stop_reason")
+    return parse_master_planning_text_blocks(_content_blocks(payload))
 
 
 __all__ = [
@@ -498,6 +535,7 @@ __all__ = [
     "AnthropicMessagesClient",
     "AnthropicMessagesModelProvider",
     "build_messages_kwargs",
+    "parse_master_messages_response",
     "parse_messages_response",
     "terminal_decision_json_schema",
     "tool_def_from_schema",

@@ -8,6 +8,7 @@ Narrow risk and recommendation tools project that same mapped chain.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any
 
@@ -102,6 +103,7 @@ class DecisionContextCall:
     now_epoch: int
     tool_call_id: str
     correlation_id: str | None = None
+    context_builder: Callable[..., Any] | None = None
 
     def __post_init__(self) -> None:
         if type(self.now_epoch) is not int:
@@ -198,7 +200,8 @@ def _load_mapped(
         raise TypeError("call must be DecisionContextCall")
     as_of_utc = context._epoch_to_utc_z(call.now_epoch)
     try:
-        operational = context.build_aircraft_operational_context(
+        builder = call.context_builder or context.build_aircraft_operational_context
+        operational = builder(
             call.tables,
             aircraft_id,
             now_epoch=call.now_epoch,
