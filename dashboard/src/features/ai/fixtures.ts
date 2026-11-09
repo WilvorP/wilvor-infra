@@ -2,13 +2,17 @@ import {
   COPILOT_SESSION_QUERY_SCHEMA,
   INJECTED_COPILOT_STANDING,
   LIVE_OPS_COMPLETENESS_NOTICE,
+  LOCAL_DEV_PREVIEW_STANDING,
   MASTER_RESPONSE_STATUS_TEXT,
+  OPERATOR_AUTHENTICATED_DEV,
   REQUIRED_LIMITATION_CODES,
   ROUTE_DISABLED_NOTICE,
+  type CopilotDeveloperPreview,
+  type CopilotDeveloperToolResult,
+  type CopilotEvidenceItem,
   type CopilotLimitationCode,
   type CopilotQueryRequest,
   type CopilotQueryResult,
-  type CopilotEvidenceItem,
   type MasterResponsePolicyState,
 } from '@/api/aiContracts';
 
@@ -205,5 +209,115 @@ export function emptyEvidenceResult(
     pageEmpty: true,
     truncated: false,
     hasMore: false,
+  };
+}
+
+export function developerTool(
+  overrides: Partial<CopilotDeveloperToolResult> = {},
+): CopilotDeveloperToolResult {
+  return {
+    toolName: 'get_aircraft_operational_context',
+    toolCallId: 'tool-aircraft-1',
+    status: 'SUCCESS',
+    recordState: 'PRESENT',
+    aircraftId: '407d6c',
+    callsign: 'UAL407',
+    positionTimeUtc: '2026-11-07T17:48:18Z',
+    freshnessStatus: 'FRESH',
+    observations: [
+      { field: 'latitude', label: 'Latitude', value: '37.62' },
+      { field: 'longitude', label: 'Longitude', value: '-122.38' },
+      { field: 'baro_altitude_ft', label: 'Baro altitude ft', value: '35000' },
+    ],
+    encounterCandidateCount: null,
+    asOfUtc: '2026-11-07T18:00:05Z',
+    sourceName: 'wilvor-dev-aircraft-current-state',
+    limitations: ['SOURCE_AUTHENTICITY_NOT_ESTABLISHED'],
+    ...overrides,
+  };
+}
+
+export function encounterTool(
+  overrides: Partial<CopilotDeveloperToolResult> = {},
+): CopilotDeveloperToolResult {
+  return developerTool({
+    toolName: 'search_current_encounters',
+    toolCallId: 'tool-encounter-1',
+    recordState: 'UNKNOWN',
+    callsign: null,
+    positionTimeUtc: null,
+    freshnessStatus: null,
+    observations: [],
+    encounterCandidateCount: 0,
+    asOfUtc: null,
+    sourceName: 'wilvor-dev-aircraft-hazard-encounter',
+    ...overrides,
+  });
+}
+
+export function developerPreview(
+  overrides: Partial<CopilotDeveloperPreview> = {},
+): CopilotDeveloperPreview {
+  return {
+    notProduction: true,
+    evidenceProvenance: OPERATOR_AUTHENTICATED_DEV,
+    sourceAuthenticity: 'NOT_ESTABLISHED',
+    claimsAdmitted: false,
+    notice:
+      'NOT PRODUCTION. This is a loopback developer preview. POST /ai/query stays disabled. Claims are not admitted and source authenticity is not established.',
+    answer: 'DIAGNOSTIC_NARRATIVE_ONLY. This narrative must not replace the Copilot answer.',
+    specialistStatusText:
+      'Deterministic renderer output for local verification only.',
+    routeStatus: 'AUTHORIZED_PLAN',
+    routeKinds: ['LIVE_OPS_ANSWER'],
+    terminalDecision: 'PLAN_COMPLETE',
+    specialists: ['LIVE_OPS'],
+    blockedSpecialists: [
+      {
+        specialist: 'DECISION',
+        reason: 'Decision specialist was not executed.',
+      },
+      {
+        specialist: 'HISTORICAL_ANALYTICS',
+        reason: 'Historical specialist was not executed. No Athena query was issued.',
+      },
+    ],
+    toolResults: [],
+    awsOperations: [],
+    modelOperations: [],
+    principalLabel: null,
+    missingEvidence: [],
+    staleEvidence: [],
+    partialEvidence: [],
+    toolErrors: [],
+    modelErrors: [],
+    ...overrides,
+  };
+}
+
+export function localPreviewResult(
+  request: CopilotQueryRequest = testRequest(),
+  previewOverrides: Partial<CopilotDeveloperPreview> = {},
+  options: {
+    state?: MasterResponsePolicyState;
+    evidence?: readonly CopilotEvidenceItem[];
+  } = {},
+): CopilotQueryResult {
+  const evidence = options.evidence ?? [];
+  const extraLimitations: CopilotLimitationCode[] =
+    evidence.length > 0 ? ['SUPPLIED_EVIDENCE_NOT_AUTHENTICATED'] : [];
+
+  return {
+    ...baseResult(
+      request,
+      options.state ?? 'INSUFFICIENT_EVIDENCE',
+      extraLimitations,
+    ),
+    standing: LOCAL_DEV_PREVIEW_STANDING,
+    evidence,
+    pageEmpty: evidence.length === 0,
+    truncated: false,
+    hasMore: false,
+    developerPreview: developerPreview(previewOverrides),
   };
 }

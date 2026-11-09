@@ -104,3 +104,104 @@
   max-width: 60ch;
   line-height: var(--wv-leading-normal);
 }
+
+.previewWrap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wv-space-3);
+  padding: var(--wv-space-4);
+  border: 1px solid var(--wv-border-strong);
+  border-radius: var(--wv-radius-sm);
+  background-color: var(--wv-surface-1);
+}
+
+.previewHeading {
+  margin: 0;
+  font-size: var(--wv-text-2xs);
+  font-weight: var(--wv-weight-semibold);
+  letter-spacing: var(--wv-tracking-wide);
+  text-transform: uppercase;
+  color: var(--wv-text-secondary);
+}
+
+.previewCaution,
+.previewDetail {
+  margin: 0;
+  font-size: var(--wv-text-xs);
+  line-height: var(--wv-leading-normal);
+}
+
+.previewCaution {
+  color: var(--wv-text-secondary);
+}
+
+.previewDetail {
+  color: var(--wv-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.previewEntity {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wv-space-2);
+  padding: var(--wv-space-3);
+  border: 1px solid var(--wv-border);
+  border-radius: var(--wv-radius-xs);
+  background-color: var(--wv-surface-2);
+}
+
+.previewEntityTitle {
+  margin: 0;
+  font-size: var(--wv-text-sm);
+  font-weight: var(--wv-weight-semibold);
+  color: var(--wv-text-primary);
+}
+
+.previewFields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--wv-space-2) var(--wv-space-4);
+  margin: 0;
+}
+
+.previewLayers {
+  display: flex;
+  flex-direction: column;
+  gap: var(--wv-space-3);
+  margin: 0;
+}
+
+.previewField dt,
+.previewLayers dt {
+  font-size: var(--wv-text-2xs);
+  font-weight: var(--wv-weight-semibold);
+  letter-spacing: var(--wv-tracking-wide);
+  text-transform: uppercase;
+  color: var(--wv-text-tertiary);
+}
+
+.previewField dd,
+.previewLayers dd {
+  margin: var(--wv-space-1) 0 0;
+  font-size: var(--wv-text-xs);
+  line-height: var(--wv-leading-normal);
+  color: var(--wv-text-primary);
+  overflow-wrap: anywhere;
+}
+
+.previewTechnical {
+  font-size: var(--wv-text-2xs);
+  color: var(--wv-text-tertiary);
+}
+
+.previewTechnical summary {
+  cursor: pointer;
+  color: var(--wv-text-secondary);
+}
+
+.previewTechnical p,
+.previewTechnical li {
+  margin: var(--wv-space-2) 0 0;
+  line-height: var(--wv-leading-normal);
+  overflow-wrap: anywhere;
+}
