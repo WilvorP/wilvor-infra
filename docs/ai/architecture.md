@@ -1,9 +1,9 @@
 # AI system architecture
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws5-ai-copilot`
+**Historical verification:** `8abd2d5` on `docs/ws5-ai-copilot`. Not verification of the current tree.
 **Maturity:** CODE, CONTRACT, LIVE
-**Production authorization:** `MasterRouteExecutionAuthority.DENIED`; `MasterProductionAuthority.DENIED`; no Agent API, `/ai` route, or Terraform AI wiring found
+**Production authorization:** `MasterRouteExecutionAuthority.DENIED`; `MasterProductionAuthority.DENIED`; `envs/dev` keeps `enable_ai_query_route = false` and `module.ai_host` `enable_invoke = false`
 
 ## Purpose
 
@@ -14,16 +14,17 @@ This page distinguishes the three `MasterSpecialist` implementations from Master
 | Question | Result | Source |
 | --- | --- | --- |
 | Code | CODE | `functions/shared/wilvor_ai/` (`LiveOpsSpecialist`, `HistoricalAnalyticsSpecialist`, `DecisionSpecialist`, `master_*.py`) |
-| Terraform | TF absent at `8abd2d5` (search: `envs/dev`, `envs/dev-historical-data`, and `modules/**/*.tf` for `wilvor_ai`, `bedrock`, `agent_api`) | named search |
+| Terraform | TF for a closed AI host; no Agent API route in `envs/dev` | `envs/dev/main.tf` (`module.ai_host`, `enable_invoke = false`, `enable_ai_query_route = false`); `modules/ai_host/iam.tf` (`DenyModelSecretsAndInvoke` denies `bedrock:*`) |
 | Unit tests | UNIT for Historical and Decision operator-harness dry-run modules; Live Ops harness tests are CONTRACT; specialist behavior is under `tests/contracts/` | `tests/unit/scripts/test_validate_historical_specialist_anthropic_live.py`; `tests/unit/scripts/test_validate_decision_specialist_anthropic_live.py`; `tests/contracts/test_live_ops_anthropic_live_harness.py` |
-| Contract tests | CONTRACT | `tests/contracts/test_*.py` (117 files at this commit) |
-| Infrastructure tests | none found at `8abd2d5` (search: `tests/infrastructure/` for `wilvor_ai`) | named search |
-| Integration tests | none found at `8abd2d5` (search: `tests/integration/` for `wilvor_ai`) | named search |
+| Contract tests | CONTRACT | `tests/contracts/test_*.py`. The count 117 is a historical observation at `8abd2d5`, not a current inventory. |
+| Infrastructure tests | Historical observation at `8abd2d5`: a search of `tests/infrastructure/` for `wilvor_ai` found none. That search is not verification of the current code. `tests/infrastructure/terraform/test_sprint3d_ai_host.py` asserts the closed host. | historical search; `tests/infrastructure/terraform/test_sprint3d_ai_host.py` |
+| Integration tests | Historical observation at `8abd2d5`: a search of `tests/integration/` for `wilvor_ai` found none. That search is not verification of the current code. | named historical search |
 | Live harness | LIVE | `scripts/validate_live_ops_specialist_anthropic_live.py`; `scripts/validate_historical_specialist_anthropic_live.py`; `scripts/validate_decision_specialist_anthropic_live.py` |
 | Current live pass | UNKNOWN | this documentation task did not run a provider or AWS harness |
 | Deployment | UNKNOWN | no apply record or account observation is cited |
 | Production authorization | `DENIED` | `functions/shared/wilvor_ai/master_routing.py` (`MasterRouteExecutionAuthority`); `functions/shared/wilvor_ai/master_contracts.py` (`MasterProductionAuthority`) |
-| Agent API | absent at `8abd2d5` (search: `functions/operational_api` for `"/ai"`; `dashboard/src/routes/routeDefinitions.ts`; Terraform as above) | named search |
+| Agent API | absent while the dev flag is false | `envs/dev/main.tf` (`enable_ai_query_route = false`); `modules/operational_api/api.tf` (`aws_apigatewayv2_route.ai_query` count) |
+| Dashboard Copilot | CODE, production AI inactive | `dashboard/src/routes/routeDefinitions.ts` (`/copilot`) |
 
 ## Behavior
 
@@ -67,7 +68,7 @@ flowchart LR
   Auth -.->|"planning binding only"| Bind
 ```
 
-Caption: verified at `8abd2d5`. Solid edge: `authorize_route` returns `MasterRouteExecutionAuthority` (source: `functions/shared/wilvor_ai/master_routing.py`). Dotted edge: planned path; `MasterSpecialistAdapterDescriptor` is a planning binding and nothing on the object can be called to run a specialist (source: `functions/shared/wilvor_ai/master_specialist_adapters.py`, `MasterSpecialistAdapterDescriptor`). No specialist invocation edge is drawn.
+Caption: historical verification at `8abd2d5`. Not verification of the current code. Solid edge: `authorize_route` returns `MasterRouteExecutionAuthority` (source: `functions/shared/wilvor_ai/master_routing.py`). Dotted edge: planned path; `MasterSpecialistAdapterDescriptor` is a planning binding and nothing on the object can be called to run a specialist (source: `functions/shared/wilvor_ai/master_specialist_adapters.py`, `MasterSpecialistAdapterDescriptor`). No specialist invocation edge is drawn.
 
 ```mermaid
 sequenceDiagram
@@ -76,7 +77,7 @@ sequenceDiagram
   Note over Plan, Auth: DENIED. Production execution is not representable. Do not add a specialist call here.
 ```
 
-Caption: shape required while `MasterRouteExecutionAuthority` has only `DENIED`. Source: `functions/shared/wilvor_ai/master_routing.py`, `MasterRouteExecutionAuthority`. Verified at `8abd2d5`.
+Caption: shape required while `MasterRouteExecutionAuthority` has only `DENIED`. Source: `functions/shared/wilvor_ai/master_routing.py`, `MasterRouteExecutionAuthority`. Historical verification at `8abd2d5`. Not verification of the current code.
 
 ## Interfaces
 
@@ -96,14 +97,14 @@ Catalog names were checked against exported catalogs and `READ_ONLY_TOOL_NAMES_B
 
 - Master execution authority is `DENIED`. Production authority is `DENIED`. Source authenticity is `NOT_ESTABLISHED`. Request coverage is `NOT_ESTABLISHED` (source: `functions/shared/wilvor_ai/master_routing.py`; `functions/shared/wilvor_ai/master_contracts.py`; `functions/shared/wilvor_ai/master_evidence_admission.py`).
 - No production specialist dispatch is authorized by offline contracts. Adapter code must not dispatch from `CONTRACT_READY_FOR_FUTURE_INTEGRATION` (source: `functions/shared/wilvor_ai/MA5_MA7_INTERFACE_CONTRACT.md`, section 11.4; `functions/shared/wilvor_ai/master_execution_preflight.py`).
-- An Agent API, API Gateway `/ai` route, dashboard `/ai` surface, and Terraform `wilvor_ai` / Bedrock wiring were not found at `8abd2d5`. Search scopes are in Implementation status.
-- `modules/historical_analytics/iam.tf` describes an unattached query policy for a future Agent API. That policy is not an execution principal (source: `modules/historical_analytics/iam.tf`).
+- `POST /ai/query` stays uncreated in `envs/dev`. The dashboard has `/copilot` and no `/ai` path. `/copilot` does not activate production AI.
+- `modules/historical_analytics` does not attach `aws_iam_policy.query`. `envs/dev` attaches that policy once to `module.ai_host.role_name` while `enable_invoke = false`. The attachment is not an Agent API principal and is not production execution (source: `envs/dev/main.tf`, `aws_iam_role_policy_attachment.ai_host_historical_analytics_query`; tests: `tests/infrastructure/terraform/test_historical_analytics_query_iam_contract.py`, `test_policy_is_disposable_and_not_on_operational_api_or_data_plane`).
 - LIVE records harness files. A current live pass is UNKNOWN. Stored live JSON artifacts, when cited in older README text, are historical evidence of a past run and are not a new pass (source: `functions/shared/wilvor_ai/README.md`).
 - This page does not certify that any AWS account matches the repository.
 
 ## Historical record
 
-No superseded statement is stored on this page. Stale current-status sentences that previously lived in `functions/shared/wilvor_ai/README.md` (Master Agent and Live Ops Expert described as unimplemented after those modules existed) are recorded on that README under Historical record.
+An earlier revision said Terraform AI wiring, a dashboard `/ai` surface, and an unattached query policy were absent at `8abd2d5`. Current text follows `module.ai_host`, `enable_ai_query_route = false`, `/copilot`, and the dev-root attachment of the historical query policy to the closed AI host role. Stale package-README sentences remain on `functions/shared/wilvor_ai/README.md` under Historical record.
 
 ## Sources
 

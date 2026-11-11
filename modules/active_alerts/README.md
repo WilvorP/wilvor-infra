@@ -1,7 +1,7 @@
 # Active alerts
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws3-processing-api`
+**Historical verification:** `8abd2d5` on `docs/ws3-processing-api`. Not verification of the current tree.
 **Maturity:** CODE, TF, UNIT
 **Production authorization:** no grant found in `functions/active_alerts/processor/app.py`. Alert rows are deduplicated operational awareness state, not ATC instructions and not mutations of deterministic risk or recommendations by an AI path.
 

@@ -1,7 +1,7 @@
 # Live Operations Specialist
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws5-ai-copilot`
+**Historical verification:** `8abd2d5` on `docs/ws5-ai-copilot`. Not verification of the current tree.
 **Maturity:** CODE, CONTRACT, LIVE
 **Production authorization:** `MasterRouteExecutionAuthority.DENIED`; `AgentAuthorityMode.READ_ONLY_ADVISORY` is not source-read permission
 
@@ -14,7 +14,7 @@ This page describes the Live Operations Specialist implementation, its eight-too
 | Question | Result | Source |
 | --- | --- | --- |
 | Code | CODE | `functions/shared/wilvor_ai/live_ops_specialist.py` (`LiveOpsSpecialist`) |
-| Terraform | TF absent at `8abd2d5` (search: `*.tf` for `wilvor_ai`, `bedrock`, `LiveOpsSpecialist`) | named search |
+| Terraform | TF for a closed host; this specialist is not dispatched | `envs/dev/main.tf` (`module.ai_host`, `enable_invoke = false`); `modules/ai_host/iam.tf` denies `bedrock:*` |
 | Unit tests | none found under `tests/unit/` for this specialist | named search |
 | Contract tests | CONTRACT | `tests/contracts/test_live_ops_specialist_orchestration.py`; `tests/contracts/test_live_ops_tools.py`; `tests/contracts/test_live_ops_evidence_verifier.py`; related `test_live_ops_*.py` |
 | Infrastructure tests | none found | named search |

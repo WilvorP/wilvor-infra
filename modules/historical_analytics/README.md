@@ -1,9 +1,9 @@
 # Historical analytics foundation (Phase 2A.2d)
 
 **Canonical page:** this page | map [`docs/historical/analytics.md`](../../docs/historical/analytics.md)
-**Verified against:** `8abd2d5` on `docs/ws4-historical`
+**Historical verification:** `8abd2d5` on `docs/ws4-historical`. Not verification of the current tree.
 **Maturity:** CODE, TF, UNIT, INFRA, LIVE
-**Production authorization:** no grant found. `aws_iam_policy.query` is unattached. `MasterRouteExecutionAuthority` is `DENIED`.
+**Production authorization:** no grant found. This module does not attach `aws_iam_policy.query`. `envs/dev` attaches it to `module.ai_host.role_name` with `enable_invoke = false`. `MasterRouteExecutionAuthority` is `DENIED`.
 
 This module is the **disabled-by-default** recreatable analytics
 foundation. It currently owns:
@@ -16,9 +16,11 @@ foundation. It currently owns:
 - operational CloudWatch observability (dashboard, FAILED/CANCELED alarm)
 
 It does **not** create crawlers, runtime query IAM roles, named query
-APIs, or query executors. Phase 2B.5 adds one reusable, **unattached**
-customer-managed query policy. No execution role or attachment exists
-in this module.
+APIs, or query executors. Phase 2B.5 adds one reusable customer-managed
+query policy. No execution role or attachment exists in this module.
+`envs/dev` attaches that policy to `module.ai_host.role_name` and sets
+`enable_invoke = false`. The host stays disabled. The attachment is not
+an Agent API and is not production execution.
 
 ## Ownership boundary
 
@@ -67,7 +69,7 @@ enables historical analytics, so normal `dev-up` recreates:
 - Glue catalog (database and four external tables)
 - Athena workgroup
 - Athena results bucket
-- unattached historical analytics query IAM policy
+- historical analytics query IAM policy, with the dev-root attachment to the disabled AI host
 - analytics monitoring / dashboard
 
 The Athena workgroup uses `force_destroy = true` because normal query
@@ -79,8 +81,8 @@ artifacts. Canonical historical S3 is never owned by this module.
 
 1. DEACTIVATEs historical collection when collection is enabled
 2. destroys `envs/dev`, including this module's disposable Glue catalog,
-   workgroup, results bucket, unattached query IAM policy, and
-   analytics monitoring
+   workgroup, results bucket, query IAM policy, the dev-root attachment
+   of that policy to the disabled AI host, and analytics monitoring
 3. leaves the persistent historical facts bucket intact
 
 There is no `historical-data-down.ps1`. Ordinary `dev-down` / `dev-reset`
@@ -353,9 +355,10 @@ deployment step and not a Phase 2B query API.
 - Partition pruning evidence uses `DataScannedInBytes`.
 - Athena empty results are **`SQL_EMPTY`**, never `VERIFIED_ZERO`.
 - Coverage evaluator remains authoritative.
-- No 2A.2 / 2B.5 query IAM role exists. The 2B.5 managed policy is
-  unattached. Live validation uses operator SSO and does not itself
-  prove that managed policy.
+- No 2A.2 / 2B.5 query IAM role exists in this module. This module does
+  not attach the 2B.5 managed policy. `envs/dev` attaches it to the
+  disabled AI host. Live validation uses operator SSO and does not itself
+  prove that attachment.
 - This script must not be used as an AI query surface.
 
 Dry-run makes no AWS calls:
@@ -371,7 +374,7 @@ Deterministic historical analytics is complete:
 - four V1 operations through `HistoricalAnalyticsOperations`
 - authoritative pre/post coverage certification
 - fixed SQL only, bounded Athena executor, result reuse disabled
-- least-privilege unattached query policy
+- least-privilege query policy, unattached inside this module and attached in `envs/dev` to the disabled AI host
 - live operator validation via
   `scripts/validate_historical_query_runtime.py`
 - persistent facts/metadata survived normal `dev-down`
@@ -417,12 +420,12 @@ npm test -- src/config/cloudwatchDashboards.test.ts
 | Integration tests | none found | search: `tests/integration/` for `historical` |
 | Live harness | LIVE | `scripts/validate_historical_analytics.ps1`, `scripts/validate_historical_query_runtime.py` |
 | Deployment | UNKNOWN | `not verified` |
-| Production authorization | no grant found | unattached query policy; no Agent API |
+| Production authorization | no grant found | module does not attach the policy; `envs/dev` attaches it to the closed AI host; no Agent API |
 
 ## Known limitations
 
-- The query IAM policy is not attached to any principal in this module.
-- Operator SSO live validation does not prove that managed policy.
+- The query IAM policy is not attached to any principal in this module. `envs/dev` attaches it to `module.ai_host.role_name` with `enable_invoke = false`.
+- Operator SSO live validation does not prove the AI host attachment of that policy. The host stays disabled while `enable_invoke = false`.
 - Athena `COUNT(*) = 0` is not `VERIFIED_ZERO`.
 - Custom runtime CloudWatch metrics were not added because there is no deployed Agent API/Lambda to emit them.
 - Whether Glue and Athena currently exist in an account is UNKNOWN.

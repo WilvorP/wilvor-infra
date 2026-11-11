@@ -1,7 +1,7 @@
 # Station reference
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws2-ingestion`
+**Historical verification:** `8abd2d5` on `docs/ws2-ingestion`. Not verification of the current tree.
 **Maturity:** CODE, TF
 **Production authorization:** no grant found in `functions/station_reference/loader/app.py`
 
@@ -17,7 +17,7 @@ This page documents the Aviation Weather station-cache loader that fills `Statio
 | Terraform | TF | `modules/station_reference/`; `envs/dev/main.tf` (`module.station_reference`) |
 | Unit tests | none found | search: `tests/unit` for `station_reference` directory or loader tests — no `tests/unit/station_reference/` |
 | Contract tests | none found | search: `tests/contracts` |
-| Infrastructure tests | none found | `EXPECTED_MODULES` in `tests/infrastructure/terraform/test_root_contract.py` omits `station_reference` |
+| Infrastructure tests | INFRA for the module source path | `EXPECTED_MODULES` in `tests/infrastructure/terraform/test_root_contract.py` includes `station_reference` |
 | Integration tests | none found | search: `tests/integration` for station_reference |
 | Live harness | none found | search: `scripts/validate_*` and `functions/*Station*` |
 | Deployment | UNKNOWN | `not verified` |
@@ -76,7 +76,7 @@ Caption: station-reference load and downstream EventBridge edge at `8abd2d5`. So
 
 ## Known limitations
 
-- No unit, Terraform-source infrastructure, or integration tests for this loader were found. `EXPECTED_MODULES` in `tests/infrastructure/terraform/test_root_contract.py` omits `station_reference`. Live-account tests under `tests/infrastructure/aws/` omit this loader from `LAMBDA_OUTPUTS` and do not establish DEPLOYED.
+- No unit or integration tests for this loader were found. `EXPECTED_MODULES` includes `station_reference`. Live-account tests under `tests/infrastructure/aws/` omit this loader from `LAMBDA_OUTPUTS` and do not establish DEPLOYED.
 - Terraform configures nonempty env `SOURCE_VERSION` (`awc-stations-current` in `envs/dev`). HTTP Last-Modified and the date fallback are unused on that configured path.
 - Every successful run upserts all valid stations. There is no content-hash skip.
 - `is_airport` / `airport_id` is a four-character heuristic, not runway-reference quality. The loader comment defers diversion suitability.

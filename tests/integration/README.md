@@ -1,7 +1,7 @@
 # Wilvor Deployed Integration Tests
 
 **Canonical page:** this page for the deployed pipeline suite. Layer map: [`../../docs/testing/overview.md`](../../docs/testing/overview.md)
-**Verified against:** `8abd2d5` on `docs/ws1-platform-foundations`
+**Historical verification:** `8abd2d5` on `docs/ws1-platform-foundations`. Not verification of the current tree.
 **Maturity:** CODE, INT
 **Production authorization:** no grant found. The suite refuses to run unless Terraform outputs report `environment = dev`.
 

@@ -1,7 +1,7 @@
 # Operational API Lambda
 
 **Canonical page:** this page for the Python application. HTTP contracts: [`docs/api/operational-api.md`](../../docs/api/operational-api.md)
-**Verified against:** `8abd2d5` on `docs/ws3-processing-api`
+**Historical verification:** `8abd2d5` on `docs/ws3-processing-api`. Not verification of the current tree.
 **Maturity:** CODE, TF, UNIT
 **Production authorization:** no grant found. The handler is GET-only. It does not import `wilvor_ai` and does not execute specialists.
 

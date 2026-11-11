@@ -1,28 +1,28 @@
 # Tests and maturity
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws5-ai-copilot`
+**Historical verification:** `8abd2d5` on `docs/ws5-ai-copilot`. Not verification of the current tree.
 **Maturity:** CONTRACT, LIVE
 **Production authorization:** `MasterRouteExecutionAuthority.DENIED`; no current live-harness pass is recorded here
 
 ## Purpose
 
-This page inventories AI contract tests and live-validation harnesses, and records missing Agent API, production integration, Terraform wiring, and dashboard AI surface. The colocated contract-suite index is [`tests/contracts/README.md`](../../tests/contracts/README.md). Maturity-label definitions live in [`DOCUMENTATION_STANDARDS.md`](../DOCUMENTATION_STANDARDS.md).
+This page inventories AI contract tests and live-validation harnesses, and records the closed AI host, the inactive `POST /ai/query` flag, and the dashboard `/copilot` route. Production execution stays `DENIED`. The colocated contract-suite index is [`tests/contracts/README.md`](../../tests/contracts/README.md). Maturity-label definitions live in [`DOCUMENTATION_STANDARDS.md`](../DOCUMENTATION_STANDARDS.md).
 
 ## Implementation status
 
 | Question | Result | Source |
 | --- | --- | --- |
-| Contract suite files | 117 `tests/contracts/test_*.py` files at `8abd2d5` | named search: `tests/contracts/test_*.py` |
+| Contract suite files | Historical observation: 117 `tests/contracts/test_*.py` files at `8abd2d5`. Not a current inventory. | named search: `tests/contracts/test_*.py` |
 | Current pytest pass count | UNKNOWN | this documentation task did not run the suite |
 | Unit tests | UNIT for Historical and Decision harness dry-run modules; Live Ops harness tests are CONTRACT | `tests/unit/scripts/test_validate_historical_specialist_anthropic_live.py`; `tests/unit/scripts/test_validate_decision_specialist_anthropic_live.py`; `tests/contracts/test_live_ops_anthropic_live_harness.py` |
-| Infrastructure tests | none found at `8abd2d5` (search: `tests/infrastructure/` for `wilvor_ai`) | named search |
-| Integration tests | none found at `8abd2d5` (search: `tests/integration/` for `wilvor_ai`) | named search |
+| Infrastructure tests | Historical observation at `8abd2d5`: a search of `tests/infrastructure/` for `wilvor_ai` found none. That search is not verification of the current code. `tests/infrastructure/terraform/test_sprint3d_ai_host.py` asserts the closed host. | historical search; `tests/infrastructure/terraform/test_sprint3d_ai_host.py` |
+| Integration tests | Historical observation at `8abd2d5`: a search of `tests/integration/` for `wilvor_ai` found none. That search is not verification of the current code. | named historical search |
 | Live harness files | LIVE | three `scripts/validate_*anthropic_live.py` files |
 | Current live pass | UNKNOWN | no provider call; `test-results/` is gitignored and absent from this worktree |
-| Terraform AI wiring | TF absent | search: `envs/dev`, `envs/dev-historical-data`, `modules/**/*.tf` for `wilvor_ai`, `bedrock`, `agent_api` |
-| Agent API | absent | search: `functions/operational_api` for `"/ai"`; `dashboard/src/routes/routeDefinitions.ts` |
-| Dashboard `/ai` route | absent | `dashboard/src/routes/routeDefinitions.ts` (`ROUTES`) |
+| Terraform AI host | TF, invoke closed | `envs/dev/main.tf` (`module.ai_host`, `enable_invoke = false`); `modules/ai_host/iam.tf` denies `bedrock:*` |
+| Agent API / `POST /ai/query` | absent in `envs/dev` | `enable_ai_query_route = false`; `aws_apigatewayv2_route.ai_query` count |
+| Dashboard `/copilot` | CODE, production AI inactive | `dashboard/src/routes/routeDefinitions.ts` (`ROUTES`) |
 | Deployment | UNKNOWN | not verified |
 | Production authorization | `DENIED` | `functions/shared/wilvor_ai/master_routing.py` |
 
@@ -67,7 +67,7 @@ AI behavior is asserted under `tests/contracts/`. The files are grouped below. E
 - `test_decision_context.py`, `test_decision_contracts.py`, `test_decision_narrow_tools.py`
 - `test_decision_model_contracts.py`, `test_decision_provider_instructions.py`
 - `test_decision_tool_projection.py`
-- `test_decision_expert_closure.py` — includes the sentence "Agent API remains future work" as a documented remaining gap
+- `test_decision_expert_closure.py` — Decision Expert section must name offline Master contracts, `DENIED`, closed AI-host invoke, and an absent Agent API, and must not call the Copilot production-ready
 - `test_persisted_airport_evidence.py`
 - `test_anthropic_decision_messages_provider.py`
 - matching import-isolation files
@@ -131,21 +131,17 @@ Package README text records a prior direct-Anthropic Historical Tier-1 run and a
 
 Bedrock Converse is implemented and tested offline. Live Bedrock was recorded in README as blocked by account model authorization. That is historical README evidence, not a current account observation.
 
-### Missing production surfaces
+### Production surfaces
 
-Confirmed absent at `8abd2d5`:
-
-| Surface | Search | Result |
+| Surface | Source | Current result |
 | --- | --- | --- |
-| Agent API / `/ai` Operational API route | `functions/operational_api` for `"/ai"` | absent |
-| Dashboard `/ai` route | `dashboard/src/routes/routeDefinitions.ts` `ROUTES` | seven workflows: `/`, `/aircraft`, `/airports`, `/encounters`, `/recommendations`, `/alerts`, `/system-health`; no `/ai` |
-| Terraform `wilvor_ai` resource | `envs/dev`, `envs/dev-historical-data`, `modules/**/*.tf` | absent |
-| Terraform Bedrock client | `*.tf` for `bedrock` | absent |
-| Agent API execution principal | `modules/historical_analytics/iam.tf` | unattached query policy; description says future Agent API attaches it; the policy is not an execution principal |
+| `POST /ai/query` | `envs/dev/main.tf` (`enable_ai_query_route = false`); `modules/operational_api/api.tf` | route count stays 0 |
+| Dashboard `/ai` | `dashboard/src/routes/routeDefinitions.ts` | no `/ai` path; `/copilot` is implemented and does not activate production AI |
+| AI host | `envs/dev/main.tf` (`module.ai_host`) | TF; `enable_invoke = false`; Bedrock is denied, not a client |
+| Query policy principal | `envs/dev/main.tf` (`aws_iam_role_policy_attachment.ai_host_historical_analytics_query`) | attached to the closed AI host role; not an Agent API and not production execution |
+| AI copilot deployment test | search: `tests/integration/` and `tests/infrastructure/` for a deployed Copilot pass | none found; infrastructure tests assert the closed host and the disabled route |
 
-`test_decision_expert_closure.py` still records "Agent API remains future work".
-
-No `tests/integration/` or `tests/infrastructure/` file was found that asserts AI copilot deployment.
+The file count of 117 contract modules was true at `8abd2d5`. Later merges added contract files. This page does not publish a new count without a fresh listing.
 
 ## Known limitations
 
@@ -157,11 +153,11 @@ No `tests/integration/` or `tests/infrastructure/` file was found that asserts A
 
 ## Historical record
 
-No superseded statement is stored on this page. Dated pytest counts in `SPRINT3A_MA7_SECURITY_REVIEW.md` (12 passed; 418 passed at `7073b3a`) remain historical on that file.
+An earlier revision of this page said Terraform AI wiring, a dashboard `/ai` route, and an unattached query policy were absent. Current text follows `module.ai_host`, `/copilot`, and the dev-root policy attachment. Dated pytest counts in `SPRINT3A_MA7_SECURITY_REVIEW.md` (12 passed; 418 passed at `7073b3a`) remain historical on that file.
 
 ## Sources
 
-- Source: `tests/contracts/` (117 `test_*.py` files)
+- Source: `tests/contracts/` (117 `test_*.py` files at `8abd2d5`; historical observation, not a current inventory)
 - Source: `scripts/validate_live_ops_specialist_anthropic_live.py`
 - Source: `scripts/validate_historical_specialist_anthropic_live.py`
 - Source: `scripts/validate_decision_specialist_anthropic_live.py`

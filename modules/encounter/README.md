@@ -1,7 +1,7 @@
 # Encounter
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws3-processing-api`
+**Historical verification:** `8abd2d5` on `docs/ws3-processing-api`. Not verification of the current tree.
 **Maturity:** CODE, TF, UNIT
 **Production authorization:** no grant found in `functions/encounter/processor/app.py`. Encounter records are geometry and time-overlap evidence, not a selected hazard or a flight-control action.
 

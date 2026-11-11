@@ -1,7 +1,7 @@
 # Projection
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws3-processing-api`
+**Historical verification:** `8abd2d5` on `docs/ws3-processing-api`. Not verification of the current tree.
 **Maturity:** CODE, TF, UNIT
 **Production authorization:** no grant found in `functions/projection/processor/app.py`. Projection output is deterministic trajectory evidence, not a clearance or route.
 

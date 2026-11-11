@@ -1,7 +1,7 @@
 # Advisory boundaries
 
 **Canonical page:** this page for platform-level advisory wording. AI contract detail: [`functions/shared/wilvor_ai/README.md`](../../functions/shared/wilvor_ai/README.md). Console wording: [`dashboard/README.md`](../../dashboard/README.md).
-**Verified against:** `8abd2d5` on `docs/ws1-platform-foundations`
+**Historical verification:** `8abd2d5` on `docs/ws1-platform-foundations`. Not verification of the current tree.
 **Maturity:** CODE, CONTRACT, LIVE
 **Production authorization:** `V1_AUTHORITY.mode = READ_ONLY_ADVISORY`; `MasterRouteExecutionAuthority = DENIED` (source: `functions/shared/wilvor_ai/contracts.py`, `V1_AUTHORITY`; `functions/shared/wilvor_ai/master_routing.py`, `MasterRouteExecutionAuthority`)
 
@@ -14,7 +14,7 @@ This page records the aviation advisory boundary, human-review rule, and the spl
 | Question | Result | Source |
 | --- | --- | --- |
 | Code | CODE | `functions/shared/wilvor_ai/contracts.py`, `master_routing.py`, `decision_answer_renderer.py` |
-| Terraform | TF absent | search `*.tf` for `wilvor_ai` at `8abd2d5` |
+| Terraform | TF for a closed AI host | `envs/dev/main.tf` (`module.ai_host`, `enable_invoke = false`) |
 | Unit tests | none found for this page's quotes | `not read` as UNIT for renderer strings |
 | Contract tests | CONTRACT | `tests/contracts/test_master_routing.py` |
 | Infrastructure tests | none found | this page is policy text from code |
@@ -75,11 +75,11 @@ Renderer limit sentences in `functions/shared/wilvor_ai/decision_answer_renderer
 
 This page does not document a clearance, dispatch decision, ATC instruction, landing instruction, altitude instruction, or reroute.
 
-The Operational API is not an AI execution path. `functions/operational_api` has no `wilvor_ai` import. Dashboard `ROUTES` has no `/ai` path (source: `dashboard/src/routes/routeDefinitions.ts`).
+The Operational API is not an AI execution path. `functions/operational_api` has no `wilvor_ai` import. `envs/dev` sets `enable_ai_query_route = false`. Dashboard `ROUTES` include `/copilot` and no `/ai` path. `/copilot` does not activate production AI (source: `dashboard/src/routes/routeDefinitions.ts`).
 
 ## Interfaces
 
-None beyond the symbols cited above. There is no AI HTTP route in `modules/operational_api/api.tf` `local.route_keys`.
+None beyond the symbols cited above. `local.route_keys` remains the GET operational set. `aws_apigatewayv2_route.ai_query` stays at count 0 in `envs/dev`.
 
 ## Known limitations
 
@@ -89,7 +89,7 @@ None beyond the symbols cited above. There is no AI HTTP route in `modules/opera
 
 ## Historical record
 
-No superseded statement is stored on this page.
+An earlier revision said a search of `*.tf` for `wilvor_ai` found no Terraform and that dashboard `ROUTES` had no AI path. Current text follows `module.ai_host` with invoke closed and the `/copilot` route that does not activate production AI.
 
 ## Sources
 

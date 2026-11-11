@@ -1,7 +1,7 @@
 # Runway metadata module
 
 **Canonical page:** [`docs/ingestion/runway-metadata.md`](../../docs/ingestion/runway-metadata.md)
-**Verified against:** `8abd2d5` on `docs/ws2-ingestion`
+**Historical verification:** `8abd2d5` on `docs/ws2-ingestion`. Not verification of the current tree.
 **Maturity:** TF, UNIT
 **Production authorization:** no grant found in this module
 
@@ -15,7 +15,7 @@ Terraform for the FAA NASR runway loader, archive bucket, `RunwayReference` tabl
 | --- | --- | --- |
 | Terraform | TF | this module; `envs/dev/main.tf` (`module.runway_metadata`) |
 | Unit tests | UNIT for the loader | `tests/unit/runway_metadata/` |
-| Infrastructure tests | none found | `EXPECTED_MODULES` omits this module |
+| Infrastructure tests | INFRA for the module source path | `EXPECTED_MODULES` includes `runway_metadata` |
 | Deployment | UNKNOWN | `not verified` |
 | Production authorization | no grant found | this module |
 
@@ -26,7 +26,7 @@ Loader schedule state follows `enable_runway_loader_schedule` (default and `envs
 ## Known limitations
 
 - Three ICAO ids in `envs/dev`.
-- No Terraform-source infrastructure tests for this module were found (`EXPECTED_MODULES` omits `runway_metadata`). Live-account tests under `tests/infrastructure/aws/` also omit this loader from `LAMBDA_OUTPUTS` and do not establish DEPLOYED.
+- `EXPECTED_MODULES` includes `runway_metadata`. Live-account tests under `tests/infrastructure/aws/` omit this loader from `LAMBDA_OUTPUTS` and do not establish DEPLOYED.
 - Schedule disabled in `envs/dev`.
 - PITR is `false` in `envs/dev`.
 

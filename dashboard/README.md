@@ -1,7 +1,7 @@
 # Wilvor Live Operations Console
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws3-processing-api`
+**Historical verification:** `8abd2d5` on `docs/ws3-processing-api`. Not verification of the current tree.
 **Maturity:** CODE, UNIT
 **Production authorization:** no grant found. Visible copy states "Advisory only — not ATC" (source: `dashboard/src/layouts/AppHeader.tsx`). Wilvor is advisory decision support. It is not air traffic control and not a flight-control system.
 
@@ -49,8 +49,10 @@ The browser never talks to DynamoDB. Every read goes through the operational
 API. Dependencies: React 19, react-router-dom 7, TanStack Query 5, MapLibre GL 5,
 Vite 6 (source: `dashboard/package.json`).
 
-There is no `/ai` route in `dashboard/src/routes/AppRoutes.tsx` or
-`routeDefinitions.ts`.
+`dashboard/src/routes/AppRoutes.tsx` registers `/copilot`.
+`routeDefinitions.ts` marks that route `implemented: true` and states that
+production AI is not active and that POST `/ai/query` remains disabled.
+There is no `/ai` path.
 
 ### Source layout
 
@@ -61,9 +63,9 @@ There is no `/ai` route in `dashboard/src/routes/AppRoutes.tsx` or
 | `src/hooks/useOperationalQueries.ts` | TanStack Query hooks for operational routes |
 | `src/types/api.ts` | Response contracts traced from the Lambda and pipeline writers |
 | `src/components/` | Design-system primitives (panel, KPI tile, status pill, states) |
-| `src/features/` | `overview/`, `map/`, `aircraft/`, `airports/`, `encounters/`, `recommendations/`, `alerts/`, `health/`, `worklist/` |
+| `src/features/` | `overview/`, `map/`, `aircraft/`, `airports/`, `encounters/`, `recommendations/`, `alerts/`, `health/`, `worklist/`, `ai/` |
 | `src/layouts/` | Persistent shell: header, navigation, freshness strip |
-| `src/routes/` | Route table. All seven workflows are `implemented: true` |
+| `src/routes/` | Route table. Eight workflows are `implemented: true`, including `/copilot` |
 | `src/utils/` | Coercion, formatting and status vocabularies |
 | `src/styles/` | Design tokens and base styles |
 | `src/test/` | Vitest harness (`renderWithProviders`) |
@@ -456,9 +458,10 @@ current at `8abd2d5`:
 
 - Feature slices listed only `overview/`, `map/`, `aircraft/`, and `health/`.
   Current `src/features/` also includes `alerts/`, `airports/`, `encounters/`,
-  `recommendations/`, and `worklist/`.
-- `src/routes/` held "placeholders for unbuilt workflows". All seven `ROUTES`
-  entries are `implemented: true`.
+  `recommendations/`, `worklist/`, and `ai/`.
+- `src/routes/` held "placeholders for unbuilt workflows". A later revision
+  said seven `ROUTES` entries were `implemented: true`. The current table has
+  eight, including `/copilot`, which does not activate production AI.
 - "Endpoints consumed today" listed only `/overview`, `/freshness`,
   `/system-health`, `/hazards/active`, and `/map/aircraft`.
 - "`/overview` 20 s" as the Lambda cache TTL. `repository.get_overview` caches

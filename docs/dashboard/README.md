@@ -3,7 +3,7 @@
 This page is a pointer. It states no behavior.
 
 **Canonical page:** [`dashboard/README.md`](../../dashboard/README.md)
-**Verified against:** `8abd2d5` on `docs/ws3-processing-api`
+**Historical verification:** `8abd2d5` on `docs/ws3-processing-api`. Not verification of the current tree.
 
 The Live Operations Console architecture, routes, API client, refresh policy, map layers, loading states, local setup, tests, and limitations are documented only in [`dashboard/README.md`](../../dashboard/README.md).
 

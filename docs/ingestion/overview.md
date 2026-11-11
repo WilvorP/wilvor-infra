@@ -1,7 +1,7 @@
 # Ingestion overview
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws2-ingestion`
+**Historical verification:** `8abd2d5` on `docs/ws2-ingestion`. Not verification of the current tree.
 **Maturity:** CODE, TF, UNIT, INFRA
 **Production authorization:** no grant found in the ingestion Lambda and Terraform sources cited on this page
 
@@ -138,7 +138,7 @@ Terraform roots that instantiate these modules: `envs/dev/main.tf` only, at `8ab
 - No `scripts/validate_*` harness was found for these ingestion pipelines.
 - Tests under `tests/infrastructure/terraform/` assert repository Terraform. Tests under `tests/infrastructure/aws/` require an authenticated AWS account and `terraform output`. The AWS layer is not a Terraform-source test and does not establish DEPLOYED.
 - Deployment of any of these resources in an AWS account is UNKNOWN.
-- `EXPECTED_MODULES` in `tests/infrastructure/terraform/test_root_contract.py` lists `aircraft_foundation`, `weather_events`, `sigmet`, `metar`, and `taf`. It does not list `station_reference` or `runway_metadata`.
+- `EXPECTED_MODULES` in `tests/infrastructure/terraform/test_root_contract.py` includes `aircraft_foundation`, `weather_events`, `sigmet`, `metar`, `taf`, `station_reference`, and `runway_metadata`.
 
 ## Historical record
 

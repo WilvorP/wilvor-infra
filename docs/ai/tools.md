@@ -1,7 +1,7 @@
 # Tools and data access
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws5-ai-copilot`
+**Historical verification:** `8abd2d5` on `docs/ws5-ai-copilot`. Not verification of the current tree.
 **Maturity:** CODE, CONTRACT
 **Production authorization:** listed catalog names are not table grants; `READ_ONLY_ADVISORY` is not source-read authority
 
@@ -15,10 +15,10 @@ This page records the approved read-only tool catalogs after validating exported
 | --- | --- | --- |
 | Code | CODE | `functions/shared/wilvor_ai/live_ops.py` (`LIVE_OPS_TOOLS`); `functions/shared/wilvor_ai/historical_analytics.py` (`HISTORICAL_ANALYTICS_TOOLS`); `functions/shared/wilvor_ai/decision_tools.py` (`DECISION_TOOLS`) |
 | Catalog restatement | CODE | `functions/shared/wilvor_ai/master_execution_policy_boundary.py` (`READ_ONLY_TOOL_NAMES_BY_SPECIALIST`) |
-| Terraform | TF absent at `8abd2d5` (search: `*.tf` for catalog tool names) | named search |
+| Terraform | Historical observation at `8abd2d5`: a search of `*.tf` found no catalog tool names. That search is not verification of the current code. Current `module.ai_host` exists with `enable_invoke = false` and `DenyModelSecretsAndInvoke` denies `bedrock:*`. The host does not name these catalogs, does not grant them, and does not enable `POST /ai/query`. | historical search; `envs/dev/main.tf` (`module.ai_host`, `enable_ai_query_route = false`); `modules/ai_host/iam.tf` |
 | Unit tests | none found under `tests/unit/` for catalogs | named search |
 | Contract tests | CONTRACT | `tests/contracts/test_master_execution_policy_boundary.py` (`test_vocabularies_and_read_only_catalogs_are_the_existing_ones`); `tests/contracts/test_tool_schema.py`; `tests/contracts/test_live_ops_tools.py`; `tests/contracts/test_historical_analytics_tools.py`; `tests/contracts/test_decision_tools.py` |
-| Infrastructure tests | none found at `8abd2d5` (search: `tests/infrastructure/` for `wilvor_ai`) | named search |
+| Infrastructure tests | Historical observation at `8abd2d5`: a search of `tests/infrastructure/` for `wilvor_ai` found none. That search is not verification of the current code. `tests/infrastructure/terraform/test_sprint3d_ai_host.py` now asserts the closed host, including `enable_invoke = false`. It does not grant these catalogs. | historical search; `tests/infrastructure/terraform/test_sprint3d_ai_host.py` |
 | Integration tests | CONTRACT integration-style Decision tests exist; they are not `tests/integration/` | `tests/contracts/test_decision_tools_integration.py` |
 | Live harness | LIVE harnesses exist per specialist; they are not a current pass | [Tests and maturity](tests-and-maturity.md) |
 | Deployment | UNKNOWN | not verified |
@@ -30,7 +30,7 @@ This page records the approved read-only tool catalogs after validating exported
 
 `READ_ONLY_TOOL_NAMES_BY_SPECIALIST` restates the public read-only catalogs. A listed name is not a table grant (source: `functions/shared/wilvor_ai/master_execution_policy_boundary.py`, `READ_ONLY_TOOL_NAMES_BY_SPECIALIST`).
 
-At `8abd2d5` the restated names equal `frozenset(item.name for item in tools)` for `LIVE_OPS_TOOLS`, `HISTORICAL_ANALYTICS_TOOLS`, and `DECISION_TOOLS` (tests: `tests/contracts/test_master_execution_policy_boundary.py`, `test_vocabularies_and_read_only_catalogs_are_the_existing_ones`). Adapter handler maps use the same names:
+Historical observation at `8abd2d5`: the restated names equal `frozenset(item.name for item in tools)` for `LIVE_OPS_TOOLS`, `HISTORICAL_ANALYTICS_TOOLS`, and `DECISION_TOOLS`. That observation is not verification of the current code. The current contract test `test_vocabularies_and_read_only_catalogs_are_the_existing_ones` in `tests/contracts/test_master_execution_policy_boundary.py` still requires that equality. Adapter handler maps use the same names:
 
 | Catalog | Definition | Schema builder | Dispatch |
 | --- | --- | --- | --- |
@@ -63,7 +63,7 @@ flowchart LR
   Adapter -.->|"library relationship injected tables or operations"| Domain
 ```
 
-Caption: verified at `8abd2d5`. Solid edges are catalog-to-schema and catalog-to-adapter relationships read in source. The dotted edge is a library relationship: tool modules wrap domain functions and do not create AWS clients.
+Caption: historical observation of catalog relationships read at `8abd2d5`. That caption is not verification of the current code. Solid edges are catalog-to-schema and catalog-to-adapter relationships in the library source. The dotted edge is a library relationship: tool modules wrap domain functions and do not create AWS clients. `module.ai_host` does not add a tool-invocation edge. Production execution stays `DENIED`.
 
 ### Live Ops tools
 
@@ -168,11 +168,13 @@ Missing records do not establish zero risk. A verified zero requires the stronge
 - Region text is not geospatial coverage authority.
 - Historical `as_of_utc` is runtime-controlled, not a model argument.
 - Decision persisted rows are not current airport suitability.
-- No Agent API attaches these tools to a Lambda role at this commit.
+- No Agent API attaches these tools to a Lambda role. `envs/dev` attaches the historical query policy to `module.ai_host.role_name` with `enable_invoke = false`. That attachment does not grant these catalogs, does not enable `POST /ai/query` (`enable_ai_query_route = false`), and does not change `MasterRouteExecutionAuthority` from `DENIED`.
 
 ## Historical record
 
 Phase 0 README text said Phase 0 defines no tools. Later phases added the three catalogs above. That Phase 0 sentence remains historical on the package README.
+
+The page header previously said verified against `8abd2d5`. That commit is the documentation baseline. It is not verification of the current tree. The Terraform and infrastructure-test rows above keep the baseline searches as historical observations.
 
 ## Sources
 

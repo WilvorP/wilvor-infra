@@ -1,7 +1,7 @@
 # Wilvor
 
 **Canonical page:** this page for repository entry. Architecture detail: [`docs/overview/architecture.md`](docs/overview/architecture.md)
-**Verified against:** `8abd2d5` on `docs/ws1-platform-foundations`
+**Historical verification:** `8abd2d5` on `docs/ws1-platform-foundations`. Not verification of the current tree.
 **Maturity:** CODE, TF, UNIT, CONTRACT, INFRA, INT, LIVE
 **Production authorization:** no grant found in this repository. `MasterRouteExecutionAuthority` is `DENIED` only (source: `functions/shared/wilvor_ai/master_routing.py`, `MasterRouteExecutionAuthority`).
 
@@ -39,11 +39,13 @@ Current-set membership for API reads is defined in `functions/shared/wilvor_oper
 
 Three planes exist in this repository. They are not interchangeable.
 
-| Plane | What exists at `8abd2d5` | Maturity |
+| Plane | Repository scope | Maturity |
 | --- | --- | --- |
 | Operational | Ingestion, EventBridge processors, DynamoDB current-state tables, HTTP Operational API, React console | CODE, TF. UNIT/INT exist for subsets. DEPLOYED UNKNOWN |
 | Historical | Persistent S3 data-plane root, Firehose transport, Glue/Athena analytics configuration, query library | CODE, TF. UNIT/INFRA exist. Whether the bucket exists in an account is UNKNOWN |
-| AI | Python package `wilvor_ai`: contracts, specialists, offline providers, Master planning types | CODE, CONTRACT, LIVE harnesses. TF absent (`*.tf` search for `bedrock`, `anthropic`, `wilvor_ai`) |
+| AI | Python package `wilvor_ai`, plus `module.ai_host` with `enable_invoke = false` | CODE, CONTRACT, LIVE harnesses, TF. Production execution `DENIED`. `POST /ai/query` stays off |
+
+The previous column header treated this table as what existed at `8abd2d5`. That commit is historical verification of the documentation baseline. It is not verification of the current tree. The AI cell follows the closed `module.ai_host`. The Operational and Historical cells keep the baseline scope and were not re-counted as a new inventory in this review.
 
 Architecture diagrams and data-flow evidence: [`docs/overview/architecture.md`](docs/overview/architecture.md).
 
@@ -63,7 +65,7 @@ Architecture diagrams and data-flow evidence: [`docs/overview/architecture.md`](
 
 **Historical infrastructure** splits persistence from transport. `envs/dev-historical-data` creates the persistent facts bucket (`force_destroy = false`). `modules/historical_facts` in `envs/dev` looks that bucket up and configures Firehose; it does not create the bucket (source: `modules/historical_facts/README.md`). `scripts/dev-down.ps1` refuses `envs/dev-historical-data` (source: `scripts/dev-down.ps1`). `enable_historical_facts = true` is assigned in `envs/dev/main.tf` at `8abd2d5` (module `historical_facts` and module `operational_api`). That assignment is TF. It is not DEPLOYED.
 
-**AI infrastructure** is source and tests. No `aws_*` AI runtime, Bedrock, or Anthropic resource was found in `*.tf` at `8abd2d5`. The Operational API does not import `wilvor_ai`. Dashboard routes in `dashboard/src/routes/routeDefinitions.ts` do not include `/ai`. `MasterRouteExecutionAuthority` contains `DENIED` only; its docstring states that production execution is not representable (source: `functions/shared/wilvor_ai/master_routing.py`, `MasterRouteExecutionAuthority`).
+**AI infrastructure** includes library code and a closed dev host. `envs/dev` instantiates `module.ai_host` with `enable_invoke = false`. That host denies `bedrock:*` and does not create a Bedrock or Anthropic resource. `enable_ai_query_route = false`, so `POST /ai/query` is not created. The Operational API does not import `wilvor_ai`. Dashboard `ROUTES` include `/copilot` and do not include `/ai`. `/copilot` does not activate production AI. `MasterRouteExecutionAuthority` contains `DENIED` only; its docstring states that production execution is not representable (source: `functions/shared/wilvor_ai/master_routing.py`, `MasterRouteExecutionAuthority`; `envs/dev/main.tf`; `dashboard/src/routes/routeDefinitions.ts`).
 
 ## Repository structure
 
@@ -83,7 +85,7 @@ Directory roles: [`docs/overview/repository-structure.md`](docs/overview/reposit
 
 ## Technology stack
 
-Verified from source at `8abd2d5`:
+Historical verification from source at `8abd2d5`. Not verification of the current tree.
 
 | Layer | Evidence |
 | --- | --- |

@@ -1,7 +1,7 @@
 # Historical query tools and the AI specialist
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws4-historical`
+**Historical verification:** `8abd2d5` on `docs/ws4-historical`. Not verification of the current tree.
 **Maturity:** CODE, UNIT, CONTRACT, LIVE
 **Production authorization:** `MasterRouteExecutionAuthority.DENIED`. Production execution is not representable (source: `functions/shared/wilvor_ai/master_routing.py`, `MasterRouteExecutionAuthority`).
 
@@ -14,7 +14,7 @@ This page records the boundary between deterministic historical query code and t
 | Question | Result | Source |
 | --- | --- | --- |
 | Code | CODE | `functions/shared/wilvor_ai/historical_analytics.py`, `historical_analytics_mapping.py`, `historical_specialist.py` |
-| Terraform | TF absent for this specialist | search: `*.tf` for `wilvor_ai`, `bedrock`, `anthropic` at `8abd2d5`: no matches |
+| Terraform | TF for a closed AI host; this specialist is not invoked | `envs/dev/main.tf` (`module.ai_host`, `enable_invoke = false`); no `wilvor_ai` specialist resource |
 | Unit tests | UNIT for query runtime; none found for the specialist class | `tests/unit/historical_query/`; search: `tests/unit/` for `HistoricalAnalyticsSpecialist` |
 | Contract tests | CONTRACT | `tests/contracts/test_historical_analytics_mapping.py` (`test_verified_zero_maps_to_not_found_with_first_class_proof`; WS5-owned, not edited here) |
 | Infrastructure tests | none found for Agent API | no Agent API resource in `modules/operational_api/api.tf` `local.route_keys` |
@@ -68,7 +68,7 @@ flowchart LR
   spec -.->|"library relationship"| master
 ```
 
-Caption: library composition at `8abd2d5`. Solid edges are calls in `wilvor_ai`: the specialist constructs `HistoricalAnalyticsAdapter`, and the adapter calls `HistoricalAnalyticsOperations`. The dotted edge is a planning roster relationship, not a deployed invocation path. Search of `*.tf` for `bedrock`, `anthropic`, and `wilvor_ai` returned no matches. `MasterRouteExecutionAuthority` is `DENIED`. Sources: `functions/shared/wilvor_ai/historical_analytics.py`; `functions/shared/wilvor_ai/historical_specialist.py`; `functions/shared/wilvor_ai/master_routing.py`.
+Caption: historical observation of library composition at `8abd2d5`. Not verification of the current code. Solid edges are calls in `wilvor_ai`: the specialist constructs `HistoricalAnalyticsAdapter`, and the adapter calls `HistoricalAnalyticsOperations`. The dotted edge is a planning roster relationship, not a deployed invocation path. A search at `8abd2d5` found no `bedrock`, `anthropic`, or `wilvor_ai` strings in `*.tf`. Current `module.ai_host` exists with `enable_invoke = false`, and `DenyModelSecretsAndInvoke` denies `bedrock:*`. That host does not invoke this library. `MasterRouteExecutionAuthority` stays `DENIED`. Sources: `functions/shared/wilvor_ai/historical_analytics.py`; `functions/shared/wilvor_ai/historical_specialist.py`; `functions/shared/wilvor_ai/master_routing.py`; `envs/dev/main.tf`; `modules/ai_host/iam.tf`.
 
 Do not add a specialist invocation arrow that implies production execution while `MasterRouteExecutionAuthority` contains only `DENIED`.
 
@@ -79,7 +79,7 @@ sequenceDiagram
   Note over Plan, Auth: DENIED. Production execution is not representable. Do not add a specialist call here.
 ```
 
-Caption: shape required while `MasterRouteExecutionAuthority` has only `DENIED`. Source: `functions/shared/wilvor_ai/master_routing.py`, `MasterRouteExecutionAuthority`. Verified at `8abd2d5`.
+Caption: shape required while `MasterRouteExecutionAuthority` has only `DENIED`. Source: `functions/shared/wilvor_ai/master_routing.py`, `MasterRouteExecutionAuthority`. Historical verification at `8abd2d5`. Not verification of the current code.
 
 ## What this boundary is not
 

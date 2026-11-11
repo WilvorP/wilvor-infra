@@ -1,7 +1,7 @@
 # Runway metadata
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws2-ingestion`
+**Historical verification:** `8abd2d5` on `docs/ws2-ingestion`. Not verification of the current tree.
 **Maturity:** CODE, TF, UNIT
 **Production authorization:** no grant found in `functions/runway_metadata/loader/app.py`
 
@@ -17,7 +17,7 @@ This page documents the FAA NASR APT CSV ZIP loader that fills `RunwayReference`
 | Terraform | TF | `modules/runway_metadata/`; `envs/dev/main.tf` (`module.runway_metadata`) |
 | Unit tests | UNIT | `tests/unit/runway_metadata/` |
 | Contract tests | none found | search: `tests/contracts` |
-| Infrastructure tests | none found | `EXPECTED_MODULES` omits `runway_metadata` |
+| Infrastructure tests | INFRA for the module source path | `EXPECTED_MODULES` includes `runway_metadata` |
 | Integration tests | none found | search: `tests/integration` for runway |
 | Live harness | operator command file, not `scripts/validate_*` | `functions/Runway_Metadata_Commands.txt` |
 | Deployment | UNKNOWN | `not verified` |
@@ -97,7 +97,7 @@ No other `envs/dev` module is passed the runway table name.
 - Facilities without ICAO never enter the catalog.
 - `ReferenceData.changed` has no in-repo subscriber.
 - Schedule is `false` in `envs/dev`. NASR URL and cycle are pinned, not auto-discovered.
-- No Terraform-source infrastructure tests or integration tests for this module (`EXPECTED_MODULES` omits `runway_metadata`). Live-account tests under `tests/infrastructure/aws/` omit this loader from `LAMBDA_OUTPUTS` and do not establish DEPLOYED.
+- `EXPECTED_MODULES` includes `runway_metadata`. No integration tests for this module were found. Live-account tests under `tests/infrastructure/aws/` omit this loader from `LAMBDA_OUTPUTS` and do not establish DEPLOYED.
 - `scripts/build_runway_metadata_loader.ps1` copies loader `*.py` and does not copy `functions/shared/wilvor_weather`, while `app.py` imports `wilvor_weather.monitoring`. Whether a given zip contains that package is UNKNOWN unless the zip is inspected; this page does not inspect build artifacts.
 - PITR is `false` in `envs/dev`.
 

@@ -2,7 +2,7 @@
 
 This page is an index. It states no behavior. Canonical pages own the claims.
 
-**Verified against:** `8abd2d5` on `docs/ws3-processing-api`
+**Historical verification:** `8abd2d5` on `docs/ws3-processing-api`. Not verification of the current tree.
 
 | Page | Topic |
 | --- | --- |

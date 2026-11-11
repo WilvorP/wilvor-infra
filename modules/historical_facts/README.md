@@ -1,7 +1,7 @@
 # Historical facts transport (Phase 2A.1c)
 
 **Canonical page:** this page | map [`docs/historical/transport.md`](../../docs/historical/transport.md)
-**Verified against:** `8abd2d5` on `docs/ws4-historical`
+**Historical verification:** `8abd2d5` on `docs/ws4-historical`. Not verification of the current tree.
 **Maturity:** CODE, TF, UNIT, INFRA
 **Production authorization:** no grant found. `enable_historical_facts = true` in `envs/dev/main.tf` is Terraform configuration, not a deployment record.
 

@@ -1,7 +1,7 @@
 # Recommendations
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws3-processing-api`
+**Historical verification:** `8abd2d5` on `docs/ws3-processing-api`. Not verification of the current tree.
 **Maturity:** CODE, TF, UNIT
 **Production authorization:** no grant found. `ADVISORY_NOTICE` states: "Advisory decision support only. Human operational review is required. Wilvor does not issue autonomous flight-control, diversion, landing, dispatch, or ATC instructions." (source: `functions/recommendations/processor/app.py`, `ADVISORY_NOTICE`). The stored `EVALUATE_DIVERSION` label is not a clearance, not a selected diversion, not a route, and not a dispatch or ATC instruction.
 

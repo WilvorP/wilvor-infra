@@ -122,9 +122,9 @@ Created, and left uncommitted:
 
 No existing Wilvor source module or test file was modified. No other Sprint 3A stage was started.
 
-## Current baseline addendum — 2026-10-25 at `8abd2d5`
+## Historical baseline addendum — 2026-10-25 at `8abd2d5`
 
-**Verified against:** `8abd2d5` on `docs/ws5-ai-copilot` (`docs/wilvor-documentation` baseline)
+**Historical verification:** `8abd2d5` on `docs/ws5-ai-copilot` (`docs/wilvor-documentation` baseline). Not verification of the current tree.
 **Production authorization:** `MasterRouteExecutionAuthority.DENIED`; `MasterProductionAuthority.DENIED`; `MasterSourceAuthenticity.NOT_ESTABLISHED`; `MasterRequestCoverage.NOT_ESTABLISHED`
 
 This addendum does not rewrite the baseline review of `7073b3a` on
@@ -180,9 +180,9 @@ denials do exist, for example:
 Those files are CONTRACT coverage of the modules. They are not a claim
 that every named threat-matrix test was added under the original title.
 
-### Surfaces that remain absent
+### Surfaces recorded absent by the `8abd2d5` search
 
-Search at `8abd2d5`:
+This list is a historical observation. It is not verification of the current tree. Current `envs/dev` configures `module.ai_host` with `enable_invoke = false` and attaches the historical query policy to that disabled host. `enable_ai_query_route = false`. `POST /ai/query` stays off. Production execution stays `DENIED`. Recorded at `8abd2d5`:
 
 - Agent API / `"/ai"` in `functions/operational_api` — absent
 - Dashboard `/ai` in `dashboard/src/routes/routeDefinitions.ts` — absent

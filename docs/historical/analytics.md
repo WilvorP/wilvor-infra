@@ -1,9 +1,9 @@
 # Historical analytics catalog
 
 **Canonical page:** this page | deep specification [`modules/historical_analytics/README.md`](../../modules/historical_analytics/README.md)
-**Verified against:** `8abd2d5` on `docs/ws4-historical`
+**Historical verification:** `8abd2d5` on `docs/ws4-historical`. Not verification of the current tree.
 **Maturity:** CODE, TF, UNIT, INFRA, LIVE
-**Production authorization:** no grant found. The query IAM policy is unattached. See [IAM](iam.md).
+**Production authorization:** no grant found. The analytics module does not attach the query policy. `envs/dev` attaches it to the closed AI host role. See [IAM](iam.md).
 
 ## Purpose
 
@@ -21,7 +21,7 @@ This page records Glue, Athena, and the disposable results bucket as Terraform c
 | Integration tests | none found | search: `tests/integration/` for `historical` |
 | Live harness | LIVE | `scripts/validate_historical_analytics.ps1` (opt-in; dry-run makes no AWS calls) |
 | Deployment | UNKNOWN | `not verified` |
-| Production authorization | no grant found | `aws_iam_policy.query` is unattached |
+| Production authorization | no grant found | module policy is unattached; `envs/dev` attaches it to the closed AI host |
 
 ## Behavior
 
@@ -96,7 +96,7 @@ flowchart LR
   results -.->|"TF result location"| wg
 ```
 
-Caption: analytics catalog at `8abd2d5`. Dotted edges are Terraform configuration. Glue tables and the Athena workgroup share enablement; there is no Terraform dependency from tables to the workgroup. Canonical facts remain read-only. Deployment of this catalog is UNKNOWN. Sources: `modules/historical_analytics/glue.tf`; `modules/historical_analytics/athena.tf`; `modules/historical_analytics/results_bucket.tf`.
+Caption: historical observation of the analytics catalog at `8abd2d5`. Not verification of the current code. Dotted edges are Terraform configuration. Glue tables and the Athena workgroup share enablement; there is no Terraform dependency from tables to the workgroup. Canonical facts remain read-only. Deployment of this catalog is UNKNOWN. Sources: `modules/historical_analytics/glue.tf`; `modules/historical_analytics/athena.tf`; `modules/historical_analytics/results_bucket.tf`.
 
 ### Observability
 
@@ -111,7 +111,7 @@ Dashboard name / catalog id: `${name_prefix}-historical-analytics` / `historical
 | Geometry table | `aws_glue_catalog_table.hazard_geometry` |
 | Workgroup | `aws_athena_workgroup.historical_analytics` |
 | Results bucket | `aws_s3_bucket.athena_results` |
-| Query policy | `aws_iam_policy.query` (unattached) |
+| Query policy | `aws_iam_policy.query` created in this module and not attached there; `envs/dev` attaches it to the disabled AI host |
 
 ## Known limitations
 

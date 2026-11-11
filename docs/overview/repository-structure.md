@@ -1,7 +1,7 @@
 # Repository structure
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws1-platform-foundations`
+**Historical verification:** `8abd2d5` on `docs/ws1-platform-foundations`. Not verification of the current tree.
 **Maturity:** CODE, TF
 **Production authorization:** no grant found in this repository
 

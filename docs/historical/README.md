@@ -2,7 +2,7 @@
 
 This page is an index. It states no behavior. Canonical pages own the claims.
 
-**Verified against:** `8abd2d5` on `docs/ws4-historical`
+**Historical verification:** `8abd2d5` on `docs/ws4-historical`. Not verification of the current tree.
 
 ## How to use this tree
 

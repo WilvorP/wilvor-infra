@@ -1,7 +1,7 @@
 # Architecture
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws1-platform-foundations`
+**Historical verification:** `8abd2d5` on `docs/ws1-platform-foundations`. Not verification of the current tree.
 **Maturity:** CODE, TF, UNIT, CONTRACT, INFRA, INT, LIVE
 **Production authorization:** `MasterRouteExecutionAuthority.DENIED`. Production execution is not representable (source: `functions/shared/wilvor_ai/master_routing.py`, `MasterRouteExecutionAuthority`).
 
@@ -47,12 +47,12 @@ flowchart LR
     fh -.->|"TF configuration"| s3hf
     s3hf -.->|"TF configuration"| glue
   end
-  subgraph ai["AI library CODE TF absent"]
+  subgraph ai["AI library CODE; ai_host TF invoke closed"]
     pkg["wilvor_ai package"]
   end
 ```
 
-Caption: three planes at `8abd2d5`. Solid edges inside the operational subgraph are handler or table wiring read in Terraform and application source. Dotted edges inside the historical subgraph are Terraform configuration. The AI subgraph has no runtime edge: search of `*.tf` for `bedrock`, `anthropic`, and `wilvor_ai` returned no matches, and the Operational API does not import `wilvor_ai`. Sources: `envs/dev/main.tf`; `modules/operational_api/api.tf`; `dashboard/src/routes/routeDefinitions.ts`; `functions/operational_api/app.py`.
+Caption: operational and historical edges were read at `8abd2d5` and rechecked after the AI host merge. Solid edges inside the operational subgraph are handler or table wiring. Dotted edges inside the historical subgraph are Terraform configuration. The AI subgraph has no production execution edge: `module.ai_host` sets `enable_invoke = false`, and the Operational API does not import `wilvor_ai`. Sources: `envs/dev/main.tf`; `modules/ai_host/lambda.tf`; `modules/operational_api/api.tf`; `functions/operational_api/app.py`.
 
 ## Aircraft and weather ingestion
 
@@ -256,7 +256,7 @@ Operational API documentation: [`docs/api/operational-api.md`](../api/operationa
 
 Canonical console documentation: [`dashboard/README.md`](../../dashboard/README.md).
 
-Routes registered in `dashboard/src/routes/routeDefinitions.ts` (`ROUTES`), all `implemented: true` at `8abd2d5`: `/`, `/aircraft`, `/airports`, `/encounters`, `/recommendations`, `/alerts`, `/system-health`. There is no `/ai` route in that table.
+Routes registered in `dashboard/src/routes/routeDefinitions.ts` (`ROUTES`), all `implemented: true`: `/`, `/aircraft`, `/airports`, `/encounters`, `/recommendations`, `/alerts`, `/system-health`, `/copilot`. There is no `/ai` path. `/copilot` does not activate production AI and does not POST `/ai/query` (source: `dashboard/src/routes/routeDefinitions.ts`).
 
 The HTTP client in `dashboard/src/api/operationalApi.ts` calls the Operational API paths above. Vite binds port `5173` with `strictPort: true` so the origin matches the API CORS allowlist (source: `dashboard/vite.config.ts`; `modules/operational_api/variables.tf` cited in that file).
 
@@ -305,7 +305,7 @@ sequenceDiagram
   Note over Plan, Auth: DENIED. Production execution is not representable. Do not add a specialist call here.
 ```
 
-Caption: shape required while `MasterRouteExecutionAuthority` has only `DENIED`. Source: `functions/shared/wilvor_ai/master_routing.py`, `MasterRouteExecutionAuthority`. Verified at `8abd2d5`. Tests: `tests/contracts/test_master_routing.py`, `test_live_ops_only_is_bounded_and_not_executable_authority`.
+Caption: shape required while `MasterRouteExecutionAuthority` has only `DENIED`. Source: `functions/shared/wilvor_ai/master_routing.py`, `MasterRouteExecutionAuthority`. Historical verification at `8abd2d5`. Not verification of the current code. Tests: `tests/contracts/test_master_routing.py`, `test_live_ops_only_is_bounded_and_not_executable_authority`.
 
 ## Interfaces
 
@@ -323,7 +323,7 @@ Caption: shape required while `MasterRouteExecutionAuthority` has only `DENIED`.
 - Timed ingestion schedules are disabled in `envs/dev`.
 - Projection Terraform subscribes to `hazard.materialized`, but `functions/projection/processor/app.py` `lambda_handler` ignores that detail-type and processes `aircraft.state.updated` only.
 - Comments in `envs/dev/main.tf` still say some event triggers should stay disabled until manual verification; the assigned flags are `true`. Current status follows the assignments.
-- `test_root_contract.py` `EXPECTED_MODULES` lists `aircraft_foundation`, `weather_events`, `sigmet`, `metar`, and `taf` only. Later modules are asserted by other Terraform contract tests, not that set.
+- `test_root_contract.py` `EXPECTED_MODULES` includes `ai_host`, `operational_api`, `runway_metadata`, and `station_reference` with the other dev-root modules named in that set.
 - No combined integration test exists (`tests/integration/combined/` is `.gitkeep` only).
 - The Operational API has no authorizer in Terraform.
 - AI is not an execution path of the Operational API.

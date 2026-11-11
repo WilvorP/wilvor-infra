@@ -1,7 +1,7 @@
 # Deterministic historical queries
 
 **Canonical page:** this page | deep specification [`functions/shared/wilvor_historical_query/README.md`](../../functions/shared/wilvor_historical_query/README.md)
-**Verified against:** `8abd2d5` on `docs/ws4-historical`
+**Historical verification:** `8abd2d5` on `docs/ws4-historical`. Not verification of the current tree.
 **Maturity:** CODE, TF, UNIT, INFRA, LIVE
 **Production authorization:** no grant found. There is no attached query execution role. `MasterRouteExecutionAuthority` is `DENIED` (source: `functions/shared/wilvor_ai/master_routing.py`, `MasterRouteExecutionAuthority`). Historical query code is not deployed AI infrastructure.
 
@@ -21,7 +21,7 @@ This page records the closed V1 historical analytics operations, their data cont
 | Integration tests | none found | search: `tests/integration/` for `historical` |
 | Live harness | LIVE | `scripts/validate_historical_query_runtime.py` |
 | Deployment | UNKNOWN | `not verified` |
-| Production authorization | no grant found | unattached `aws_iam_policy.query`; no Agent API route |
+| Production authorization | no grant found | query policy attached only to the closed AI host; `POST /ai/query` stays off |
 
 ## Behavior
 
@@ -98,12 +98,12 @@ flowchart LR
   postGate --> resp
 ```
 
-Caption: operations flow at `8abd2d5`. Solid edges are calls in `HistoricalAnalyticsOperations._run_single` / `_certify`. If the post-query gate is not `EVALUABLE`, `_certify` returns `_coverage_outcome` and does not keep the parsed Athena result as certified. The executor does not create AWS clients on import. Sources: `functions/shared/wilvor_historical_query/operations.py`; `functions/shared/wilvor_historical_query/executor.py`.
+Caption: historical observation of the operations flow at `8abd2d5`. Not verification of the current code. Solid edges are calls in `HistoricalAnalyticsOperations._run_single` / `_certify`. If the post-query gate is not `EVALUABLE`, `_certify` returns `_coverage_outcome` and does not keep the parsed Athena result as certified. The executor does not create AWS clients on import. Sources: `functions/shared/wilvor_historical_query/operations.py`; `functions/shared/wilvor_historical_query/executor.py`.
 
 ## Known limitations
 
 - Library code plus Terraform catalog is not a deployed query service.
-- Operator SSO live runs do not prove the unattached managed policy. See [IAM](iam.md).
+- Operator SSO live runs do not prove the AI host query-policy attachment. See [IAM](iam.md).
 - Hazard-version responses include `HAZARD_VERSION_WINDOW_LIMITATION`.
 - Custom runtime CloudWatch metrics were not added. There is no deployed Agent API/Lambda to emit them (source: `modules/historical_analytics/README.md`).
 - Current pytest pass counts are UNKNOWN. This page does not record a suite result.

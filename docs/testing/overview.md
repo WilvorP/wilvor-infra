@@ -1,7 +1,7 @@
 # Testing overview
 
 **Canonical page:** this page for the test-layer map. Directory conventions: [`../../tests/README.md`](../../tests/README.md). Integration runner: [`../../tests/integration/README.md`](../../tests/integration/README.md). Infrastructure runner: [`../../tests/infrastructure/README.md`](../../tests/infrastructure/README.md).
-**Verified against:** `8abd2d5` on `docs/ws1-platform-foundations`
+**Historical verification:** `8abd2d5` on `docs/ws1-platform-foundations`. Not verification of the current tree.
 **Maturity:** CODE, UNIT, CONTRACT, INFRA, INT, LIVE
 **Production authorization:** no grant found. Integration and AWS infrastructure tests refuse non-`dev` Terraform outputs.
 
@@ -58,7 +58,7 @@ python -m pytest tests/unit -q -p no:cacheprovider
 
 ## Contract
 
-`tests/contracts/` contains 117 `test_*.py` modules at this commit, including Master routing, live-ops, historical specialist, decision tools, and import-isolation suites. Index: [`tests/contracts/README.md`](../../tests/contracts/README.md).
+`tests/contracts/` contains the Master routing, live-ops, historical specialist, decision tools, and import-isolation suites. A count of 117 `test_*.py` modules was a historical observation at `8abd2d5`. It is not a current inventory, and this page does not publish a new count. Index: [`tests/contracts/README.md`](../../tests/contracts/README.md).
 
 Example assertion: `tests/contracts/test_master_routing.py` `test_live_ops_only_is_bounded_and_not_executable_authority` requires `MasterRouteExecutionAuthority.DENIED` even when the plan outcome is `AUTHORIZED_PLAN`.
 
@@ -72,7 +72,7 @@ These tests are not a live model pass.
 
 Terraform modules: `test_root_contract.py`, `test_plan_safety.py`, `test_terraform_cli.py`, `test_historical_facts_contract.py`, `test_historical_data_plane_contract.py`, `test_historical_analytics_contract.py`, `test_historical_analytics_query_iam_contract.py`, `test_historical_analytics_validation.py`.
 
-`EXPECTED_MODULES` in `test_root_contract.py` lists `aircraft_foundation`, `weather_events`, `sigmet`, `metar`, and `taf` only. Later `envs/dev` modules are covered by the historical contract tests and by reading `envs/dev/main.tf` directly, not by that expected-module set.
+`EXPECTED_MODULES` in `test_root_contract.py` is the dev-root module set, including `ai_host`, `operational_api`, `runway_metadata`, and `station_reference`. Historical contract tests still assert analytics and facts behavior beyond that source-path check.
 
 AWS modules: `test_identity.py`, `test_compute.py`, `test_data_services.py`, `test_eventing_monitoring.py`, `test_secrets.py`. `test_tests_are_targeting_dev_environment` asserts `terraform_outputs["environment"] == "dev"`.
 
@@ -122,7 +122,7 @@ Stored JSON under `test-results/live-anthropic/` is historical evidence of a pas
 | `scripts/run-infrastructure-tests.ps1` | `test-results/infrastructure/` |
 | `scripts/run-integration-tests.ps1` | `test-results/integration/` |
 
-`test-results/` is gitignored. There is no single orchestrator script that runs every layer. There is no Markdown report generator in `scripts/` at this commit.
+`test-results/` is gitignored. The PowerShell runners above remain layer entry points. `.github/workflows/ci.yml` is the offline CI orchestrator for discovery, the Python matrix, Terraform formatting and validation, the dashboard job, security scans, and the aggregate gate. It does not deploy and does not call AWS (source: `.github/workflows/ci.yml`; [`../../CI.md`](../../CI.md)). A workflow file is not a recorded pass. There is no Markdown report generator in `scripts/`.
 
 ## Known limitations
 
@@ -133,7 +133,7 @@ Stored JSON under `test-results/live-anthropic/` is historical evidence of a pas
 
 ## Historical record
 
-No superseded statement is stored on this page. The older `tests/README.md` directory tree is preserved under that file's historical record.
+An earlier revision said `EXPECTED_MODULES` listed only five ingestion modules and that no orchestrator ran every layer. Current text follows the dev-root set in `test_root_contract.py` and `.github/workflows/ci.yml`. The older `tests/README.md` directory tree is preserved under that file's historical record.
 
 ## Sources
 

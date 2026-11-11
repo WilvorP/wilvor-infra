@@ -1,7 +1,7 @@
 # Historical Analytics Specialist
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws5-ai-copilot`
+**Historical verification:** `8abd2d5` on `docs/ws5-ai-copilot`. Not verification of the current tree.
 **Maturity:** CODE, CONTRACT, LIVE
 **Production authorization:** `MasterRouteExecutionAuthority.DENIED`; `MasterProductionAuthority.DENIED`
 
@@ -14,7 +14,7 @@ This page describes the Historical Analytics Specialist, its four-tool catalog, 
 | Question | Result | Source |
 | --- | --- | --- |
 | Code | CODE | `functions/shared/wilvor_ai/historical_specialist.py` (`HistoricalAnalyticsSpecialist`) |
-| Terraform | TF absent at `8abd2d5` (search: `*.tf` for `wilvor_ai`, `HistoricalAnalyticsSpecialist`) | named search |
+| Terraform | TF for a closed host; this specialist is not dispatched | `envs/dev/main.tf` (`module.ai_host`, `enable_invoke = false`) |
 | Unit tests | UNIT for the operator harness module | `tests/unit/scripts/test_validate_historical_specialist_anthropic_live.py` |
 | Contract tests | CONTRACT | `tests/contracts/test_historical_specialist.py`; `tests/contracts/test_historical_verification.py`; `tests/contracts/test_historical_analytics_tools.py` |
 | Infrastructure tests | none found | named search |

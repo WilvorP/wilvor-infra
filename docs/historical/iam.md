@@ -1,9 +1,9 @@
 # Historical query IAM
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws4-historical`
+**Historical verification:** `8abd2d5` on `docs/ws4-historical`. Not verification of the current tree.
 **Maturity:** CODE, TF, INFRA, LIVE
-**Production authorization:** no grant found. Repository configuration defines an unattached customer-managed policy. It does not attach that policy to a principal.
+**Production authorization:** no grant found. The analytics module does not attach `aws_iam_policy.query`. `envs/dev` attaches it to the closed AI host role. That attachment is not an Agent API and `enable_invoke` stays `false`.
 
 ## Purpose
 
@@ -21,7 +21,7 @@ This page records IAM as written in Terraform and asserted by infrastructure tes
 | Integration tests | none found | search: `tests/integration/` for `historical` |
 | Live harness | LIVE | `scripts/validate_historical_query_runtime.py` action `iam-proof` (operator opt-in; not run for this page) |
 | Deployment | UNKNOWN | `not verified` |
-| Production authorization | no principal attachment found | `aws_iam_policy.query` only; no `aws_iam_role_policy_attachment` in this module |
+| Production authorization | no production grant | module has no attachment; `envs/dev/main.tf` attaches the policy to `module.ai_host.role_name` with `enable_invoke = false` |
 
 ## Behavior
 
@@ -43,7 +43,7 @@ Search of `modules/historical_analytics/**/*.tf` at `8abd2d5`:
 | `aws_iam_policy_attachment` | absent |
 | `sts:AssumeRole` / `assume_role` in `iam.tf` | absent |
 
-`envs/dev/main.tf` does not attach `query_policy_arn` to a role. The ARN is an output only (`envs/dev/outputs.tf`, `historical_analytics_query_policy_arn`). `modules/operational_api` does not reference the query policy (tests: `tests/infrastructure/terraform/test_historical_analytics_query_iam_contract.py`, `test_query_policy_is_one_unattached_managed_policy`, `test_policy_is_disposable_and_not_on_operational_api_or_data_plane`).
+`modules/historical_analytics` does not attach the policy. `envs/dev/main.tf` attaches it once, to `module.ai_host.role_name`, and sets `enable_invoke = false`. The ARN remains an output (`envs/dev/outputs.tf`, `historical_analytics_query_policy_arn`). `modules/operational_api` does not reference the query policy (tests: `tests/infrastructure/terraform/test_historical_analytics_query_iam_contract.py`, `test_query_policy_is_one_unattached_managed_policy`, `test_policy_is_disposable_and_not_on_operational_api_or_data_plane`).
 
 Permissions described by the policy document (source: `modules/historical_analytics/iam.tf`, `data.aws_iam_policy_document.query`):
 
@@ -87,13 +87,13 @@ These role resources are TF. Whether they exist in an account is UNKNOWN.
 ## Known limitations
 
 - No execution role or trust policy exists in `modules/historical_analytics`.
-- Operational API, dashboard API, coverage_control, ingestion, and human SSO do not receive this query policy in repository Terraform.
-- A future Agent API attachment is described in comments and is not present as a resource.
+- The dev root attaches the policy to the AI host role. That role cannot be invoked while `enable_invoke = false`. Operational API, dashboard API, coverage_control, ingestion, and human SSO do not receive this query policy.
+- The policy description still mentions a future Agent API. That Agent API resource is not present. The existing attachment is the closed AI host, not that API.
 - This documentation task did not call AWS IAM APIs.
 
 ## Historical record
 
-No superseded statement is stored on this page. Phase 2B.5 "unattached" wording in `modules/historical_analytics/README.md` matches current Terraform at `8abd2d5`.
+An earlier revision said `envs/dev/main.tf` did not attach `query_policy_arn`. Current text follows `aws_iam_role_policy_attachment.ai_host_historical_analytics_query`. The module README still says the policy is unattached inside `modules/historical_analytics`, and it also records the `envs/dev` attachment to the disabled AI host.
 
 ## Sources
 

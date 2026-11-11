@@ -1,7 +1,7 @@
 # Risk
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws3-processing-api`
+**Historical verification:** `8abd2d5` on `docs/ws3-processing-api`. Not verification of the current tree.
 **Maturity:** CODE, TF, UNIT
 **Production authorization:** no grant found in `functions/risk/processor/app.py`. Scoring is an advisory MVP model. A stored LOW level is not a statement that the aircraft is safe. Risk absence is not a LOW classification.
 

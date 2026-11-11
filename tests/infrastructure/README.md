@@ -1,7 +1,7 @@
 # Wilvor Infrastructure Tests
 
 **Canonical page:** this page for Terraform and AWS infrastructure tests. Layer map: [`../../docs/testing/overview.md`](../../docs/testing/overview.md)
-**Verified against:** `8abd2d5` on `docs/ws1-platform-foundations`
+**Historical verification:** `8abd2d5` on `docs/ws1-platform-foundations`. Not verification of the current tree.
 **Maturity:** CODE, INFRA
 **Production authorization:** no grant found. AWS tests fail unless Terraform reports `environment = dev`.
 
@@ -130,10 +130,10 @@ test-results/infrastructure/
 
 ## Known limitations
 
-- `test_root_contract.py` `EXPECTED_MODULES` lists only
-  `aircraft_foundation`, `weather_events`, `sigmet`, `metar`, and `taf`.
-  Later `envs/dev` modules are asserted by historical contract tests, not that
-  set (source: `tests/infrastructure/terraform/test_root_contract.py`,
+- `test_root_contract.py` `EXPECTED_MODULES` includes `ai_host`,
+  `operational_api`, `runway_metadata`, and `station_reference` with the
+  other dev-root modules in that set (source:
+  `tests/infrastructure/terraform/test_root_contract.py`,
   `EXPECTED_MODULES`).
 - AWS tests require an applied `dev` stack. Whether that stack exists is
   UNKNOWN on this page.

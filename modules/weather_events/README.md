@@ -1,7 +1,7 @@
 # Weather events module
 
 **Canonical page:** [`docs/ingestion/weather-events.md`](../../docs/ingestion/weather-events.md)
-**Verified against:** `8abd2d5` on `docs/ws2-ingestion`
+**Historical verification:** `8abd2d5` on `docs/ws2-ingestion`. Not verification of the current tree.
 **Maturity:** TF, INFRA
 **Production authorization:** no grant found in this module
 

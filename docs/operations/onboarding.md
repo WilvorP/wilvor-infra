@@ -1,7 +1,7 @@
 # Onboarding
 
 **Canonical page:** this page for developer environment setup. Lifecycle apply/destroy: [`lifecycle.md`](lifecycle.md). Script flags: [`../../scripts/README.md`](../../scripts/README.md).
-**Verified against:** `8abd2d5` on `docs/ws1-platform-foundations`
+**Historical verification:** `8abd2d5` on `docs/ws1-platform-foundations`. Not verification of the current tree.
 **Maturity:** CODE, TF, LIVE
 **Production authorization:** no grant found. Lifecycle scripts target the development Terraform roots only.
 

@@ -1,7 +1,7 @@
 # Wilvor Test Suite
 
 **Canonical page:** this page for suite layout. Layer map: [`../docs/testing/overview.md`](../docs/testing/overview.md)
-**Verified against:** `8abd2d5` on `docs/ws1-platform-foundations`
+**Historical verification:** `8abd2d5` on `docs/ws1-platform-foundations`. Not verification of the current tree.
 **Maturity:** CODE, UNIT, CONTRACT, INFRA, INT, LIVE
 **Production authorization:** no grant found. Integration and AWS infrastructure tests require Terraform `environment = dev`.
 
@@ -136,7 +136,7 @@ Examples:
 - Safe plan assertions
 - Historical facts and analytics enablement contracts
 
-`test_root_contract.py` `EXPECTED_MODULES` lists `aircraft_foundation`, `weather_events`, `sigmet`, `metar`, and `taf` only.
+`test_root_contract.py` `EXPECTED_MODULES` includes `ai_host`, `operational_api`, `runway_metadata`, and `station_reference` with the other dev-root modules in that set.
 
 ### `infrastructure/aws/`
 

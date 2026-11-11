@@ -1,7 +1,7 @@
 # Historical operational fact contracts
 
 **Canonical page:** this page | map [`docs/historical/fact-identity.md`](../../../docs/historical/fact-identity.md)
-**Verified against:** `8abd2d5` on `docs/ws4-historical`
+**Historical verification:** `8abd2d5` on `docs/ws4-historical`. Not verification of the current tree.
 **Maturity:** CODE, UNIT
 **Production authorization:** no grant found. This package has no AWS clients and does not authorize collection.
 

@@ -1,7 +1,7 @@
 # Historical coverage and verified zero
 
 **Canonical page:** this page | evaluator [`functions/shared/wilvor_historical/coverage.py`](../../functions/shared/wilvor_historical/coverage.py) | query contracts [`functions/shared/wilvor_historical/query_contracts.py`](../../functions/shared/wilvor_historical/query_contracts.py)
-**Verified against:** `8abd2d5` on `docs/ws4-historical`
+**Historical verification:** `8abd2d5` on `docs/ws4-historical`. Not verification of the current tree.
 **Maturity:** CODE, TF, UNIT, INFRA, LIVE
 **Production authorization:** no grant found. Coverage evaluability is not a production execution grant.
 

@@ -1,7 +1,7 @@
 # Master Agent
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws5-ai-copilot`
+**Historical verification:** `8abd2d5` on `docs/ws5-ai-copilot`. Not verification of the current tree.
 **Maturity:** CODE, CONTRACT
 **Production authorization:** `MasterRouteExecutionAuthority.DENIED`; `MasterProductionAuthority.DENIED`; `MasterSourceAuthenticity.NOT_ESTABLISHED`; `MasterRequestCoverage.NOT_ESTABLISHED`
 
@@ -14,7 +14,7 @@ This page documents MA1–MA7 interfaces and responsibilities. It distinguishes 
 | Question | Result | Source |
 | --- | --- | --- |
 | Code | CODE | `functions/shared/wilvor_ai/master_*.py` (26 modules) |
-| Terraform | TF absent at `8abd2d5` (search: `*.tf` for `wilvor_ai`, `MasterRoute`, `authorize_route`) | named search |
+| Terraform | TF for a closed host; Master execution stays `DENIED` | `envs/dev/main.tf` (`module.ai_host`, `enable_invoke = false`); `functions/shared/wilvor_ai/master_routing.py` (`MasterRouteExecutionAuthority`) |
 | Unit tests | none found under `tests/unit/` for Master | named search |
 | Contract tests | CONTRACT | `tests/contracts/test_master_*.py`; `tests/contracts/test_ma4_*.py`; `tests/contracts/test_ma7_*.py`; `tests/contracts/test_sprint3a_ma7_*.py` |
 | Infrastructure tests | none found | named search |
@@ -51,7 +51,7 @@ sequenceDiagram
   Note over Plan, Auth: DENIED. Production execution is not representable. Do not add a specialist call here.
 ```
 
-Caption: shape required while `MasterRouteExecutionAuthority` has only `DENIED`. Source: `functions/shared/wilvor_ai/master_routing.py`, `MasterRouteExecutionAuthority`. Verified at `8abd2d5`.
+Caption: shape required while `MasterRouteExecutionAuthority` has only `DENIED`. Source: `functions/shared/wilvor_ai/master_routing.py`, `MasterRouteExecutionAuthority`. Historical verification at `8abd2d5`. Not verification of the current code.
 
 ## Behavior
 
@@ -159,7 +159,7 @@ Historical Sprint 3A review findings remain in [`SPRINT3A_MA7_SECURITY_REVIEW.md
 
 Trusted planning identity lives on `MasterPlanningContext`: application-owned Master request id, correlation id, application request time, and canonical user text. That identity is not source authentication (source: `functions/shared/wilvor_ai/MA5_MA7_INTERFACE_CONTRACT.md`, section 4).
 
-The Operational API Lambda is not an AI execution path. This contract does not route AI execution through `functions/operational_api` (source: `functions/shared/wilvor_ai/MA5_MA7_INTERFACE_CONTRACT.md`). Search of `functions/operational_api` for `"/ai"` at `8abd2d5` found no route.
+The Operational API Lambda is not an AI execution path. This contract does not route AI execution through `functions/operational_api` (source: `functions/shared/wilvor_ai/MA5_MA7_INTERFACE_CONTRACT.md`). `envs/dev` sets `enable_ai_query_route = false`, so `aws_apigatewayv2_route.ai_query` is not created.
 
 ## Known limitations
 
@@ -173,12 +173,12 @@ The Operational API Lambda is not an AI execution path. This contract does not r
 - Decision comparison candidates cannot authorize targets.
 - Verified zero cannot be fabricated from unauthenticated claims.
 - Untrusted evidence produces no operational factual Master response.
-- Agent API, dashboard `/ai`, and Terraform Master wiring are absent at this commit.
+- Agent API remains absent in `envs/dev` (`enable_ai_query_route = false`). Dashboard `/copilot` does not activate production AI. `module.ai_host` does not grant Master execution.
 - `test_ma7_master_safety_matrix.py` still says "MA5 and MA6 modules are absent on this branch". That sentence is stale relative to this tree; the modules exist. The test file is not owned by this workstream and was not edited.
 
 ## Historical record
 
-Package README sentences that said "Master Agent remains future work" after MA1–MA7 modules existed are moved to Historical record on [`functions/shared/wilvor_ai/README.md`](../../functions/shared/wilvor_ai/README.md). What remains unimplemented is production execution, an Agent API, and dashboard/Terraform wiring—not the existence of the offline Master contract suite.
+Package README sentences that said "Master Agent remains future work" after MA1–MA7 modules existed are moved to Historical record on [`functions/shared/wilvor_ai/README.md`](../../functions/shared/wilvor_ai/README.md). An earlier sentence on this page said dashboard and Terraform wiring were absent. Current text follows offline Master contracts, `module.ai_host` with invoke closed, and `/copilot` without production AI. Production execution and an Agent API remain unimplemented.
 
 `MA5_MA7_INTERFACE_CONTRACT.md` section 10 file lists and the "PROPOSED FOR LATER" heading described the foundation commit. Those lists are labeled historical on that file. The modules named there now exist in this tree.
 

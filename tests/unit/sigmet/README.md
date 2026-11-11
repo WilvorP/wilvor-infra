@@ -1,7 +1,7 @@
 # SIGMET unit tests
 
 **Canonical page:** [`docs/ingestion/sigmet.md`](../../../docs/ingestion/sigmet.md)
-**Verified against:** `8abd2d5` on `docs/ws2-ingestion`
+**Historical verification:** `8abd2d5` on `docs/ws2-ingestion`. Not verification of the current tree.
 **Maturity:** UNIT
 **Production authorization:** these tests do not grant production use
 

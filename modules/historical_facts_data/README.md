@@ -1,7 +1,7 @@
 # Persistent historical facts data plane
 
 **Canonical page:** this page | map [`docs/historical/terraform-roots.md`](../../docs/historical/terraform-roots.md)
-**Verified against:** `8abd2d5` on `docs/ws4-historical`
+**Historical verification:** `8abd2d5` on `docs/ws4-historical`. Not verification of the current tree.
 **Maturity:** TF, INFRA
 **Production authorization:** no grant found. Instantiating this module in Terraform is not a recorded apply.
 

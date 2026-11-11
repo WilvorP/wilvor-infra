@@ -1,7 +1,7 @@
 # Canonical fact identity
 
 **Canonical page:** this page | deep specification [`functions/shared/wilvor_historical/README.md`](../../functions/shared/wilvor_historical/README.md)
-**Verified against:** `8abd2d5` on `docs/ws4-historical`
+**Historical verification:** `8abd2d5` on `docs/ws4-historical`. Not verification of the current tree.
 **Maturity:** CODE, UNIT
 **Production authorization:** no grant found in `functions/shared/wilvor_historical`. This package does not persist facts or authorize collection.
 

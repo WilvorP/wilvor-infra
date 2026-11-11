@@ -1,7 +1,7 @@
 # Historical testing and validation limits
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws4-historical`
+**Historical verification:** `8abd2d5` on `docs/ws4-historical`. Not verification of the current tree.
 **Maturity:** CODE, UNIT, CONTRACT, INFRA, LIVE
 **Production authorization:** no grant found. Harness files authorize only the invocation each harness defines.
 
@@ -42,7 +42,7 @@ Representative assertions that this workstream re-read:
 | `VERIFIED_ZERO` requires `EVALUABLE` and exact zero | `tests/unit/historical_facts/test_query_contracts.py` (`test_verified_zero_requires_evaluable_and_exact_semantic_count_zero`) |
 | Pre-query gap executes zero Athena calls | `tests/unit/historical_query/test_operations.py` (`test_pre_gap_blocks_without_athena`) |
 | Executor rejects caller SQL | `tests/unit/historical_query/test_athena_executor.py` (`test_public_executor_accepts_only_fixed_query_id_and_typed_request`) |
-| Query policy is unattached | `tests/infrastructure/terraform/test_historical_analytics_query_iam_contract.py` (`test_query_policy_is_one_unattached_managed_policy`) |
+| Query policy is unattached inside the analytics module | `tests/infrastructure/terraform/test_historical_analytics_query_iam_contract.py` (`test_query_policy_is_one_unattached_managed_policy`). `envs/dev` attaches that policy to the disabled AI host (`test_policy_is_disposable_and_not_on_operational_api_or_data_plane`) |
 | `VERIFIED_ZERO` maps to `ToolResultStatus.NOT_FOUND` | `tests/contracts/test_historical_analytics_mapping.py` (`test_verified_zero_maps_to_not_found_with_first_class_proof`) |
 
 ## Infrastructure tests
@@ -60,7 +60,7 @@ Terraform contract tests read HCL. They do not apply. They do not inspect AWS.
 | Harness | What it is | Limit |
 | --- | --- | --- |
 | `scripts/validate_historical_analytics.ps1` | Fixed SQL templates from `modules/historical_analytics/validation` | no `-Sql` / `-Query`; dry-run makes no AWS calls; Athena empty is `SQL_EMPTY`, not `VERIFIED_ZERO` |
-| `scripts/validate_historical_query_runtime.py` | Closed operations, coverage inspect, snapshot, `iam-proof` | no raw SQL flags; dry-run makes zero AWS calls; live uses operator SSO and does not prove the unattached query policy |
+| `scripts/validate_historical_query_runtime.py` | Closed operations, coverage inspect, snapshot, `iam-proof` | no raw SQL flags; dry-run makes zero AWS calls; live uses operator SSO and does not prove the AI host query-policy attachment |
 | `scripts/validate_historical_specialist_anthropic_live.py` | Historical specialist Anthropic harness | no AWS, no Athena, no Bedrock per `scripts/README.md`; specialist page: [`docs/ai/historical-analytics-specialist.md`](../ai/historical-analytics-specialist.md) |
 
 A harness file is the LIVE label. A passing run is a separate statement and needs a stored artifact path. This documentation task did not run those harnesses and did not read live artifacts as a current result.

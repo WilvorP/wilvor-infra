@@ -882,9 +882,17 @@ def test_decision_expert_readme_section_names_the_closed_boundary():
         "DE2 renders",
         "AnthropicDecisionMessagesProvider",
         "claude-sonnet-4-6",
-        "Master Agent remains future work",
-        "Agent API remains future work",
+        "Master Agent offline contracts exist",
+        "MasterRouteExecutionAuthority",
+        "DENIED",
+        "production execution is not representable",
+        "enable_invoke = false",
+        "POST /ai/query",
+        "does not activate production AI",
+        "Agent API remains absent",
         "is not complete",
     ):
         assert phrase in section
     assert "AI Operations Copilot is complete" not in section
+    assert "Master Agent remains future work" not in section
+    assert "production ready" not in section.casefold()

@@ -1,9 +1,9 @@
 # Historical analytics query runtime
 
 **Canonical page:** this page | map [`docs/historical/queries.md`](../../../docs/historical/queries.md)
-**Verified against:** `8abd2d5` on `docs/ws4-historical`
+**Historical verification:** `8abd2d5` on `docs/ws4-historical`. Not verification of the current tree.
 **Maturity:** CODE, TF, UNIT, INFRA, LIVE
-**Production authorization:** no grant found. There is no attached query execution role. Historical query code is not deployed AI infrastructure.
+**Production authorization:** no grant found. This package has no query execution role. `envs/dev` attaches the analytics query policy to the disabled AI host. That attachment is not production execution. Historical query code is not deployed AI infrastructure.
 
 `wilvor_historical_query` renders deterministic Athena SQL for a closed
 set of historical analytics queries, executes those rendered queries
@@ -21,9 +21,11 @@ fail-closed coverage gate.
 
 **2B.4 — implemented:** four deterministic V1 historical operations.
 
-**2B.5 — implemented:** reusable, unattached historical analytics query
-IAM policy in `modules/historical_analytics`. No execution role, no
-attachment, no Operational API change.
+**2B.5 — implemented:** reusable historical analytics query IAM policy
+in `modules/historical_analytics`. This module does not attach it.
+`envs/dev` attaches it to `module.ai_host.role_name` with
+`enable_invoke = false`. There is no Operational API change and no
+Agent API.
 
 **2B.6 — implemented:** operator live-validation runner
 `scripts/validate_historical_query_runtime.py`, deployed-policy
@@ -52,7 +54,7 @@ specialist. Phase 2B remains the deterministic authority.
 - Master Agent
 - Agent API / runtime AWS composition
 - LLM/provider integration
-- Lambda execution role / query-policy attachment to a future Agent API
+- Lambda execution role / query-policy attachment to a future Agent API. The existing `envs/dev` attachment is the disabled AI host, not an Agent API.
 - hybrid current + historical synthesis
 
 ## Authority boundary
@@ -365,13 +367,13 @@ specialist and Agent API are not implemented here.
 | Integration tests | none found | search: `tests/integration/` for `historical` |
 | Live harness | LIVE | `scripts/validate_historical_query_runtime.py` |
 | Deployment | UNKNOWN | `not verified` |
-| Production authorization | no grant found | unattached `aws_iam_policy.query`; `MasterRouteExecutionAuthority.DENIED` |
+| Production authorization | no grant found | `envs/dev` attaches `aws_iam_policy.query` to the closed AI host; `MasterRouteExecutionAuthority.DENIED` |
 
 ## Known limitations
 
 - This package does not create AWS clients on import. Callers inject them.
 - The executor does not compute `VERIFIED_ZERO`.
-- Operator SSO does not prove the unattached query policy.
+- Operator SSO does not prove the AI host query-policy attachment. That host stays uninvoked while `enable_invoke = false`.
 - There is no historical-query HTTP route on the Operational API.
 - Library code plus Terraform catalog is not a deployed Agent API.
 

@@ -1,7 +1,7 @@
 # Evidence and safety
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws5-ai-copilot`
+**Historical verification:** `8abd2d5` on `docs/ws5-ai-copilot`. Not verification of the current tree.
 **Maturity:** CODE, CONTRACT
 **Production authorization:** `MasterRouteExecutionAuthority.DENIED`; `V1_AUTHORITY` is `READ_ONLY_ADVISORY`; advisory mode is not source-read authority and is not production execution
 
@@ -14,7 +14,7 @@ This page explains deterministic claim verification, provenance, freshness, conf
 | Question | Result | Source |
 | --- | --- | --- |
 | Code | CODE | `functions/shared/wilvor_ai/live_ops_evidence_verifier.py`; `functions/shared/wilvor_ai/historical_evidence_verifier.py`; `functions/shared/wilvor_ai/decision_evidence_verifier.py`; `functions/shared/wilvor_ai/master_provenance_trace.py` |
-| Terraform | TF absent at `8abd2d5` (search: `*.tf` for `wilvor_ai`, `bedrock`, `agent_api`) | named search |
+| Terraform | TF for a closed host; Bedrock is denied | `envs/dev/main.tf` (`module.ai_host`, `enable_invoke = false`); `modules/ai_host/iam.tf` (`DenyModelSecretsAndInvoke`) |
 | Unit tests | none found under `tests/unit/` for verifiers | named search |
 | Contract tests | CONTRACT | `tests/contracts/test_live_ops_evidence_verifier.py`; `tests/contracts/test_historical_verification.py`; `tests/contracts/test_decision_evidence_verifier.py`; `tests/contracts/test_sprint3a_ma7_safety_regression.py`; `tests/contracts/test_evidence_provenance.py` |
 | Infrastructure tests | none found at `8abd2d5` (search: `tests/infrastructure/` for `wilvor_ai`) | named search |
@@ -115,7 +115,7 @@ flowchart LR
   Verifier -->|"not established"| Fail
 ```
 
-Caption: verified at `8abd2d5`. Solid edges are the specialist verify-then-render order read in `live_ops_specialist.py`, `historical_answer_renderer.py`, and `decision_specialist.py`. No edge grants Master production execution.
+Caption: historical verification at `8abd2d5`. Not verification of the current code. Solid edges are the specialist verify-then-render order read in `live_ops_specialist.py`, `historical_answer_renderer.py`, and `decision_specialist.py`. No edge grants Master production execution.
 
 ## Known limitations
 

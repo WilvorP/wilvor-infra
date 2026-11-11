@@ -1,7 +1,7 @@
 # Airport assessment
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws3-processing-api`
+**Historical verification:** `8abd2d5` on `docs/ws3-processing-api`. Not verification of the current tree.
 **Maturity:** CODE, TF
 **Production authorization:** no grant found in `functions/airport_assessment/processor/app.py`. Ranked airport candidates are advisory evidence. A candidate count of zero does not mean that no safe airport exists.
 

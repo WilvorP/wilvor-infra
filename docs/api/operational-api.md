@@ -1,7 +1,7 @@
 # Operational API
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws3-processing-api`
+**Historical verification:** `8abd2d5` on `docs/ws3-processing-api`. Not verification of the current tree.
 **Maturity:** CODE, TF, UNIT, INFRA
 **Production authorization:** no grant found. No API authorizer, API key, Cognito, or JWT authorizer is configured in `modules/operational_api`. That absence is not production authentication.
 
@@ -27,7 +27,7 @@ This page is the HTTP reference for the dashboard Operational API. Terraform liv
 
 ### Routes and methods
 
-API Gateway exposes **16** GET routes. `local.route_keys` in `modules/operational_api/api.tf` is a 16-element set. `lambda_handler` serves those same 16 paths. CORS `allow_methods` includes `OPTIONS`, but `OPTIONS` is not a `route_keys` entry. There is no 17th or 18th HTTP route in this module (source: `modules/operational_api/api.tf`, `local.route_keys`; `functions/operational_api/app.py`, `lambda_handler`).
+API Gateway exposes **16** GET routes while `enable_ai_query_route` is false. `local.route_keys` in `modules/operational_api/api.tf` is that GET set. `lambda_handler` serves those paths. CORS `allow_methods` includes `OPTIONS`, but `OPTIONS` is not a `route_keys` entry. `envs/dev` sets `enable_ai_query_route = false`, so `aws_apigatewayv2_route.ai_query` stays at count 0 and `POST /ai/query` is not created (source: `envs/dev/main.tf`; `modules/operational_api/api.tf`). The handler returns 405 for a non-GET method.
 
 | Route key | Handler |
 | --- | --- |

@@ -1,7 +1,7 @@
 # wilvor_weather
 
 **Canonical page:** [`docs/ingestion/overview.md`](../../../docs/ingestion/overview.md)
-**Verified against:** `8abd2d5` on `docs/ws2-ingestion`
+**Historical verification:** `8abd2d5` on `docs/ws2-ingestion`. Not verification of the current tree.
 **Maturity:** CODE
 **Production authorization:** no grant found in this package
 

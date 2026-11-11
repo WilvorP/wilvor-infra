@@ -1,7 +1,7 @@
 # Wilvor AI Operations Copilot Phase 0
 
 **Canonical page:** this file for colocated phase history; mapping pages live under `docs/ai/`
-**Verified against:** `8abd2d5` on `docs/ws5-ai-copilot`
+**Historical verification:** `8abd2d5` on `docs/ws5-ai-copilot`. Not verification of the current tree.
 **Maturity:** CODE, CONTRACT, LIVE
 **Production authorization:** `MasterRouteExecutionAuthority.DENIED`; `MasterProductionAuthority.DENIED`; no Agent API grant found
 
@@ -34,8 +34,9 @@ later sentences that still describe Master Agent or Live Ops as unimplemented.
 | Historical Analytics Specialist | CODE, CONTRACT, LIVE | `functions/shared/wilvor_ai/historical_specialist.py` (`HistoricalAnalyticsSpecialist`) |
 | Decision Specialist | CODE, CONTRACT, LIVE | `functions/shared/wilvor_ai/decision_specialist.py` (`DecisionSpecialist`) |
 | Master Agent offline contracts | CODE, CONTRACT | `functions/shared/wilvor_ai/master_*.py` |
-| Terraform AI / Bedrock / Agent API | TF absent at `8abd2d5` (search: `envs/dev`, `envs/dev-historical-data`, `modules/**/*.tf` for `wilvor_ai`, `bedrock`, `agent_api`) | named search |
-| Agent API / dashboard `/ai` | absent at `8abd2d5` | `functions/operational_api`; `dashboard/src/routes/routeDefinitions.ts` |
+| AI host Terraform | TF, invoke closed | `envs/dev/main.tf` (`module.ai_host`, `enable_invoke = false`); `modules/ai_host/lambda.tf` (`AI_QUERY_ROUTE_ENABLED = false`) |
+| Agent API / `POST /ai/query` | absent in `envs/dev` | `envs/dev/main.tf` (`enable_ai_query_route = false`); `modules/operational_api/api.tf` (`aws_apigatewayv2_route.ai_query` count) |
+| Dashboard Copilot | CODE | `dashboard/src/routes/routeDefinitions.ts` (`/copilot`; production AI is not active) |
 | Current live-harness pass | UNKNOWN | this file's stored live JSON notes are historical evidence |
 | Deployment | UNKNOWN | not verified |
 | Production authorization | `DENIED` | `functions/shared/wilvor_ai/master_routing.py` (`MasterRouteExecutionAuthority`) |
@@ -48,8 +49,11 @@ later sentences that still describe Master Agent or Live Ops as unimplemented.
   production specialist dispatch.
 - `AgentAuthorityMode` contains `READ_ONLY_ADVISORY` only. Advisory mode is
   not source-read authority.
-- An Agent API, `/ai` Operational API route, dashboard `/ai` page, and
-  Terraform `wilvor_ai` wiring were not found at `8abd2d5`.
+- `envs/dev` sets `enable_ai_query_route = false` and `module.ai_host`
+  `enable_invoke = false`. The AI host denies `bedrock:*`. There is no
+  dashboard `/ai` path. `/copilot` does not activate production AI and
+  does not POST `/ai/query`. Agent API remains absent. Production
+  execution stays `DENIED`.
 - LIVE records harness files under `scripts/validate_*anthropic_live.py`.
   A current live pass is UNKNOWN. Stored live JSON artifacts are historical
   evidence and are not rewritten when harness accounting later changes.
@@ -815,9 +819,11 @@ Phase 3A completion does not complete the AI Operations Copilot. Phase 3A
 itself did not include a Decision Tool runtime or a Decision Expert. Those
 are complete in the sections below. Live Operations Specialist,
 Decision Specialist, and Master Agent offline contracts also exist in
-this tree. Still absent: dedicated Agent API, `/ai` frontend integration,
-Terraform AI wiring, production Master execution, visualization builder,
-broader evaluation, and latency/cost optimization. Master execution
+this tree. Still absent: a dedicated Agent API and production Master
+execution. `envs/dev` configures `module.ai_host` with
+`enable_invoke = false`. The dashboard `/copilot` route does not
+activate production AI. Visualization builder, broader evaluation, and
+latency/cost optimization remain out of scope. Master execution
 authority stays `DENIED`. Historical Analytics Specialist is one specialist
 foundation. DT1 defines the decision evidence contract. DT2 adds the
 read-only current decision context operation and, at that phase, does not
@@ -971,12 +977,16 @@ DE5 does not perform a live Anthropic call. Production client construction,
 secrets, runtime composition, and deployment remain future integration work.
 
 The full Wilvor AI Operations Copilot is not complete. Live Ops Expert
-and Decision Expert exist as in-process specialists. Master Agent exists
-as offline MA1–MA7 contracts with execution authority `DENIED`. Agent API
-remains absent. Also still absent: production specialist dispatch,
-runtime Lambda composition, dashboard `/ai` page, Terraform AI wiring,
-IAM for an Agent API role, a current live-harness pass in this worktree,
-and route generation. See `docs/ai/` for the current map.
+and Decision Expert exist as in-process specialists. Master Agent offline
+contracts exist. `MasterRouteExecutionAuthority` is `DENIED`, and
+production execution is not representable. `envs/dev` configures
+`module.ai_host` with `enable_invoke = false` and denies Bedrock.
+`POST /ai/query` stays absent because `enable_ai_query_route = false`.
+The dashboard `/copilot` route does not activate production AI and does
+not POST `/ai/query`. There is no dashboard `/ai` path. Agent API remains
+absent. Production specialist dispatch and a current live-harness pass
+remain absent. Route generation remains absent. See `docs/ai/` for the
+current map.
 
 ## Tests
 
@@ -1019,12 +1029,17 @@ so the phase narrative stays readable.
 - After Phase 3A complete: "Still not implemented: Live Ops Expert,
   Master Agent / LangGraph orchestration, multi-specialist evidence
   verification..." Live Ops Expert, Decision Expert, and Master offline
-  contracts exist in this tree. Production execution, Agent API, `/ai`
-  UI, and Terraform AI wiring remain absent.
+  contracts exist in this tree. Production execution and an Agent API
+  remain absent. A later revision replaced the `/ai` UI and Terraform
+  wiring sentences with `/copilot` and closed `module.ai_host`.
 - Decision Tools close: "A Master Agent remains future work."
 - Decision Expert close: "Master Agent remains future work. Agent API
   remains future work. Also still future work: specialist routing, Live
   Ops Expert, multi-specialist orchestration..."
+- Later Decision Expert close: dashboard `/ai` and Terraform AI wiring
+  were described as absent. Current text follows `module.ai_host` with
+  `enable_invoke = false`, `enable_ai_query_route = false`, and the
+  dashboard `/copilot` route that does not activate production AI.
 
 `run_synthetic_master_workflow` is test-only LangGraph over injected fake
 workers. It is not production Master execution (source:

@@ -1,7 +1,7 @@
 # Ingestion and reference data
 
 **Canonical page:** this index
-**Verified against:** `8abd2d5` on `docs/ws2-ingestion`
+**Historical verification:** `8abd2d5` on `docs/ws2-ingestion`. Not verification of the current tree.
 **Maturity:** this index states no behavior
 
 This index maps Wilvor ingestion and reference-data documentation. It does not state pipeline behavior. Canonical behavior pages are listed below. Maturity labels are defined only in [`docs/DOCUMENTATION_STANDARDS.md`](../DOCUMENTATION_STANDARDS.md).

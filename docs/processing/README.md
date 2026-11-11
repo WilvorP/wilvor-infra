@@ -1,7 +1,7 @@
 # Operational processing
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws3-processing-api`
+**Historical verification:** `8abd2d5` on `docs/ws3-processing-api`. Not verification of the current tree.
 **Maturity:** CODE, TF, UNIT
 **Production authorization:** no grant found in processor source. Stored recommendation actions are advisory evidence only. `ADVISORY_NOTICE` states: "Wilvor does not issue autonomous flight-control, diversion, landing, dispatch, or ATC instructions." (source: `functions/recommendations/processor/app.py`, `ADVISORY_NOTICE`)
 

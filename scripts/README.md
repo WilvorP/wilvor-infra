@@ -515,7 +515,7 @@ Closed actions: `dry-run`, `inspect-coverage`, `run-operation`,
 `snapshot-canonical`, `compare-snapshot`, `iam-proof`, `list-results`.
 
 Dry-run makes zero AWS calls. Live `run-operation` uses operator SSO
-and does **not** prove the unattached query IAM policy. There is no
+and does **not** prove the AI host query-policy attachment. There is no
 `--sql` / `--query-string` interface.
 
 ---

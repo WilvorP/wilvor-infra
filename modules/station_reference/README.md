@@ -1,7 +1,7 @@
 # Station reference module
 
 **Canonical page:** [`docs/ingestion/station-reference.md`](../../docs/ingestion/station-reference.md)
-**Verified against:** `8abd2d5` on `docs/ws2-ingestion`
+**Historical verification:** `8abd2d5` on `docs/ws2-ingestion`. Not verification of the current tree.
 **Maturity:** TF
 **Production authorization:** no grant found in this module
 
@@ -15,7 +15,7 @@ Terraform for the Aviation Weather station-cache loader, archive bucket, and `St
 | --- | --- | --- |
 | Terraform | TF | this module; `envs/dev/main.tf` (`module.station_reference`) |
 | Unit tests | none found for this module | no `tests/unit/station_reference/` |
-| Infrastructure tests | none found | `EXPECTED_MODULES` omits this module |
+| Infrastructure tests | INFRA for the module source path | `EXPECTED_MODULES` includes `station_reference` |
 | Deployment | UNKNOWN | `not verified` |
 | Production authorization | no grant found | this module |
 
@@ -25,7 +25,7 @@ Loader schedule state follows `enable_station_reference_loader_schedule` (defaul
 
 ## Known limitations
 
-- No unit or Terraform-source infrastructure tests for this module were found (`EXPECTED_MODULES` omits `station_reference`). Live-account tests under `tests/infrastructure/aws/` omit this loader from `LAMBDA_OUTPUTS` and do not establish DEPLOYED.
+- No unit tests for this module were found. `EXPECTED_MODULES` includes `station_reference`. Live-account tests under `tests/infrastructure/aws/` omit this loader from `LAMBDA_OUTPUTS` and do not establish DEPLOYED.
 - Schedule disabled in `envs/dev`.
 - PITR follows `enable_point_in_time_recovery` (`false` in `envs/dev`).
 

@@ -1,7 +1,7 @@
 # Contract tests
 
 **Canonical page:** this page for the `tests/contracts/` index; maturity map on [Tests and maturity](../../docs/ai/tests-and-maturity.md)
-**Verified against:** `8abd2d5` on `docs/ws5-ai-copilot`
+**Historical verification:** `8abd2d5` on `docs/ws5-ai-copilot`. Not verification of the current tree.
 **Maturity:** CONTRACT, LIVE
 **Production authorization:** `MasterRouteExecutionAuthority.DENIED`; a passing contract test is not a production grant
 
@@ -17,7 +17,7 @@ This page indexes the AI Operations Copilot contract suite. It states which file
 | Current pytest pass count | UNKNOWN | this documentation task did not run `pytest` |
 | Live harnesses | LIVE | `scripts/validate_*anthropic_live.py` |
 | Current live pass | UNKNOWN | harnesses are opt-in; the suite does not invoke them |
-| Terraform | TF absent for an Agent API | named search in [Tests and maturity](../../docs/ai/tests-and-maturity.md) |
+| Terraform | TF for a closed AI host; Agent API absent in `envs/dev` | [Tests and maturity](../../docs/ai/tests-and-maturity.md) |
 | Deployment | UNKNOWN | not verified |
 | Production authorization | `DENIED` | `functions/shared/wilvor_ai/master_routing.py` (`MasterRouteExecutionAuthority`) |
 
@@ -70,7 +70,7 @@ Related UNIT tests of harness dry-run logic live under `tests/unit/scripts/`. Th
 ## Known limitations
 
 - CONTRACT is not UNIT, INFRA, INT, LIVE pass, DEPLOYED, or production authorization.
-- No Agent API, dashboard `/ai`, or Terraform AI wiring was found at this commit. Search scopes are on [Tests and maturity](../../docs/ai/tests-and-maturity.md).
+- `POST /ai/query` stays off in `envs/dev`. `/copilot` does not activate production AI. The closed AI host is not an Agent API. Detail is on [Tests and maturity](../../docs/ai/tests-and-maturity.md).
 - Stored live JSON artifacts cited in the package README are historical evidence and are not in this worktree (`test-results/` is gitignored).
 - Dated pytest counts in `functions/shared/wilvor_ai/SPRINT3A_MA7_SECURITY_REVIEW.md` are historical at `7073b3a`.
 

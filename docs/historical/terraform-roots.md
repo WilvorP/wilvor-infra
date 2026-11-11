@@ -1,7 +1,7 @@
 # Historical Terraform roots
 
 **Canonical page:** this page
-**Verified against:** `8abd2d5` on `docs/ws4-historical`
+**Historical verification:** `8abd2d5` on `docs/ws4-historical`. Not verification of the current tree.
 **Maturity:** CODE, TF, INFRA
 **Production authorization:** no grant found. `enable_historical_facts = true` and `enable_historical_analytics = true` in `envs/dev/main.tf` are Terraform assignments. They do not establish DEPLOYED.
 
@@ -74,7 +74,7 @@ Those assignments are asserted by `test_dev_historical_facts_collection_is_enabl
 
 When `enable_historical_facts` is `true`, `modules/historical_facts` looks up the persistent bucket and creates Firehose, EventBridge targets, transform, coverage, and DLQ resources (`local.enabled = var.enable_historical_facts`; source: `modules/historical_facts/locals.tf`). When `false`, `data.aws_s3_bucket.historical_facts` is not evaluated (`count = local.enabled ? 1 : 0`).
 
-When `enable_historical_analytics` is `true`, `modules/historical_analytics` looks up the same bucket name and creates Glue, Athena, the results bucket, and the unattached query policy (source: `modules/historical_analytics/locals.tf`, `local.enabled`).
+When `enable_historical_analytics` is `true`, `modules/historical_analytics` looks up the same bucket name and creates Glue, Athena, the results bucket, and the query policy. The module does not attach that policy. `envs/dev` attaches it to the closed AI host role (source: `modules/historical_analytics/locals.tf`, `local.enabled`; `envs/dev/main.tf`, `aws_iam_role_policy_attachment.ai_host_historical_analytics_query`).
 
 A committed `true` is TF. It is not evidence that either root has been applied.
 

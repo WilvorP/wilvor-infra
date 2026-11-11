@@ -1,7 +1,7 @@
 # Lifecycle
 
 **Canonical page:** this page for how roots, scripts, and tests relate. Command flags remain in [`../../scripts/README.md`](../../scripts/README.md).
-**Verified against:** `8abd2d5` on `docs/ws1-platform-foundations`
+**Historical verification:** `8abd2d5` on `docs/ws1-platform-foundations`. Not verification of the current tree.
 **Maturity:** CODE, TF, INFRA, LIVE
 **Production authorization:** no grant found. `dev-down.ps1` and `dev-reset.ps1` refuse `envs/dev-historical-data`.
 
