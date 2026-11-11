@@ -87,6 +87,8 @@ Scan and writes. `wilvor-dev-hazard-coordinates` allows Query only.
 
 Attach `wilvor-dev-historical-analytics-query` to the AI host role.
 
+Source update after this proposal was written: `envs/dev/main.tf` contains `aws_iam_role_policy_attachment.ai_host_historical_analytics_query`. `modules/historical_analytics` still does not attach the policy. The dev-root attachment uses `module.ai_host.role_name` while `enable_invoke = false`. This file does not record an AWS apply. The attachment is not an Agent API and is not production execution.
+
 Do **not** grant `dynamodb:Query` on historical DynamoDB tables as a substitute.
 
 ### 5. Ledger — no change

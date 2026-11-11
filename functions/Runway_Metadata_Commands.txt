@@ -1,3 +1,10 @@
+# ---------------------------------------------------------------------------
+# Historical runbook — not the current specification
+# Canonical pages: docs/ingestion/README.md and docs/ingestion/runway-metadata.md
+# Verified current behavior at 8abd2d5 is documented there.
+# This file is preserved. Do not treat the body as current status.
+# ---------------------------------------------------------------------------
+
 WILVOR RUNWAY METADATA - COMMANDS
 
 Current supported airport IDs:

@@ -1,5 +1,10 @@
 # Historical analytics foundation (Phase 2A.2d)
 
+**Canonical page:** this page | map [`docs/historical/analytics.md`](../../docs/historical/analytics.md)
+**Historical verification:** `8abd2d5` on `docs/ws4-historical`. Not verification of the current tree.
+**Maturity:** CODE, TF, UNIT, INFRA, LIVE
+**Production authorization:** no grant found. This module does not attach `aws_iam_policy.query`. `envs/dev` attaches it to `module.ai_host.role_name` with `enable_invoke = false`. `MasterRouteExecutionAuthority` is `DENIED`.
+
 This module is the **disabled-by-default** recreatable analytics
 foundation. It currently owns:
 
@@ -11,9 +16,11 @@ foundation. It currently owns:
 - operational CloudWatch observability (dashboard, FAILED/CANCELED alarm)
 
 It does **not** create crawlers, runtime query IAM roles, named query
-APIs, or query executors. Phase 2B.5 adds one reusable, **unattached**
-customer-managed query policy. No execution role or attachment exists
-in this module.
+APIs, or query executors. Phase 2B.5 adds one reusable customer-managed
+query policy. No execution role or attachment exists in this module.
+`envs/dev` attaches that policy to `module.ai_host.role_name` and sets
+`enable_invoke = false`. The host stays disabled. The attachment is not
+an Agent API and is not production execution.
 
 ## Ownership boundary
 
@@ -62,7 +69,7 @@ enables historical analytics, so normal `dev-up` recreates:
 - Glue catalog (database and four external tables)
 - Athena workgroup
 - Athena results bucket
-- unattached historical analytics query IAM policy
+- historical analytics query IAM policy, with the dev-root attachment to the disabled AI host
 - analytics monitoring / dashboard
 
 The Athena workgroup uses `force_destroy = true` because normal query
@@ -74,8 +81,8 @@ artifacts. Canonical historical S3 is never owned by this module.
 
 1. DEACTIVATEs historical collection when collection is enabled
 2. destroys `envs/dev`, including this module's disposable Glue catalog,
-   workgroup, results bucket, unattached query IAM policy, and
-   analytics monitoring
+   workgroup, results bucket, query IAM policy, the dev-root attachment
+   of that policy to the disabled AI host, and analytics monitoring
 3. leaves the persistent historical facts bucket intact
 
 There is no `historical-data-down.ps1`. Ordinary `dev-down` / `dev-reset`
@@ -348,9 +355,10 @@ deployment step and not a Phase 2B query API.
 - Partition pruning evidence uses `DataScannedInBytes`.
 - Athena empty results are **`SQL_EMPTY`**, never `VERIFIED_ZERO`.
 - Coverage evaluator remains authoritative.
-- No 2A.2 / 2B.5 query IAM role exists. The 2B.5 managed policy is
-  unattached. Live validation uses operator SSO and does not itself
-  prove that managed policy.
+- No 2A.2 / 2B.5 query IAM role exists in this module. This module does
+  not attach the 2B.5 managed policy. `envs/dev` attaches it to the
+  disabled AI host. Live validation uses operator SSO and does not itself
+  prove that attachment.
 - This script must not be used as an AI query surface.
 
 Dry-run makes no AWS calls:
@@ -366,7 +374,7 @@ Deterministic historical analytics is complete:
 - four V1 operations through `HistoricalAnalyticsOperations`
 - authoritative pre/post coverage certification
 - fixed SQL only, bounded Athena executor, result reuse disabled
-- least-privilege unattached query policy
+- least-privilege query policy, unattached inside this module and attached in `envs/dev` to the disabled AI host
 - live operator validation via
   `scripts/validate_historical_query_runtime.py`
 - persistent facts/metadata survived normal `dev-down`
@@ -399,3 +407,50 @@ CI or an environment with Node:
 cd dashboard
 npm test -- src/config/cloudwatchDashboards.test.ts
 ```
+
+## Implementation status
+
+| Question | Result | Source |
+| --- | --- | --- |
+| Code | CODE for consumers | `functions/shared/wilvor_historical_query/` |
+| Terraform | TF | `modules/historical_analytics/*.tf`; `envs/dev/main.tf` `module.historical_analytics` |
+| Unit tests | UNIT | `tests/unit/historical_facts/test_glue_schema_parity.py`; `tests/unit/historical_query/` |
+| Contract tests | none found for this module | search: `tests/contracts/` for Glue/Athena resources |
+| Infrastructure tests | INFRA | `tests/infrastructure/terraform/test_historical_analytics_contract.py`, `test_historical_analytics_query_iam_contract.py`, `test_historical_analytics_validation.py` |
+| Integration tests | none found | search: `tests/integration/` for `historical` |
+| Live harness | LIVE | `scripts/validate_historical_analytics.ps1`, `scripts/validate_historical_query_runtime.py` |
+| Deployment | UNKNOWN | `not verified` |
+| Production authorization | no grant found | module does not attach the policy; `envs/dev` attaches it to the closed AI host; no Agent API |
+
+## Known limitations
+
+- The query IAM policy is not attached to any principal in this module. `envs/dev` attaches it to `module.ai_host.role_name` with `enable_invoke = false`.
+- Operator SSO live validation does not prove the AI host attachment of that policy. The host stays disabled while `enable_invoke = false`.
+- Athena `COUNT(*) = 0` is not `VERIFIED_ZERO`.
+- Custom runtime CloudWatch metrics were not added because there is no deployed Agent API/Lambda to emit them.
+- Whether Glue and Athena currently exist in an account is UNKNOWN.
+
+## Historical record
+
+The Phase 2C paragraph above says the catalog is ready for a future
+specialist and that no model-backed specialist exists yet. After that
+phase note, `HistoricalAnalyticsSpecialist` exists as offline library
+code in `functions/shared/wilvor_ai/historical_specialist.py`. That class
+is not Terraform, not an Agent API, and not a production execution
+grant. `MasterRouteExecutionAuthority` remains `DENIED`. See
+[`docs/historical/ai-boundary.md`](../../docs/historical/ai-boundary.md).
+
+The 2B.6 sentence that operator SSO proved runtime behavior records a
+past operator validation claim in this README. This documentation task
+did not re-run that harness and does not treat it as a current pass.
+
+## Sources
+
+- Source: `modules/historical_analytics/glue.tf`
+- Source: `modules/historical_analytics/athena.tf`
+- Source: `modules/historical_analytics/iam.tf` (`aws_iam_policy.query`)
+- Source: `envs/dev/main.tf` (`enable_historical_analytics = true`)
+- Tests: `tests/infrastructure/terraform/test_historical_analytics_contract.py`
+- Tests: `tests/infrastructure/terraform/test_historical_analytics_query_iam_contract.py`
+- Map: [`docs/historical/analytics.md`](../../docs/historical/analytics.md)
+- Map: [`docs/historical/iam.md`](../../docs/historical/iam.md)

@@ -1,3 +1,11 @@
+# ---------------------------------------------------------------------------
+# Historical runbook — not the current specification
+# Canonical pages: docs/ingestion/README.md, docs/ingestion/sigmet.md,
+# docs/ingestion/metar.md, docs/ingestion/weather-events.md
+# Verified current behavior at 8abd2d5 is documented there.
+# This file is preserved. Do not treat the body as current status.
+# ---------------------------------------------------------------------------
+
 This file documents the current manual workflow for:
 
 1. SIGMET poller

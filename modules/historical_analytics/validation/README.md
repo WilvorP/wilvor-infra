@@ -1,5 +1,10 @@
 # Historical analytics validation (Phase 2A.2e)
 
+**Canonical page:** this page | map [`docs/historical/testing.md`](../../../docs/historical/testing.md)
+**Historical verification:** `8abd2d5` on `docs/ws4-historical`. Not verification of the current tree.
+**Maturity:** CODE, TF, INFRA, LIVE
+**Production authorization:** no grant found. This directory is not a query API and not an AI surface.
+
 This directory holds **fixed** SQL templates for operator validation of
 the Glue/Athena catalog. The only executor is:
 
@@ -74,3 +79,34 @@ Templates may contain only:
 The script replaces those from validated `NamePrefix` and
 `ValidationDate`. Table names are an allowlist of the four canonical
 datasets.
+
+## Implementation status
+
+| Question | Result | Source |
+| --- | --- | --- |
+| Code | CODE for SQL templates | `modules/historical_analytics/validation/*.sql` |
+| Terraform | TF for catalog under test | `modules/historical_analytics/glue.tf` |
+| Unit tests | none found for these SQL files | search: `tests/unit/` for validation SQL filenames |
+| Contract tests | none found | search: `tests/contracts/` for this directory |
+| Infrastructure tests | INFRA | `tests/infrastructure/terraform/test_historical_analytics_validation.py` |
+| Integration tests | none found | search: `tests/integration/` for `historical` |
+| Live harness | LIVE | `scripts/validate_historical_analytics.ps1` |
+| Deployment | UNKNOWN | `not verified` |
+| Production authorization | no grant found | operator SSO is not the closed AI host query-policy attachment |
+
+## Known limitations
+
+- Athena empty results are `SQL_EMPTY`. An empty Athena result is not a validated zero observation.
+- Dry-run makes no AWS calls. A live run is opt-in and was not executed for this documentation task.
+- This is not a historical query API and not an AI/SQL surface.
+
+## Historical record
+
+An earlier limitation on this page named a prohibited status token beside `SQL_EMPTY`. Executable artifacts still reject that token. The current limitation says an empty Athena result is `SQL_EMPTY` and is not a validated zero observation.
+
+## Sources
+
+- Source: `scripts/validate_historical_analytics.ps1`
+- Source: `modules/historical_analytics/validation/*.sql`
+- Tests: `tests/infrastructure/terraform/test_historical_analytics_validation.py`
+- Map: [`docs/historical/testing.md`](../../../docs/historical/testing.md)

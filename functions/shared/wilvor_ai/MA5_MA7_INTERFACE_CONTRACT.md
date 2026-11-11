@@ -1,6 +1,13 @@
 # MA5 / MA6 / MA7 shared interface contract
 
+**Canonical page:** this file for the shared interface; mapping on [Master Agent](../../../docs/ai/master-agent.md)
+**Historical verification:** `8abd2d5` on `docs/ws5-ai-copilot`. Not verification of the current tree.
+**Maturity:** CODE, CONTRACT
+**Production authorization:** `MasterRouteExecutionAuthority.DENIED`; `MasterProductionAuthority.DENIED`
+
 Status: interface agreement for later parallel work. This document is not operational readiness, production authorization, or a statement that supplied evidence came from AWS.
+
+Historical observation at `8abd2d5`: the MA5, MA6, and MA7 Python modules named in section 10 existed. That observation is not verification of the current tree. Section 10 remains the historical exclusive-ownership list from the foundation agreement. It is not a current file inventory. Authority values in section 7 stay execution `DENIED`, production `DENIED`, and request coverage `NOT_ESTABLISHED`. See [Historical baseline addendum](#historical-baseline-addendum).
 
 The existing Wilvor dashboard application remains the single application surface. `functions/operational_api` is the dashboard Operational API. This contract does not route AI execution through that Lambda, and it does not create a second request-identity system or a second product.
 
@@ -174,7 +181,7 @@ No new third-party dependency is added.
 
 ## 10. Proposed exclusive file ownership
 
-These files are not created by this foundation.
+Historical list from the foundation agreement. These files were not created by the `master_parallel_contracts.py` foundation. A historical observation at `8abd2d5` recorded them as present; see [Historical baseline addendum](#historical-baseline-addendum). That observation is not verification of the current tree. Do not treat this list as the only Master files.
 
 ### Agent 1 / MA5
 
@@ -225,3 +232,59 @@ Existing specialist runners, dashboard files, and Operational API files stay unc
 - Unknown, unavailable, and unresolved bindings preserved rather than rendered as zero or as a current factual answer.
 - No use of MA3 synthetic results as production evidence.
 - No live aviation provider calls and no AWS writes from these contracts.
+
+## Historical baseline addendum
+
+**Historical verification:** `8abd2d5` on `docs/ws5-ai-copilot`. Not verification of the current tree.
+**Production authorization:** `DENIED`; this addendum does not grant execution
+
+The heading "PROPOSED FOR LATER" above remains the foundation-agreement
+wording. Historical observation at `8abd2d5`: the proposed MA5/MA6/MA7
+files in section 10 existed, and additional Master modules existed beyond
+that list. That observation is not verification of the current tree.
+Authority remains `DENIED`.
+
+### Section 10 files recorded at `8abd2d5`
+
+- `functions/shared/wilvor_ai/master_response_policy.py`
+- `functions/shared/wilvor_ai/master_response_renderer.py`
+- `functions/shared/wilvor_ai/master_execution_preflight.py`
+- `functions/shared/wilvor_ai/master_specialist_adapters.py`
+- `tests/fixtures/ma7_master_safety_cases.py`
+- `tests/contracts/test_master_response_policy.py`
+- `tests/contracts/test_master_response_renderer.py`
+- `tests/contracts/test_master_execution_preflight.py`
+- `tests/contracts/test_master_specialist_adapters.py`
+- `tests/contracts/test_ma7_master_safety_matrix.py`
+- `tests/contracts/test_ma7_master_safety_import_isolation.py`
+
+### Additional Master modules at this baseline (not in section 10)
+
+These files were not on the foundation ownership list. They exist now and
+remain offline, non-dispatching contracts:
+
+- `master_execution_scope.py`, `master_planning_session.py`, `master_local_capability.py`, `master_gate_resolution.py`, `master_provenance_trace.py`
+- `master_live_ops_binding.py`, `master_historical_binding.py`, `master_decision_binding.py`
+- `master_execution_integration.py`, `master_execution_policy_boundary.py`
+- `master_session_origin_boundary.py`, `master_source_read_trace_boundary.py`
+- `master_live_ops_execution_readiness.py`, `master_historical_execution_readiness.py`, `master_decision_execution_readiness.py`
+
+`master_parallel_contracts.py` still does not call admission, corroboration,
+comparison, a specialist, or a renderer. `execution_preflight_for` still
+does not return `CONTRACT_READY_FOR_FUTURE_INTEGRATION`. Adapter code must
+not dispatch from that named state.
+
+### Known limitations
+
+- Authority values in section 7 are unchanged.
+- `envs/dev` keeps `enable_ai_query_route = false` and `module.ai_host`
+  `enable_invoke = false`. `/copilot` does not activate production AI.
+  Master execution stays `DENIED`.
+- Section 10 is historical ownership, not a claim that only those files
+  exist.
+
+## Historical record
+
+The original "IMPLEMENTED NOW" / "PROPOSED FOR LATER" split and the
+section 10 file lists are preserved above as the foundation agreement.
+This addendum records the tree at `8abd2d5`. It is not verification of the current tree. Authority values remain `DENIED`.
